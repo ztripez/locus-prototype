@@ -21,6 +21,7 @@ use crate::diagnostics::{CheckMode, Diagnostic};
 use crate::lockfile::Lockfile;
 use locus_air::AirWorkspace;
 
+pub mod edit;
 pub mod lockfile_schema;
 pub mod rules;
 
