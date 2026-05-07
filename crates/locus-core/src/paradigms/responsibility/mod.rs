@@ -2,10 +2,13 @@
 //!
 //! Spec: `docs/PARADIGMS.md` §"Paradigm 8: Responsibility Ownership".
 //!
-//! Stub for parallel implementation. Fill in `lockfile_schema.rs` with the
-//! section type, `rules.rs` with rule functions, and (optionally) an
-//! `edit.rs` for CLI mutators. Wire rule dispatch into `check` when the
-//! first rule lands.
+//! Reads the per-function distinct-`ActionKind` cap from
+//! `paradigms.RM.default_max_action_kinds` in `locus.lock` and flags any
+//! function whose `AirTruthAction` body mixes more than that many kinds of
+//! work — the "kitchen-sink handler" anti-pattern.
+//!
+//! Phase scope so far:
+//! - RM001: function performs too many distinct kinds of work.
 
 // ot: canonical
 
@@ -29,14 +32,14 @@ impl Paradigm for Responsibility {
         RM_PREFIX
     }
     fn init(&self, _air: &AirWorkspace) -> serde_json::Value {
+        // Cap is a user assertion, not an inference: the right number depends
+        // on architectural style. `init` returns an empty section; the user
+        // opts in by setting `default_max_action_kinds` in the lockfile.
         serde_json::Value::Null
     }
-    fn check(
-        &self,
-        _air: &AirWorkspace,
-        _lockfile: &Lockfile,
-        _mode: CheckMode,
-    ) -> Vec<Diagnostic> {
-        Vec::new()
+    fn check(&self, air: &AirWorkspace, lockfile: &Lockfile, mode: CheckMode) -> Vec<Diagnostic> {
+        let section: lockfile_schema::RmSection =
+            lockfile.paradigm_section(RM_PREFIX).unwrap_or_default();
+        rules::rm001(air, &section, mode)
     }
 }

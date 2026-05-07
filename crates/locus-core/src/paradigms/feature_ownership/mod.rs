@@ -2,10 +2,15 @@
 //!
 //! Spec: `docs/PARADIGMS.md` §"Paradigm 15: Feature Ownership".
 //!
-//! Stub for parallel implementation. Fill in `lockfile_schema.rs` with the
-//! section type, `rules.rs` with rule functions, and (optionally) an
-//! `edit.rs` for CLI mutators. Wire rule dispatch into `check` when the
-//! first rule lands.
+//! Phase scope:
+//! - FO001: same concept defined in two different features.
+//!
+//! FO is conceptually adjacent to DG003 — DG003 forbids feature A *reaching
+//! into* feature B's internals through imports; FO001 forbids feature A and
+//! feature B both *defining* the same public type name. The two rules use
+//! similar feature-definition shapes (`name` + `module` pattern) but each
+//! paradigm owns its own copy of that shape so paradigms don't depend on
+//! each other.
 
 // ot: canonical
 
@@ -29,14 +34,12 @@ impl Paradigm for FeatureOwnership {
         FO_PREFIX
     }
     fn init(&self, _air: &AirWorkspace) -> serde_json::Value {
+        // No automatic inference — feature regions are user-declared.
         serde_json::Value::Null
     }
-    fn check(
-        &self,
-        _air: &AirWorkspace,
-        _lockfile: &Lockfile,
-        _mode: CheckMode,
-    ) -> Vec<Diagnostic> {
-        Vec::new()
+    fn check(&self, air: &AirWorkspace, lockfile: &Lockfile, mode: CheckMode) -> Vec<Diagnostic> {
+        let section: lockfile_schema::FoSection =
+            lockfile.paradigm_section(FO_PREFIX).unwrap_or_default();
+        rules::fo001(air, &section, mode)
     }
 }

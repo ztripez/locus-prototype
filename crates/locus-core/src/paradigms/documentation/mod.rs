@@ -2,10 +2,9 @@
 //!
 //! Spec: `docs/PARADIGMS.md` §"Paradigm 17: Documentation / Comment Ownership".
 //!
-//! Stub for parallel implementation. Fill in `lockfile_schema.rs` with the
-//! section type, `rules.rs` with rule functions, and (optionally) an
-//! `edit.rs` for CLI mutators. Wire rule dispatch into `check` when the
-//! first rule lands.
+//! Phase scope so far:
+//! - DC001: public type or function has no doc comment. Opt-in via
+//!   `paradigms.DC.require_public_docs`; silent by default.
 
 // ot: canonical
 
@@ -29,14 +28,15 @@ impl Paradigm for Documentation {
         DC_PREFIX
     }
     fn init(&self, _air: &AirWorkspace) -> serde_json::Value {
+        // No automatic inference: `require_public_docs` is a project policy
+        // choice, and `exempt_paths` is hand-curated. `init` returns an
+        // empty section; users opt in via the lockfile directly (or via a
+        // future `locus dc` CLI mutator).
         serde_json::Value::Null
     }
-    fn check(
-        &self,
-        _air: &AirWorkspace,
-        _lockfile: &Lockfile,
-        _mode: CheckMode,
-    ) -> Vec<Diagnostic> {
-        Vec::new()
+    fn check(&self, air: &AirWorkspace, lockfile: &Lockfile, mode: CheckMode) -> Vec<Diagnostic> {
+        let section: lockfile_schema::DcSection =
+            lockfile.paradigm_section(DC_PREFIX).unwrap_or_default();
+        rules::dc001(air, &section, mode)
     }
 }

@@ -2,10 +2,17 @@
 //!
 //! Spec: `docs/PARADIGMS.md` §"Paradigm 16: Abstraction Discipline".
 //!
-//! Stub for parallel implementation. Fill in `lockfile_schema.rs` with the
-//! section type, `rules.rs` with rule functions, and (optionally) an
-//! `edit.rs` for CLI mutators. Wire rule dispatch into `check` when the
-//! first rule lands.
+//! Detects speculative abstraction — traits / interfaces added "in case"
+//! other implementations exist someday but in practice point at exactly one
+//! concrete type with no boundary role. The `manager / processor /
+//! DataHandler` pattern from the spec.
+//!
+//! Phase scope so far:
+//! - AB001: trait declared in the workspace has exactly one impl.
+//!
+//! `init` returns `Null`: there's no automatic inference for "this
+//! single-impl trait is a real port." Acceptance is a deliberate user
+//! action, mirroring DG/MO/UT.
 
 // ot: canonical
 
@@ -31,12 +38,9 @@ impl Paradigm for AbstractionDiscipline {
     fn init(&self, _air: &AirWorkspace) -> serde_json::Value {
         serde_json::Value::Null
     }
-    fn check(
-        &self,
-        _air: &AirWorkspace,
-        _lockfile: &Lockfile,
-        _mode: CheckMode,
-    ) -> Vec<Diagnostic> {
-        Vec::new()
+    fn check(&self, air: &AirWorkspace, lockfile: &Lockfile, mode: CheckMode) -> Vec<Diagnostic> {
+        let section: lockfile_schema::AbSection =
+            lockfile.paradigm_section(AB_PREFIX).unwrap_or_default();
+        rules::ab001(air, &section, mode)
     }
 }

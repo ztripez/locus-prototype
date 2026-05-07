@@ -1,11 +1,14 @@
 //! TA — Test Architecture Ownership.
 //!
 //! Spec: `docs/PARADIGMS.md` §"Paradigm 19: Test Architecture Ownership".
+//! Reads declared test module patterns from `paradigms.TA.test_paths` in
+//! `locus.lock` and flags public types defined inside any matching module —
+//! tests must not create new domain truth, and a public type in test code is
+//! typically a shadow of a domain concept that belongs on the canonical
+//! production path.
 //!
-//! Stub for parallel implementation. Fill in `lockfile_schema.rs` with the
-//! section type, `rules.rs` with rule functions, and (optionally) an
-//! `edit.rs` for CLI mutators. Wire rule dispatch into `check` when the
-//! first rule lands.
+//! Phase scope so far:
+//! - TA001: test module defines a public domain-shaped type.
 
 // ot: canonical
 
@@ -29,14 +32,14 @@ impl Paradigm for TestArchitecture {
         TA_PREFIX
     }
     fn init(&self, _air: &AirWorkspace) -> serde_json::Value {
+        // Test status is a user assertion, not an inference. `init` returns
+        // an empty section; the user adds patterns via the TA edit surface
+        // (future) or by hand-editing `locus.lock`.
         serde_json::Value::Null
     }
-    fn check(
-        &self,
-        _air: &AirWorkspace,
-        _lockfile: &Lockfile,
-        _mode: CheckMode,
-    ) -> Vec<Diagnostic> {
-        Vec::new()
+    fn check(&self, air: &AirWorkspace, lockfile: &Lockfile, mode: CheckMode) -> Vec<Diagnostic> {
+        let section: lockfile_schema::TaSection =
+            lockfile.paradigm_section(TA_PREFIX).unwrap_or_default();
+        rules::ta001(air, &section, mode)
     }
 }

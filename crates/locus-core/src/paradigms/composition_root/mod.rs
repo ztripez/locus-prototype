@@ -2,10 +2,13 @@
 //!
 //! Spec: `docs/PARADIGMS.md` §"Paradigm 7: Composition Root Ownership".
 //!
-//! Stub for parallel implementation. Fill in `lockfile_schema.rs` with the
-//! section type, `rules.rs` with rule functions, and (optionally) an
-//! `edit.rs` for CLI mutators. Wire rule dispatch into `check` when the
-//! first rule lands.
+//! Phase scope:
+//! - CR001: service-shaped construction outside any declared composition
+//!   root.
+//!
+//! `init` returns an empty section: composition-root locations are a user
+//! declaration, not an inference. The rule stays silent until the user
+//! populates `composition_root_paths`.
 
 // ot: canonical
 
@@ -31,12 +34,9 @@ impl Paradigm for CompositionRoot {
     fn init(&self, _air: &AirWorkspace) -> serde_json::Value {
         serde_json::Value::Null
     }
-    fn check(
-        &self,
-        _air: &AirWorkspace,
-        _lockfile: &Lockfile,
-        _mode: CheckMode,
-    ) -> Vec<Diagnostic> {
-        Vec::new()
+    fn check(&self, air: &AirWorkspace, lockfile: &Lockfile, mode: CheckMode) -> Vec<Diagnostic> {
+        let section: lockfile_schema::CrSection =
+            lockfile.paradigm_section(CR_PREFIX).unwrap_or_default();
+        rules::cr001(air, &section, mode)
     }
 }

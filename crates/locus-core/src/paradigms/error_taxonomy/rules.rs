@@ -172,7 +172,11 @@ mod tests {
             vec![pub_ty("UserError"), pub_ty("CreateUserError")],
         );
         let diags = er001(&air, &ErSection::default(), CheckMode::Human);
-        assert_eq!(diags.len(), 1, "two error types → one diagnostic on the second");
+        assert_eq!(
+            diags.len(),
+            1,
+            "two error types → one diagnostic on the second"
+        );
         assert_eq!(diags[0].rule_id, "ER001");
         assert_eq!(diags[0].severity, Severity::Warning);
         assert!(
@@ -206,7 +210,11 @@ mod tests {
             ],
         );
         let diags = er001(&air, &ErSection::default(), CheckMode::Human);
-        assert_eq!(diags.len(), 2, "three error types → two duplicate diagnostics");
+        assert_eq!(
+            diags.len(),
+            2,
+            "three error types → two duplicate diagnostics"
+        );
         assert!(diags.iter().all(|d| d.rule_id == "ER001"));
         // Each extra error type gets flagged; the incumbent (UserError) is not.
         let flagged: Vec<&str> = diags
@@ -264,10 +272,7 @@ mod tests {
     fn er001_detects_err_suffix_too() {
         // `IoErr` and `ParseErr` are full-word `Err` suffixes; both should
         // count as error types and trigger ER001 when they live together.
-        let air = air_with_file_items(
-            "src/io.rs",
-            vec![pub_ty("IoErr"), pub_ty("ParseErr")],
-        );
+        let air = air_with_file_items("src/io.rs", vec![pub_ty("IoErr"), pub_ty("ParseErr")]);
         let diags = er001(&air, &ErSection::default(), CheckMode::Human);
         assert_eq!(diags.len(), 1);
         assert!(diags[0].message.contains("ParseErr"));

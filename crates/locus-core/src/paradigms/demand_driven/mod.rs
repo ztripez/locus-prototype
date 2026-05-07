@@ -2,10 +2,14 @@
 //!
 //! Spec: `docs/PARADIGMS.md` §"Paradigm 3: Demand-Driven Architecture".
 //!
-//! Stub for parallel implementation. Fill in `lockfile_schema.rs` with the
-//! section type, `rules.rs` with rule functions, and (optionally) an
-//! `edit.rs` for CLI mutators. Wire rule dispatch into `check` when the
-//! first rule lands.
+//! Phase scope:
+//! - DA001: trait with exactly one implementation and no accepted port role.
+//!
+//! `init` returns `Null`: there's no automatic inference for "this trait is
+//! a real port" — the user has to declare that intent by toggling
+//! `enabled = true` and (optionally) listing accepted single-impl traits in
+//! the section. Until then DA001 stays silent, same lockfile-driven UX as
+//! DG/MO/CX.
 
 // ot: canonical
 
@@ -29,14 +33,12 @@ impl Paradigm for DemandDriven {
         DA_PREFIX
     }
     fn init(&self, _air: &AirWorkspace) -> serde_json::Value {
+        // No automatic inference — accepted single-impl traits come from the user.
         serde_json::Value::Null
     }
-    fn check(
-        &self,
-        _air: &AirWorkspace,
-        _lockfile: &Lockfile,
-        _mode: CheckMode,
-    ) -> Vec<Diagnostic> {
-        Vec::new()
+    fn check(&self, air: &AirWorkspace, lockfile: &Lockfile, mode: CheckMode) -> Vec<Diagnostic> {
+        let section: lockfile_schema::DaSection =
+            lockfile.paradigm_section(DA_PREFIX).unwrap_or_default();
+        rules::da001(air, &section, mode)
     }
 }

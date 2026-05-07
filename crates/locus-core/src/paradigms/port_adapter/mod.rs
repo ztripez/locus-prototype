@@ -2,10 +2,15 @@
 //!
 //! Spec: `docs/PARADIGMS.md` §"Paradigm 6: Port/Adapter Ownership".
 //!
-//! Stub for parallel implementation. Fill in `lockfile_schema.rs` with the
-//! section type, `rules.rs` with rule functions, and (optionally) an
-//! `edit.rs` for CLI mutators. Wire rule dispatch into `check` when the
-//! first rule lands.
+//! Phase-2 scope:
+//! - PA001: trait declared and immediately implemented in the same file
+//!   (port and adapter co-located — physical separation never happened).
+//!
+//! `init` returns an empty section: there's nothing to infer up front. The
+//! lockfile starts empty so PA001 fires on every co-located trait+impl pair;
+//! the user reviews each one and either splits the port from its adapter
+//! (the canonical fix) or accepts the trait as a non-port utility helper via
+//! `accepted_colocated_traits`.
 
 // ot: canonical
 
@@ -29,14 +34,12 @@ impl Paradigm for PortAdapter {
         PA_PREFIX
     }
     fn init(&self, _air: &AirWorkspace) -> serde_json::Value {
+        // No automatic inference — port/adapter exemptions come from review.
         serde_json::Value::Null
     }
-    fn check(
-        &self,
-        _air: &AirWorkspace,
-        _lockfile: &Lockfile,
-        _mode: CheckMode,
-    ) -> Vec<Diagnostic> {
-        Vec::new()
+    fn check(&self, air: &AirWorkspace, lockfile: &Lockfile, mode: CheckMode) -> Vec<Diagnostic> {
+        let section: lockfile_schema::PaSection =
+            lockfile.paradigm_section(PA_PREFIX).unwrap_or_default();
+        rules::pa001(air, &section, mode)
     }
 }

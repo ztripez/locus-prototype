@@ -48,7 +48,9 @@ pub fn mo001(air: &AirWorkspace, section: &MoSection, mode: CheckMode) -> Vec<Di
             let count = file
                 .items
                 .iter()
-                .filter(|item| matches!(item, AirItem::Type(t) if t.visibility == Visibility::Public))
+                .filter(
+                    |item| matches!(item, AirItem::Type(t) if t.visibility == Visibility::Public),
+                )
                 .count() as u32;
 
             let matched_override = section.matching_override(module_path);
@@ -74,10 +76,7 @@ pub fn mo001(air: &AirWorkspace, section: &MoSection, mode: CheckMode) -> Vec<Di
             let mut why = vec![
                 format!("file `{module_path}` defines {count} public top-level type(s)"),
                 if let Some(o) = matched_override {
-                    format!(
-                        "budget {budget} from override `module = {}`",
-                        o.module
-                    )
+                    format!("budget {budget} from override `module = {}`", o.module)
                 } else {
                     format!("budget {budget} (workspace default)")
                 },
@@ -357,13 +356,14 @@ mod tests {
             }],
         };
         let diags = mo001(&air, &section, CheckMode::Human);
-        assert_eq!(diags.len(), 1, "fallback budget should apply; got {diags:?}");
+        assert_eq!(
+            diags.len(),
+            1,
+            "fallback budget should apply; got {diags:?}"
+        );
         assert!(diags[0].message.contains("budget 5"));
         assert!(
-            diags[0]
-                .why
-                .iter()
-                .any(|w| w.contains("built-in fallback")),
+            diags[0].why.iter().any(|w| w.contains("built-in fallback")),
             "expected fallback explanation in why; got {:?}",
             diags[0].why
         );

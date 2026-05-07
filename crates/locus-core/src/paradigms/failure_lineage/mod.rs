@@ -1,11 +1,15 @@
 //! FL — Failure Lineage Ownership.
 //!
-//! Spec: `docs/PARADIGMS.md` §"Paradigm 12: Failure Lineage Ownership".
+//! Spec: `docs/PARADIGMS.md` §"Paradigm 12: Failure Lineage Ownership". Reads
+//! declared domain module patterns and boundary error patterns from
+//! `paradigms.FL` in `locus.lock` and flags functions in domain modules whose
+//! `Result<_, E>` return type leaks a boundary error — the layer edge that
+//! should have wrapped the error in a domain error type didn't, breaking the
+//! failure-lineage invariant.
 //!
-//! Stub for parallel implementation. Fill in `lockfile_schema.rs` with the
-//! section type, `rules.rs` with rule functions, and (optionally) an
-//! `edit.rs` for CLI mutators. Wire rule dispatch into `check` when the
-//! first rule lands.
+//! Phase scope so far:
+//! - FL001: domain function returns `Result<_, E>` where E is a declared
+//!   boundary error type.
 
 // ot: canonical
 
@@ -29,14 +33,14 @@ impl Paradigm for FailureLineage {
         FL_PREFIX
     }
     fn init(&self, _air: &AirWorkspace) -> serde_json::Value {
+        // Domain status and boundary error sets are user assertions, not
+        // inferences. `init` returns an empty section; the user adds patterns
+        // via future `locus fl ...` commands.
         serde_json::Value::Null
     }
-    fn check(
-        &self,
-        _air: &AirWorkspace,
-        _lockfile: &Lockfile,
-        _mode: CheckMode,
-    ) -> Vec<Diagnostic> {
-        Vec::new()
+    fn check(&self, air: &AirWorkspace, lockfile: &Lockfile, mode: CheckMode) -> Vec<Diagnostic> {
+        let section: lockfile_schema::FlSection =
+            lockfile.paradigm_section(FL_PREFIX).unwrap_or_default();
+        rules::fl001(air, &section, mode)
     }
 }

@@ -35,10 +35,7 @@ mod tests {
         add_utility_path(&mut section, "x::utils::*").unwrap();
         add_utility_path(&mut section, "x::helpers::*").unwrap();
         add_utility_path(&mut section, "x::utils::*").unwrap(); // duplicate, silently deduped
-        assert_eq!(
-            section.utility_paths,
-            vec!["x::utils::*", "x::helpers::*"]
-        );
+        assert_eq!(section.utility_paths, vec!["x::utils::*", "x::helpers::*"]);
     }
 
     #[test]

@@ -2,10 +2,16 @@
 //!
 //! Spec: `docs/PARADIGMS.md` §"Paradigm 10: Complexity Budget Ownership".
 //!
-//! Stub for parallel implementation. Fill in `lockfile_schema.rs` with the
-//! section type, `rules.rs` with rule functions, and (optionally) an
-//! `edit.rs` for CLI mutators. Wire rule dispatch into `check` when the
-//! first rule lands.
+//! Reads `AirItem::Function` items from each file and compares each
+//! function's `line_count` against a per-module budget held in the
+//! lockfile's CX section. The first CX rule (`CX001`) flags functions
+//! whose line count exceeds the configured budget.
+//!
+//! `init` returns `Null`: there's no automatic inference for "this
+//! function is allowed to be long" — the user has to declare the
+//! override (or the default) deliberately, same as DG/MO. Without a CX
+//! section, CX001 stays silent so un-onboarded code isn't bombarded
+//! with line-budget warnings.
 
 // ot: canonical
 
@@ -29,14 +35,12 @@ impl Paradigm for ComplexityBudget {
         CX_PREFIX
     }
     fn init(&self, _air: &AirWorkspace) -> serde_json::Value {
+        // No automatic inference — function budgets come from the user.
         serde_json::Value::Null
     }
-    fn check(
-        &self,
-        _air: &AirWorkspace,
-        _lockfile: &Lockfile,
-        _mode: CheckMode,
-    ) -> Vec<Diagnostic> {
-        Vec::new()
+    fn check(&self, air: &AirWorkspace, lockfile: &Lockfile, mode: CheckMode) -> Vec<Diagnostic> {
+        let section: lockfile_schema::CxSection =
+            lockfile.paradigm_section(CX_PREFIX).unwrap_or_default();
+        rules::cx001(air, &section, mode)
     }
 }

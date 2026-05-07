@@ -112,7 +112,9 @@ mod tests {
                 },
             ],
         };
-        let hit = s.matching_override("lore::api::v1").expect("expected match");
+        let hit = s
+            .matching_override("lore::api::v1")
+            .expect("expected match");
         assert_eq!(hit.module, "lore::api::*");
         assert_eq!(hit.max_public_types, 20);
         // Falls through to the broader pattern when the specific one misses.
