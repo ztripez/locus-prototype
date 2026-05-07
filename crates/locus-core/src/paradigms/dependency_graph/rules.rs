@@ -77,16 +77,17 @@ pub fn dg001(air: &AirWorkspace, section: &DgSection, mode: CheckMode) -> Vec<Di
     out
 }
 
-/// DG002 — dependency cycle across crates (2-cycle).
+/// DG002 — dependency cycle across crates.
 ///
-/// Builds a crate-level edge set from every `AirImport`: each edge is
-/// `(importer_crate, imported_crate)` plus a representative span. If both
-/// `(A, B)` and `(B, A)` exist, the pair forms a cycle and DG002 fires.
+/// Builds a crate-level edge set from every `AirImport`, runs Tarjan's
+/// strongly-connected-components algorithm over the directed graph, and
+/// emits one Fatal diagnostic per edge that participates in any SCC of
+/// size ≥ 2. Catches 2-cycles (`A ↔ B`), 3-cycles (`A → B → C → A`), and
+/// arbitrarily large cycles uniformly — the SCC partition handles all of
+/// them in a single pass.
 ///
-/// Phase-2 scope: 2-cycles only. Longer cycles (A→B→C→A) require running
-/// Tarjan's SCC on the edge set; that's a polish item once the simpler form
-/// proves useful. The diagnostic is emitted twice per cycle — one for each
-/// direction — so the user sees the violating import in each crate.
+/// One diagnostic per cycle-participating edge mirrors DG001's per-import
+/// granularity, so the user sees a span in each violating import.
 ///
 /// Always Fatal: a cycle is structural and breaks layered ownership.
 pub fn dg002(air: &AirWorkspace, mode: CheckMode) -> Vec<Diagnostic> {
@@ -94,22 +95,111 @@ pub fn dg002(air: &AirWorkspace, mode: CheckMode) -> Vec<Diagnostic> {
     if edges.is_empty() {
         return Vec::new();
     }
+
+    // Index nodes (crate names) and build adjacency lists for Tarjan.
+    let mut nodes: Vec<String> = edges
+        .keys()
+        .flat_map(|(a, b)| [a.clone(), b.clone()])
+        .collect();
+    nodes.sort();
+    nodes.dedup();
+    let node_idx: BTreeMap<&str, usize> = nodes
+        .iter()
+        .enumerate()
+        .map(|(i, n)| (n.as_str(), i))
+        .collect();
+
+    let mut adj: Vec<Vec<usize>> = vec![Vec::new(); nodes.len()];
+    for (a, b) in edges.keys() {
+        let ai = node_idx[a.as_str()];
+        let bi = node_idx[b.as_str()];
+        adj[ai].push(bi);
+    }
+
+    let sccs = tarjan_sccs(&adj);
+
     let mut out = Vec::new();
-    let mut seen: BTreeSet<(String, String)> = BTreeSet::new();
-    for ((a, b), evidence) in &edges {
-        if seen.contains(&(a.clone(), b.clone())) {
-            continue;
+    for scc in sccs {
+        if scc.len() < 2 {
+            continue; // single nodes — no cycle (we filter self-loops in collect_crate_edges)
         }
-        let Some(reverse) = edges.get(&(b.clone(), a.clone())) else {
-            continue;
-        };
-        // Mark both directions reported so we don't process the (b, a) entry again.
-        seen.insert((a.clone(), b.clone()));
-        seen.insert((b.clone(), a.clone()));
-        out.push(cycle_diagnostic(a, b, evidence, mode));
-        out.push(cycle_diagnostic(b, a, reverse, mode));
+        let scc_set: BTreeSet<usize> = scc.iter().copied().collect();
+        let mut members: Vec<&str> = scc.iter().map(|&i| nodes[i].as_str()).collect();
+        members.sort();
+
+        for ((a, b), evidence) in &edges {
+            let ai = node_idx[a.as_str()];
+            let bi = node_idx[b.as_str()];
+            if !scc_set.contains(&ai) || !scc_set.contains(&bi) {
+                continue;
+            }
+            out.push(cycle_diagnostic(a, b, evidence, &members, mode));
+        }
     }
     out
+}
+
+/// Tarjan's strongly-connected-components algorithm. Returns each SCC as a
+/// list of node indices. SCCs are returned in reverse topological order
+/// (children before parents), but we don't rely on that — callers filter
+/// by size and iterate.
+fn tarjan_sccs(adj: &[Vec<usize>]) -> Vec<Vec<usize>> {
+    let n = adj.len();
+    let mut state = TarjanState {
+        index: 0,
+        indices: vec![None; n],
+        lowlinks: vec![0; n],
+        on_stack: vec![false; n],
+        stack: Vec::new(),
+        sccs: Vec::new(),
+    };
+    for v in 0..n {
+        if state.indices[v].is_none() {
+            strongconnect(v, adj, &mut state);
+        }
+    }
+    state.sccs
+}
+
+struct TarjanState {
+    index: usize,
+    indices: Vec<Option<usize>>,
+    lowlinks: Vec<usize>,
+    on_stack: Vec<bool>,
+    stack: Vec<usize>,
+    sccs: Vec<Vec<usize>>,
+}
+
+fn strongconnect(v: usize, adj: &[Vec<usize>], st: &mut TarjanState) {
+    st.indices[v] = Some(st.index);
+    st.lowlinks[v] = st.index;
+    st.index += 1;
+    st.stack.push(v);
+    st.on_stack[v] = true;
+
+    // Clone the adjacency snapshot so we don't keep a borrow across recursion.
+    let succs = adj[v].clone();
+    for w in succs {
+        if st.indices[w].is_none() {
+            strongconnect(w, adj, st);
+            st.lowlinks[v] = st.lowlinks[v].min(st.lowlinks[w]);
+        } else if st.on_stack[w] {
+            st.lowlinks[v] = st.lowlinks[v].min(st.indices[w].expect("on_stack implies indexed"));
+        }
+    }
+
+    if Some(st.lowlinks[v]) == st.indices[v] {
+        let mut scc = Vec::new();
+        loop {
+            let w = st.stack.pop().expect("stack non-empty during SCC pop");
+            st.on_stack[w] = false;
+            scc.push(w);
+            if w == v {
+                break;
+            }
+        }
+        st.sccs.push(scc);
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -159,15 +249,26 @@ fn cycle_diagnostic(
     importer: &str,
     imported: &str,
     evidence: &EdgeEvidence,
+    cycle_members: &[&str],
     mode: CheckMode,
 ) -> Diagnostic {
+    let members_label = if cycle_members.len() == 2 {
+        format!("`{}` ↔ `{}`", cycle_members[0], cycle_members[1])
+    } else {
+        let joined = cycle_members
+            .iter()
+            .map(|m| format!("`{m}`"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        format!("[{joined}]")
+    };
     Diagnostic {
         rule_id: "DG002".to_string(),
         severity: mode.elevate(Severity::Fatal),
         span: evidence.span.clone(),
         concept: None,
         message: format!(
-            "dependency cycle: `{importer}` imports `{}` while `{imported}` imports back",
+            "dependency cycle: `{importer}` -> `{}` participates in cycle {members_label}",
             evidence.import_path
         ),
         why: vec![
@@ -175,7 +276,7 @@ fn cycle_diagnostic(
                 "`{importer}` -> `{imported}` (via `{}`)",
                 evidence.import_path
             ),
-            format!("`{imported}` -> `{importer}` is also present"),
+            format!("cycle participants: {members_label}"),
             format!("evidence import in `{}`", evidence.file_path),
         ],
         suggested_fix: Some(
@@ -315,32 +416,72 @@ mod tests {
 
     #[test]
     fn dg002_fires_on_two_crate_cycle() {
-        // a's file imports something in b; b's file imports something in a.
         let air = air_with_pkgs(vec![
             ("a", vec![("a/src/lib.rs", "a", vec!["b::Type1"])]),
             ("b", vec![("b/src/lib.rs", "b", vec!["a::Type2"])]),
         ]);
         let diags = dg002(&air, CheckMode::Human);
-        assert_eq!(
-            diags.len(),
-            2,
-            "one diagnostic per cycle direction; got {diags:?}"
-        );
+        assert_eq!(diags.len(), 2, "one diag per edge in SCC; got {diags:?}");
         for d in &diags {
             assert_eq!(d.rule_id, "DG002");
             assert_eq!(d.severity, Severity::Fatal);
+            // 2-cycle uses ↔ shorthand in the cycle label.
+            assert!(
+                d.message.contains("`a` ↔ `b`") || d.message.contains("`b` ↔ `a`"),
+                "expected ↔ label for 2-cycle; got `{}`",
+                d.message
+            );
         }
         let messages: Vec<&str> = diags.iter().map(|d| d.message.as_str()).collect();
-        assert!(
-            messages
-                .iter()
-                .any(|m| m.contains("`a` imports `b::Type1`"))
+        assert!(messages.iter().any(|m| m.contains("`a` -> `b::Type1`")));
+        assert!(messages.iter().any(|m| m.contains("`b` -> `a::Type2`")));
+    }
+
+    #[test]
+    fn dg002_fires_on_three_cycle() {
+        // a -> b -> c -> a, no shortcut edges.
+        let air = air_with_pkgs(vec![
+            ("a", vec![("a/src/lib.rs", "a", vec!["b::T"])]),
+            ("b", vec![("b/src/lib.rs", "b", vec!["c::T"])]),
+            ("c", vec![("c/src/lib.rs", "c", vec!["a::T"])]),
+        ]);
+        let diags = dg002(&air, CheckMode::Human);
+        assert_eq!(
+            diags.len(),
+            3,
+            "3-cycle has 3 edges, 3 diagnostics; got {diags:?}"
         );
-        assert!(
-            messages
-                .iter()
-                .any(|m| m.contains("`b` imports `a::Type2`"))
+        for d in &diags {
+            assert!(d.message.contains("`a`"));
+            assert!(d.message.contains("`b`"));
+            assert!(d.message.contains("`c`"));
+        }
+    }
+
+    #[test]
+    fn dg002_treats_disjoint_sccs_independently() {
+        let air = air_with_pkgs(vec![
+            ("a", vec![("a/src/lib.rs", "a", vec!["b::T"])]),
+            ("b", vec![("b/src/lib.rs", "b", vec!["a::T"])]),
+            ("c", vec![("c/src/lib.rs", "c", vec!["d::T"])]),
+            ("d", vec![("d/src/lib.rs", "d", vec!["c::T"])]),
+        ]);
+        let diags = dg002(&air, CheckMode::Human);
+        assert_eq!(
+            diags.len(),
+            4,
+            "two disjoint 2-cycles → 4 diagnostics; got {diags:?}"
         );
+        let ab = diags
+            .iter()
+            .filter(|d| d.message.contains("`a` ↔ `b`") || d.message.contains("`b` ↔ `a`"))
+            .count();
+        let cd = diags
+            .iter()
+            .filter(|d| d.message.contains("`c` ↔ `d`") || d.message.contains("`d` ↔ `c`"))
+            .count();
+        assert_eq!(ab, 2);
+        assert_eq!(cd, 2);
     }
 
     #[test]

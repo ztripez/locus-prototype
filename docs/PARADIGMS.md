@@ -472,11 +472,15 @@ For every `AirItem::Import` in every file, walk the lockfile's `forbidden_edges`
 
 Always Fatal: a forbidden edge is a directional violation declared by the user themselves.
 
-#### DG002 — Dependency cycle (2-cycle)
+#### DG002 — Dependency cycle
 
-Build a crate-level edge set from every `AirImport`. If both `(A, B)` and `(B, A)` edges exist (i.e. a file in crate A imports from crate B and a file in crate B imports from crate A), DG002 fires once per direction.
+Build a crate-level edge set from every `AirImport`, run Tarjan's strongly-connected-components algorithm, and emit one Fatal diagnostic per edge that participates in any SCC of size ≥ 2. Catches:
 
-Phase-2 scope is 2-cycles only; longer cycles (A → B → C → A) are detected by running an SCC algorithm over the edge set, which is a polish item once the simpler form proves useful in practice.
+- 2-cycles (`A ↔ B`) — labelled with `↔` in the message.
+- N-cycles (`A → B → C → A`, `A → B → C → D → A`, …) — labelled with the full member list.
+- Multiple independent cycles in the same workspace.
+
+One diagnostic per cycle-participating import mirrors DG001's per-import granularity: each violating use-line gets its own span and `why`.
 
 Always Fatal: a cycle is structural and breaks layered ownership.
 
