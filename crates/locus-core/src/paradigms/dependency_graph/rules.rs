@@ -3,16 +3,18 @@
 //! Implemented:
 //! - [`dg001`]: forbidden import (importer matches a forbidden edge's `from`
 //!   pattern AND the imported path matches the `to` pattern)
-//! - [`dg002`]: cross-crate 2-cycle (A imports B and B imports A)
-//!
-//! Future: DG002 generalised to N-cycles via Tarjan SCCs, DG003 (cross-feature
-//! internals reach), DG004 (shared module reaching feature-specific symbol).
+//! - [`dg002`]: dependency cycle of any size (Tarjan SCC over crate-level
+//!   import edges)
+//! - [`dg003`]: cross-feature internals reach (importer in feature A, import
+//!   target in feature B's internals — i.e. not in B's public API)
+//! - [`dg004`]: shared module reaching feature-specific code (a `shared_paths`
+//!   module imports a path that belongs to any feature)
 
 use std::collections::{BTreeMap, BTreeSet};
 
 use locus_air::{AirItem, AirSpan, AirWorkspace};
 
-use super::lockfile_schema::{DgSection, matches_pattern};
+use super::lockfile_schema::{DgSection, FeatureDefinition, matches_pattern};
 use crate::diagnostics::{CheckMode, Diagnostic, Severity};
 
 /// DG001 — forbidden import.
@@ -245,6 +247,173 @@ fn first_segment(path: &str) -> &str {
     path.split("::").next().unwrap_or("").trim()
 }
 
+/// DG003 — cross-feature internals reach.
+///
+/// For every `AirImport`, fire when:
+/// - the importer's `module_path` matches some feature A's `module` pattern;
+/// - the import path matches some feature B's `module` pattern;
+/// - A and B are different features (intra-feature imports are always fine);
+/// - the import path does NOT match any of B's `public_api` patterns.
+///
+/// "Owning feature" of an import target is found by first-match against the
+/// `features` list. Overlapping `module` patterns are user error; documented
+/// but not actively rejected.
+///
+/// Always Fatal: feature isolation is the user's declared invariant.
+pub fn dg003(air: &AirWorkspace, section: &DgSection, mode: CheckMode) -> Vec<Diagnostic> {
+    if section.features.len() < 2 {
+        // DG003 needs at least two features to identify a cross-feature edge.
+        return Vec::new();
+    }
+    let mut out = Vec::new();
+    for pkg in &air.packages {
+        for file in &pkg.files {
+            let Some(module_path) = file.module_path.as_deref() else {
+                continue;
+            };
+            let Some(importer_feature) = owning_feature(&section.features, module_path) else {
+                continue;
+            };
+            for item in &file.items {
+                let AirItem::Import(imp) = item else {
+                    continue;
+                };
+                let Some(target_feature) = owning_feature(&section.features, &imp.path) else {
+                    continue;
+                };
+                if std::ptr::eq(importer_feature, target_feature) {
+                    continue; // intra-feature import is fine
+                }
+                if path_in_public_api(target_feature, &imp.path) {
+                    continue; // public-API surface is the legal boundary
+                }
+                out.push(Diagnostic {
+                    rule_id: "DG003".to_string(),
+                    severity: mode.elevate(Severity::Fatal),
+                    span: imp.span.clone(),
+                    concept: None,
+                    message: format!(
+                        "feature `{importer}` reaches into `{target}` internals via `{}`",
+                        imp.path,
+                        importer = importer_feature.name,
+                        target = target_feature.name,
+                    ),
+                    why: vec![
+                        format!(
+                            "importer `{module_path}` belongs to feature `{}`",
+                            importer_feature.name
+                        ),
+                        format!(
+                            "import `{}` belongs to feature `{}` but is not in its public API",
+                            imp.path, target_feature.name
+                        ),
+                        if target_feature.public_api.is_empty() {
+                            format!(
+                                "feature `{}` has no public_api defined",
+                                target_feature.name
+                            )
+                        } else {
+                            format!(
+                                "public_api patterns: {}",
+                                target_feature
+                                    .public_api
+                                    .iter()
+                                    .map(|p| format!("`{p}`"))
+                                    .collect::<Vec<_>>()
+                                    .join(", ")
+                            )
+                        },
+                    ],
+                    suggested_fix: Some(format!(
+                        "import through `{}`'s public API, or expand its public_api list \
+                         to include `{}` if this access is intentional",
+                        target_feature.name, imp.path
+                    )),
+                });
+            }
+        }
+    }
+    out
+}
+
+/// DG004 — shared module reaching feature-specific code.
+///
+/// A module is "shared" if its `module_path` matches any of `shared_paths`.
+/// Shared modules must not depend on any feature: dependency direction must
+/// stay feature → shared, never shared → feature. Fires when a shared
+/// module's import path matches some feature's `module` pattern.
+///
+/// Always Fatal.
+pub fn dg004(air: &AirWorkspace, section: &DgSection, mode: CheckMode) -> Vec<Diagnostic> {
+    if section.shared_paths.is_empty() || section.features.is_empty() {
+        return Vec::new();
+    }
+    let mut out = Vec::new();
+    for pkg in &air.packages {
+        for file in &pkg.files {
+            let Some(module_path) = file.module_path.as_deref() else {
+                continue;
+            };
+            let Some(shared_pattern) = section
+                .shared_paths
+                .iter()
+                .find(|pat| matches_pattern(pat, module_path))
+            else {
+                continue;
+            };
+            for item in &file.items {
+                let AirItem::Import(imp) = item else {
+                    continue;
+                };
+                let Some(target_feature) = owning_feature(&section.features, &imp.path) else {
+                    continue;
+                };
+                out.push(Diagnostic {
+                    rule_id: "DG004".to_string(),
+                    severity: mode.elevate(Severity::Fatal),
+                    span: imp.span.clone(),
+                    concept: None,
+                    message: format!(
+                        "shared module `{module_path}` imports feature `{}` via `{}`",
+                        target_feature.name, imp.path
+                    ),
+                    why: vec![
+                        format!("`{module_path}` matches shared_paths pattern `{shared_pattern}`"),
+                        format!(
+                            "`{}` belongs to feature `{}` (pattern `{}`)",
+                            imp.path, target_feature.name, target_feature.module
+                        ),
+                        "shared infrastructure must not depend on any feature".into(),
+                    ],
+                    suggested_fix: Some(
+                        "invert the dependency: the feature should depend on the shared module \
+                         (move the call into the feature, or extract the shared module's \
+                         responsibility into a port the feature provides)"
+                            .into(),
+                    ),
+                });
+            }
+        }
+    }
+    out
+}
+
+/// Find the first feature whose `module` pattern matches `path`. Returns
+/// `None` when the path doesn't belong to any declared feature.
+fn owning_feature<'a>(
+    features: &'a [FeatureDefinition],
+    path: &str,
+) -> Option<&'a FeatureDefinition> {
+    features.iter().find(|f| matches_pattern(&f.module, path))
+}
+
+fn path_in_public_api(feature: &FeatureDefinition, path: &str) -> bool {
+    feature
+        .public_api
+        .iter()
+        .any(|pat| matches_pattern(pat, path))
+}
+
 fn cycle_diagnostic(
     importer: &str,
     imported: &str,
@@ -332,6 +501,7 @@ mod tests {
         let air = air_with_module("lore::domain::user", vec![import("lore::api::v1::UserDto")]);
         let section = DgSection {
             forbidden_edges: vec![forbid("lore::domain::*", "lore::api::*")],
+            ..DgSection::default()
         };
         let diags = dg001(&air, &section, CheckMode::Human);
         assert_eq!(diags.len(), 1);
@@ -346,6 +516,7 @@ mod tests {
         let air = air_with_module("lore::domain::user", vec![import("lore::core::Config")]);
         let section = DgSection {
             forbidden_edges: vec![forbid("lore::domain::*", "lore::api::*")],
+            ..DgSection::default()
         };
         assert!(dg001(&air, &section, CheckMode::Human).is_empty());
     }
@@ -363,6 +534,7 @@ mod tests {
         let air = air_with_module("lore::api::handler", vec![import("lore::api::v1::UserDto")]);
         let section = DgSection {
             forbidden_edges: vec![forbid("lore::domain::*", "lore::api::*")],
+            ..DgSection::default()
         };
         assert!(dg001(&air, &section, CheckMode::Human).is_empty());
     }
@@ -375,6 +547,7 @@ mod tests {
                 forbid("lore::domain::*", "lore::api::*"),
                 forbid("*", "lore::api::v1::UserDto"), // separately covers the same import
             ],
+            ..DgSection::default()
         };
         let diags = dg001(&air, &section, CheckMode::Human);
         assert_eq!(
@@ -458,6 +631,186 @@ mod tests {
         }
     }
 
+    // ---- DG003 ----
+
+    fn feature(name: &str, module: &str, public_api: &[&str]) -> FeatureDefinition {
+        FeatureDefinition {
+            name: name.into(),
+            module: module.into(),
+            public_api: public_api.iter().map(|s| (*s).to_string()).collect(),
+        }
+    }
+
+    #[test]
+    fn dg003_fires_on_cross_feature_internals_reach() {
+        let air = air_with_pkgs(vec![(
+            "ethics",
+            vec![(
+                "ethics/src/eval.rs",
+                "ethics::eval",
+                vec!["anatom::morals::MoralAct"],
+            )],
+        )]);
+        let section = DgSection {
+            features: vec![
+                feature("anatom", "anatom::*", &["anatom::api::*"]),
+                feature("ethics", "ethics::*", &[]),
+            ],
+            ..DgSection::default()
+        };
+        let diags = dg003(&air, &section, CheckMode::Human);
+        assert_eq!(diags.len(), 1);
+        assert_eq!(diags[0].rule_id, "DG003");
+        assert_eq!(diags[0].severity, Severity::Fatal);
+        assert!(diags[0].message.contains("`ethics`"));
+        assert!(diags[0].message.contains("`anatom`"));
+        assert!(diags[0].message.contains("MoralAct"));
+    }
+
+    #[test]
+    fn dg003_quiet_when_target_is_in_public_api() {
+        let air = air_with_pkgs(vec![(
+            "ethics",
+            vec![(
+                "ethics/src/eval.rs",
+                "ethics::eval",
+                vec!["anatom::api::evaluate"],
+            )],
+        )]);
+        let section = DgSection {
+            features: vec![
+                feature("anatom", "anatom::*", &["anatom::api::*"]),
+                feature("ethics", "ethics::*", &[]),
+            ],
+            ..DgSection::default()
+        };
+        assert!(dg003(&air, &section, CheckMode::Human).is_empty());
+    }
+
+    #[test]
+    fn dg003_quiet_for_intra_feature_imports() {
+        let air = air_with_pkgs(vec![(
+            "anatom",
+            vec![(
+                "anatom/src/internal.rs",
+                "anatom::internal",
+                vec!["anatom::morals::MoralAct"],
+            )],
+        )]);
+        let section = DgSection {
+            features: vec![
+                feature("anatom", "anatom::*", &["anatom::api::*"]),
+                feature("ethics", "ethics::*", &[]),
+            ],
+            ..DgSection::default()
+        };
+        assert!(dg003(&air, &section, CheckMode::Human).is_empty());
+    }
+
+    #[test]
+    fn dg003_silent_when_under_two_features_defined() {
+        let air = air_with_pkgs(vec![("x", vec![("x/src/lib.rs", "x", vec!["y::Foo"])])]);
+        let section = DgSection {
+            features: vec![feature("x", "x::*", &[])],
+            ..DgSection::default()
+        };
+        assert!(dg003(&air, &section, CheckMode::Human).is_empty());
+    }
+
+    #[test]
+    fn dg003_quiet_when_importer_is_not_a_feature() {
+        let air = air_with_pkgs(vec![(
+            "scripts",
+            vec![(
+                "scripts/src/main.rs",
+                "scripts::main",
+                vec!["anatom::morals::MoralAct"],
+            )],
+        )]);
+        let section = DgSection {
+            features: vec![
+                feature("anatom", "anatom::*", &[]),
+                feature("ethics", "ethics::*", &[]),
+            ],
+            ..DgSection::default()
+        };
+        assert!(dg003(&air, &section, CheckMode::Human).is_empty());
+    }
+
+    // ---- DG004 ----
+
+    #[test]
+    fn dg004_fires_on_shared_to_feature_import() {
+        let air = air_with_pkgs(vec![(
+            "core",
+            vec![(
+                "core/src/util.rs",
+                "core::util",
+                vec!["anatom::types::Anatom"],
+            )],
+        )]);
+        let section = DgSection {
+            features: vec![feature("anatom", "anatom::*", &["anatom::api::*"])],
+            shared_paths: vec!["core::*".into()],
+            ..DgSection::default()
+        };
+        let diags = dg004(&air, &section, CheckMode::Human);
+        assert_eq!(diags.len(), 1);
+        assert_eq!(diags[0].rule_id, "DG004");
+        assert_eq!(diags[0].severity, Severity::Fatal);
+        assert!(diags[0].message.contains("core::util"));
+        assert!(diags[0].message.contains("anatom"));
+    }
+
+    #[test]
+    fn dg004_quiet_when_shared_imports_non_feature() {
+        let air = air_with_pkgs(vec![(
+            "core",
+            vec![("core/src/util.rs", "core::util", vec!["std::fmt::Debug"])],
+        )]);
+        let section = DgSection {
+            features: vec![feature("anatom", "anatom::*", &[])],
+            shared_paths: vec!["core::*".into()],
+            ..DgSection::default()
+        };
+        assert!(dg004(&air, &section, CheckMode::Human).is_empty());
+    }
+
+    #[test]
+    fn dg004_quiet_when_importer_not_shared() {
+        let air = air_with_pkgs(vec![(
+            "anatom",
+            vec![("anatom/src/lib.rs", "anatom", vec!["other_feature::Thing"])],
+        )]);
+        let section = DgSection {
+            features: vec![
+                feature("other_feature", "other_feature::*", &[]),
+                feature("anatom", "anatom::*", &[]),
+            ],
+            shared_paths: vec!["core::*".into()],
+            ..DgSection::default()
+        };
+        assert!(dg004(&air, &section, CheckMode::Human).is_empty());
+    }
+
+    #[test]
+    fn dg004_silent_without_shared_paths() {
+        let air = air_with_pkgs(vec![(
+            "anywhere",
+            vec![(
+                "anywhere/src/lib.rs",
+                "anywhere",
+                vec!["anatom::types::Anatom"],
+            )],
+        )]);
+        let section = DgSection {
+            features: vec![feature("anatom", "anatom::*", &[])],
+            shared_paths: vec![],
+            ..DgSection::default()
+        };
+        assert!(dg004(&air, &section, CheckMode::Human).is_empty());
+    }
+
     #[test]
     fn dg002_treats_disjoint_sccs_independently() {
         let air = air_with_pkgs(vec![
@@ -538,6 +891,7 @@ mod tests {
                 to: "lore::api::*".into(),
                 reason: Some("domain must not depend on transport".into()),
             }],
+            ..DgSection::default()
         };
         let diags = dg001(&air, &section, CheckMode::Human);
         assert!(

@@ -484,6 +484,18 @@ One diagnostic per cycle-participating import mirrors DG001's per-import granula
 
 Always Fatal: a cycle is structural and breaks layered ownership.
 
+#### DG003 — Cross-feature internals reach
+
+For every `AirImport`, fire when the importer's `module_path` matches some feature A's `module` pattern, the import path matches feature B's `module` pattern (B ≠ A), and the import path is *not* in B's `public_api`.
+
+Always Fatal. A feature's internals are private to it; cross-feature imports must go through the destination's declared public API.
+
+#### DG004 — Shared module reaching feature
+
+A module is "shared" if its `module_path` matches any pattern in `shared_paths`. Fires when a shared module's import path matches any feature's `module` pattern.
+
+Always Fatal. Dependency direction must stay feature → shared, never the reverse — otherwise shared infrastructure becomes implicitly coupled to specific features.
+
 ### Lockfile shape
 
 ```json

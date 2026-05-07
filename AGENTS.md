@@ -14,7 +14,7 @@ This file is the per-repo dev-handoff for Claude Code (and other agents — `CLA
 Two paradigms shipping:
 
 - **OT** (Canonical Domain Ownership) — OT001, OT002, OT003, OT004, OT005, OT006, OT007 all implemented. End-to-end wiring: AIR emission, paradigm host, lockfile, `locus init / accept canonical|boundary / check` CLI.
-- **DG** (Dependency Graph / Direction) — DG001 (forbidden import) and DG002 (cross-crate 2-cycle) implemented. Lockfile carries `forbidden_edges` with `from`/`to` glob patterns; CLI mutator: `locus dg forbid-edge --from <pat> --to <pat> [--reason …]`.
+- **DG** (Dependency Graph / Direction) — DG001 (forbidden import), DG002 (dependency cycle of any size via Tarjan SCC), DG003 (cross-feature internals reach), DG004 (shared module reaching feature) implemented. Lockfile carries `forbidden_edges`, `features` (with `public_api` patterns), and `shared_paths`. CLI mutators: `locus dg forbid-edge`, `locus dg define-feature`, `locus dg add-shared-path`.
 
 Locus's own source is annotated; `locus check --workspace .` is clean.
 

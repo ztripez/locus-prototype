@@ -15,6 +15,16 @@ pub struct DgSection {
     /// `from` and the imported path matches `to`.
     #[serde(default)]
     pub forbidden_edges: Vec<ForbiddenEdge>,
+    /// Named feature regions of the workspace — used by DG003 to enforce
+    /// that cross-feature imports go through the destination feature's
+    /// public API.
+    #[serde(default)]
+    pub features: Vec<FeatureDefinition>,
+    /// Module patterns whose code is shared infrastructure. Used by DG004 to
+    /// catch shared modules that depend on feature-specific code (the
+    /// dependency direction must stay feature → shared, never the reverse).
+    #[serde(default)]
+    pub shared_paths: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -26,6 +36,21 @@ pub struct ForbiddenEdge {
     /// Optional human-readable reason — surfaced in the diagnostic.
     #[serde(default)]
     pub reason: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct FeatureDefinition {
+    /// Human-readable feature name (`"billing"`, `"identity"`, …).
+    pub name: String,
+    /// Module pattern matching every path that *belongs* to this feature.
+    /// e.g. `"lore_engine_billing::*"` or `"crate::billing::*"`.
+    pub module: String,
+    /// Patterns describing this feature's public-API surface. Imports from
+    /// other features must match one of these patterns. An empty list means
+    /// the feature has no public API — every cross-feature import into it
+    /// is internal-only and trips DG003.
+    #[serde(default)]
+    pub public_api: Vec<String>,
 }
 
 /// Pattern syntax: simple suffix wildcard.

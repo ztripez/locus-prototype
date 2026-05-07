@@ -5,7 +5,9 @@ use std::path::PathBuf;
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use locus_core::paradigms::dependency_graph::{
-    DG_PREFIX, edit::forbid_edge, lockfile_schema::DgSection,
+    DG_PREFIX,
+    edit::{add_shared_path, define_feature, forbid_edge},
+    lockfile_schema::DgSection,
 };
 use locus_core::paradigms::one_truth::{
     OT_PREFIX,
@@ -44,6 +46,38 @@ enum Command {
 enum DgCommand {
     /// Forbid imports matching `from` -> `to` patterns.
     ForbidEdge(DgForbidEdgeArgs),
+    /// Define a named feature with optional public-API patterns.
+    DefineFeature(DgDefineFeatureArgs),
+    /// Mark a module pattern as shared infrastructure (DG004).
+    AddSharedPath(DgAddSharedPathArgs),
+}
+
+// ot: boundary cli.dg-define-feature cli
+#[derive(clap::Args, Debug)]
+struct DgDefineFeatureArgs {
+    /// Feature name (`billing`, `identity`, …).
+    #[arg(long)]
+    name: String,
+    /// Module pattern matching everything that belongs to this feature.
+    #[arg(long)]
+    module: String,
+    /// Public-API pattern. Repeat to add more than one.
+    #[arg(long)]
+    public_api: Vec<String>,
+    /// Overwrite an existing feature with this name.
+    #[arg(long)]
+    force: bool,
+    #[arg(long, default_value = ".")]
+    workspace: PathBuf,
+}
+
+// ot: boundary cli.dg-add-shared-path cli
+#[derive(clap::Args, Debug)]
+struct DgAddSharedPathArgs {
+    /// Module pattern matching shared infrastructure.
+    pattern: String,
+    #[arg(long, default_value = ".")]
+    workspace: PathBuf,
 }
 
 // ot: boundary cli.dg-forbid-edge cli
@@ -157,7 +191,65 @@ fn main() -> Result<()> {
 fn dg(cmd: DgCommand) -> Result<()> {
     match cmd {
         DgCommand::ForbidEdge(args) => dg_forbid_edge(args),
+        DgCommand::DefineFeature(args) => dg_define_feature(args),
+        DgCommand::AddSharedPath(args) => dg_add_shared_path(args),
     }
+}
+
+fn dg_define_feature(args: DgDefineFeatureArgs) -> Result<()> {
+    let mut lockfile = Lockfile::load_or_empty(&args.workspace)
+        .with_context(|| format!("load lockfile from {}", args.workspace.display()))?;
+    let mut section: DgSection = lockfile
+        .paradigm_section(DG_PREFIX)
+        .context("DG lockfile section is malformed")?;
+
+    define_feature(
+        &mut section,
+        &args.name,
+        &args.module,
+        &args.public_api,
+        args.force,
+    )
+    .with_context(|| format!("define feature `{}`", args.name))?;
+
+    let value = serde_json::to_value(&section).context("serialize DG section")?;
+    lockfile.paradigms.insert(DG_PREFIX.to_string(), value);
+    let written = lockfile
+        .save(&args.workspace)
+        .with_context(|| format!("write lockfile to {}", args.workspace.display()))?;
+
+    let api_label = if args.public_api.is_empty() {
+        " (no public_api — every cross-feature import will be flagged)".to_string()
+    } else {
+        format!(" with public_api = [{}]", args.public_api.join(", "))
+    };
+    println!(
+        "defined feature `{}` matching `{}`{api_label}",
+        args.name, args.module
+    );
+    println!("updated {}", written.display());
+    Ok(())
+}
+
+fn dg_add_shared_path(args: DgAddSharedPathArgs) -> Result<()> {
+    let mut lockfile = Lockfile::load_or_empty(&args.workspace)
+        .with_context(|| format!("load lockfile from {}", args.workspace.display()))?;
+    let mut section: DgSection = lockfile
+        .paradigm_section(DG_PREFIX)
+        .context("DG lockfile section is malformed")?;
+
+    add_shared_path(&mut section, &args.pattern)
+        .with_context(|| format!("add shared path `{}`", args.pattern))?;
+
+    let value = serde_json::to_value(&section).context("serialize DG section")?;
+    lockfile.paradigms.insert(DG_PREFIX.to_string(), value);
+    let written = lockfile
+        .save(&args.workspace)
+        .with_context(|| format!("write lockfile to {}", args.workspace.display()))?;
+
+    println!("added shared path pattern `{}`", args.pattern);
+    println!("updated {}", written.display());
+    Ok(())
 }
 
 fn dg_forbid_edge(args: DgForbidEdgeArgs) -> Result<()> {

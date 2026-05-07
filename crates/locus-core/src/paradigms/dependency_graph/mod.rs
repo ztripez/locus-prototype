@@ -47,6 +47,8 @@ impl Paradigm for DependencyGraph {
             lockfile.paradigm_section(DG_PREFIX).unwrap_or_default();
         let mut out = rules::dg001(air, &section, mode);
         out.extend(rules::dg002(air, mode));
+        out.extend(rules::dg003(air, &section, mode));
+        out.extend(rules::dg004(air, &section, mode));
         out
     }
 }
