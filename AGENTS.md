@@ -1,108 +1,117 @@
 # CLAUDE.md / AGENTS.md
 
-This file provides guidance to Claude Code (and other agents — `CLAUDE.md` is a symlink to this file) when working with code in this repository.
+This file is the per-repo dev-handoff for Claude Code (and other agents — `CLAUDE.md` symlinks to this file). It describes *current state* and how to keep working on it. For the underlying architectural rules, see `docs/`.
+
+## Reading order
+
+1. **[`README.md`](README.md)** — what Locus is and isn't, in two screens.
+2. **[`docs/AGENT_GUARDRAILS.md`](docs/AGENT_GUARDRAILS.md)** — non-negotiables for agents working on Locus itself (determinism, no LLM in `check`, no broad ignores, etc.). Read before adding anything to the rule engine.
+3. **[`docs/PARADIGMS.md`](docs/PARADIGMS.md)** — full umbrella spec; every paradigm Locus is meant to guard. Use as the source of truth for paradigm semantics, source-fact taxonomy, and the architectural-authority framing.
+
+The OT-paradigm details (rule list `OT001`–`OT012`, source-hint syntax, lockfile shape) are no longer in a separate doc — they live in code under `crates/locus-core/src/paradigms/one_truth/` and the example CLI flows in this file.
 
 ## Project status
 
-Phase 1 (Rust scanner emits paradigm-neutral AIR JSON) is implemented. Workspace layout:
+OT (Canonical Domain Ownership) is wired end-to-end: AIR emission, paradigm host, OT002 rule, lockfile, `locus init / accept / check` CLI. Locus's own source is annotated; `locus check --workspace .` is clean.
+
+Workspace layout:
 
 ```
 crates/
-  locus-air/       # AIR data + serde — schema_version = 1, paradigm-neutral
-  locus-core/      # paradigm host: registry + paradigms/<name>/ modules (Phase 2)
-  locus-rust/      # Rust adapter: cargo_metadata + walkdir + syn + ot: hints
-  locus-cli/       # binary `locus` (only `emit-air` subcommand so far)
-  locus-report/    # STUB; populated in Phase 3
+  locus-air/       # paradigm-neutral data + serde, schema v3
+  locus-core/      # paradigm host + OT module, shared diagnostics + lockfile
+  locus-rust/      # cargo_metadata + walkdir + syn + ot: hints + clean type renderer
+  locus-cli/       # binary `locus`: emit-air | init | accept canonical|boundary | check
+  locus-report/    # STUB; populated when SARIF/JSON formatters are needed
 tests/fixtures/sample-crate/   # standalone fixture; NOT a workspace member
 ```
 
-Two source-of-truth docs:
-- **`Paradigms.md`** — umbrella architectural spec; lists all 16 paradigm families (OT, CF, DG, BO, PA, CR, RM, UT, ER, FO, AB, AC, TX, SE, OB, TA). Read this first.
-- **`project-jumpoff.md`** — the OT-paradigm-specific spec (rule set OT001–OT012, source hints, lockfile shape). Read this for OT work.
-
-## What Locus is
-
-Locus is a multi-paradigm architecture verifier. The core question every check answers:
-
-> Does this code have architectural authority to do what it is doing here?
-
-Each paradigm implements that question for one architectural concern. The first paradigm being implemented is OT (Canonical Domain Ownership / "one truth"). Others (DG, BO, CF, PA, …) follow once the OT module and lockfile workflow are stable.
-
 ## Naming
 
-- **Locus** is the name of the tool (Cargo crate, CLI binary `locus`, lockfile `locus.lock`).
-- **OT / "one truth"** is a *paradigm*, the first one Locus implements. It survives in the rule ID prefix (`OT001`–`OT012`), the source-hint syntax (`// ot: canonical`, `// ot: boundary`, …), and the module name `crates/locus-core/src/paradigms/one_truth/`.
-- Future paradigms get analogous prefixes (`DG###`, `CF###`, …) and their own modules under `paradigms/`.
+- **Locus** is the tool (Cargo crate, CLI binary `locus`, lockfile `locus.lock`).
+- **OT / "one truth"** is one paradigm. It survives in the rule prefix (`OT###`), the source-hint syntax (`// ot: canonical`, `// ot: boundary`, …), and the module `crates/locus-core/src/paradigms/one_truth/`.
+- Future paradigms get their own prefixes (`DG###`, `CF###`, …) and their own modules under `paradigms/`.
 
 ## Architecture
 
 Two-layer separation, strictly enforced:
 
-1. **AIR is paradigm-neutral source facts.** Language adapters (`locus-rust`, future `locus-ts`, …) emit AIR. Adapters know nothing about paradigms; they record what *is* in source, not what it *means*.
-2. **Paradigm modules consume AIR.** Each paradigm under `crates/locus-core/src/paradigms/` interprets AIR through its own lens. OT looks at name/field overlap to find shadow types; DG looks at imports to find forbidden edges; CF looks at literal values to find hidden decision data. Paradigms share `locus-core`'s graph/lockfile/diagnostic infrastructure but never import each other.
+1. **AIR is paradigm-neutral source facts.** Language adapters (`locus-rust`, future `locus-ts`, …) emit AIR — they record what *is* in source, not what it *means*. AIR symbols are package-prefixed (`pkg_name::module::Type`) so cross-crate types in a workspace don't collide.
+2. **Paradigm modules consume AIR.** Each paradigm under `crates/locus-core/src/paradigms/` interprets AIR through its own lens. Paradigms share `locus-core`'s diagnostic + lockfile infrastructure but never import each other.
 
-If you find yourself reaching for `syn`/`cargo_metadata` from `locus-core`, stop — that belongs in the language adapter. If you find yourself adding paradigm-specific reasoning to `locus-rust`, also stop — that belongs in a paradigm module.
+If you reach for `syn`/`cargo_metadata` from `locus-core`, stop — that belongs in the language adapter. If you add paradigm-specific reasoning to `locus-rust`, stop — that belongs in a paradigm module.
 
 ## Self-application (dogfooding)
 
-Locus must be able to scan its own source. Annotate types in this codebase with the same `// ot:` (and future paradigm-specific) source hints used by user projects, so that once `locus check` exists in Phase 2, running it against this repo produces a clean report.
+Locus must be able to scan its own source. Annotate types at creation time, not retroactively:
 
-Add the hint at type-creation time, not retroactively. Rules of thumb for this codebase:
-- `// ot: canonical` on `locus-air` types (`AirWorkspace`, `AirType`, `AirField`, …) — they are the canonical representation of "source facts in a workspace."
-- `// ot: boundary <concept> <boundary>` on `clap`-derive arg structs in `locus-cli` (CLI input shape) and on the lockfile-on-disk types Phase 2 introduces (file format).
-- `// ot: converter` on `From`/`TryFrom` impls or free functions that move data between those layers.
+- `// ot: canonical` on `locus-air` types (`AirWorkspace`, `AirType`, `AirField`, …) — the canonical representation of "source facts in a workspace."
+- `// ot: boundary <concept> <boundary>` on `clap`-derive arg structs in `locus-cli` (CLI input shape) and on lockfile-on-disk types in `locus-core` (file format).
+- `// ot: converter` on `From`/`TryFrom` impls or free functions moving data between layers.
 
-The dogfood test is the strongest possible regression check: if Locus can't keep its own source clean, the rules are wrong.
+If `locus check --workspace .` ever stops being clean, *that* is the regression to investigate first.
 
 ## Test corpus
 
-The big-corpus integration test (`crates/locus-rust/tests/emit_air_corpus.rs`) is gated on the env var **`LOCUS_TEST_CORPUS`**. When unset, it silently passes; when set to a directory, it scans and asserts coarse invariants (≥1 package, >100 items).
+`crates/locus-rust/tests/emit_air_corpus.rs` is gated on **`LOCUS_TEST_CORPUS`**. Unset → skips silently. Recorded path:
 
-Recorded path:
 ```
 LOCUS_TEST_CORPUS=/mnt/code/projects/sides/lors
 ```
 
-(A 17-crate Bevy/anatom/governance workspace, ~190 source files. Locus currently scans it in ~1.2s and reports 621 types / 1822 functions / 19 conversions / 3571 items.)
+(17-crate Bevy/anatom/governance workspace, ~190 `.rs` files. Locus scans it in ~1.2s, emits 621 type / 1822 fn / 19 conversion AIR items, all symbols globally unique.)
 
-Run the corpus test explicitly:
+Explicit run:
+
 ```bash
 LOCUS_TEST_CORPUS=/mnt/code/projects/sides/lors \
   cargo test -p locus-rust --test emit_air_corpus -- --nocapture
 ```
 
-## Non-negotiable design constraints (apply to every paradigm)
+## Non-negotiables (apply to every paradigm)
 
-- **No proc macros as the default authoring surface.** Source hints are compact `// ot:` (and future `// dg:`, `// cf:`, …) comments only.
+These are the in-repo restatement of `docs/AGENT_GUARDRAILS.md` — read that doc for the full reasoning.
+
+- **No proc macros as the authoring surface.** Source hints are compact `// ot:` (or future `// dg:`, `// cf:`) comments only.
 - **No required runtime/compile-time dependency** in projects being checked.
-- **No hand-authored semantic config.** The accepted ownership graph lives in a generated `locus.lock`. A small structural YAML (paths, generated code globs) is allowed; a giant rule DSL is not.
-- **Blocking rules must be deterministic.** No LLM-in-the-loop for fail/pass decisions. LLM advisory mode may exist later but never gates CI.
-- **Inference-first UX.** Verbose annotations are a UX failure. The tool infers role; the developer accepts ambiguous cases via CLI.
-- **Make the canonical path shorter** than the shadow path — generators (`locus add adapter`) are part of the product, not a nice-to-have.
-- **Source facts vs. accepted ownership** (`Paradigms.md` §"Source Facts, Accepted Ownership"): adapters emit facts, paradigms apply rules; never let one bleed into the other.
-
-## Inference confidence thresholds
-
-```
->= 0.90  strong inference
->= 0.70  warning / needs acceptance (fatal in --agent-strict for new code)
->= 0.50  advisory only
-```
-
-Every inferred fact carries `confidence` and `reasons`.
+- **No hand-authored semantic config.** Accepted ownership lives in a generated `locus.lock`. A small structural YAML (paths, generated globs) is allowed; a giant rule DSL is not.
+- **Blocking rules must be deterministic.** No LLM-in-the-loop for fail/pass decisions in `locus check`. Optional advisory modes may exist later.
+- **Inference-first UX.** Verbose annotations are a UX failure. The tool infers role; users accept ambiguous cases via CLI (`locus accept …`).
+- **Make the canonical path shorter than the shadow path** — generators are part of the product, not a nice-to-have.
+- **Source facts vs. accepted ownership.** Adapters emit facts; paradigms apply rules; lockfile is the acceptance record. Never let one bleed into another.
 
 ## AIR shape gotcha
 
-`AirItem` is an externally tagged enum (`#[serde(tag = "kind")]`), so the discriminant occupies the JSON key `kind`. `AirType.kind` and `AirUsage.kind` are therefore renamed to `type_kind` / `usage_kind` in JSON to avoid duplicate keys. The Rust field names stay `kind`. If you add another `AirItem` variant whose payload struct has a `kind` field, do the same rename.
+`AirItem` is an externally tagged enum (`#[serde(tag = "kind")]`), so the discriminant occupies the JSON key `kind`. `AirType.kind` and `AirUsage.kind` are therefore serde-renamed to `type_kind` / `usage_kind` in JSON to avoid duplicate keys. The Rust field names stay `kind`. If you add another `AirItem` variant whose payload struct has a `kind` field, do the same rename.
 
-## Implementation phases
+## CLI workflow (current)
 
-- ✅ Phase 1 — paradigm-neutral AIR emission for Rust
-- 🔜 Phase 2 — first paradigm module: OT (`paradigms/one_truth/`), shared `lockfile`/`graph`/`diagnostics`, `locus init` / `accept` / `check` subcommands
-- Phase 3 — second paradigm: DG (Dependency Graph) — same shape, reuses everything in `locus-core`
-- Phase 4+ — BO, CF, PA, others; new language adapters
+```bash
+# Inspect the workspace as paradigm-neutral facts.
+locus emit-air --workspace . --pretty
 
-Do not jump ahead — paradigms after OT depend on the lockfile model and diagnostic format settling.
+# Capture annotated canonicals + boundaries from a fresh scan.
+locus init --workspace .
+
+# Onboard a codebase that has no `// ot:` annotations yet.
+locus accept canonical pkg::module::Type [--concept <id>]
+locus accept boundary  pkg::module::Dto  --concept <id> [--boundary <name>]
+
+# Run all enabled paradigms; exit non-zero on Fatal.
+locus check --workspace .                # human mode (warnings)
+locus check --workspace . --agent-strict # warnings → fatal
+```
+
+## Implementation roadmap
+
+- ✅ AIR emission (Rust adapter, package-prefixed symbols, clean type rendering)
+- ✅ OT paradigm: `init` / `accept canonical|boundary` / `check`, OT002 with `--agent-strict` elevation
+- 🔜 OT001 (duplicate canonical) and OT006 (unregistered conversion) — both nearly trivial now that the lockfile records canonical symbols
+- 🔜 OT003 (boundary leak), OT004 (direct canonical construction), OT007 (adapter-to-adapter conversion)
+- Then: second paradigm — most likely DG (Dependency Graph), since the facts (`AirUsage`) are already in AIR
+- Then: deterministic loaders (`docs/PARADIGMS.md` covers the loader system) for framework-specific normalized facts
+
+Don't jump ahead. Paradigms after OT depend on the lockfile/diagnostic conventions settling.
 
 ## Common commands
 
@@ -113,6 +122,7 @@ cargo test -p locus-rust hints::tests        # single test by path
 cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --all
 cargo run -p locus-cli -- emit-air --workspace tests/fixtures/sample-crate --pretty
+cargo run -p locus-cli -- check    --workspace tests/fixtures/sample-crate
 ```
 
 No CI is configured.
