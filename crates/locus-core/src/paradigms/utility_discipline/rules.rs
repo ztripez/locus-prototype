@@ -93,6 +93,7 @@ mod tests {
             derives: Vec::new(),
             attrs: Vec::new(),
             span: AirSpan::new("t.rs", 1, 1),
+            doc: None,
         })
     }
 
@@ -109,6 +110,7 @@ mod tests {
                     items,
                     hints: Vec::new(),
                     parse_error: None,
+                    line_count: 1,
                 }],
             }],
         }

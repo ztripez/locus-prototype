@@ -138,6 +138,7 @@ mod tests {
             derives: Vec::new(),
             attrs: Vec::new(),
             span: AirSpan::new("src/errors.rs", 1, 1),
+            doc: None,
         })
     }
 
@@ -158,6 +159,7 @@ mod tests {
                     items,
                     hints: Vec::new(),
                     parse_error: None,
+                    line_count: 1,
                 }],
             }],
         }
@@ -320,6 +322,7 @@ mod tests {
                         items: vec![pub_ty("AError")],
                         hints: Vec::new(),
                         parse_error: None,
+                        line_count: 1,
                     },
                     AirFile {
                         path: "src/b.rs".into(),
@@ -327,6 +330,7 @@ mod tests {
                         items: vec![pub_ty("BError")],
                         hints: Vec::new(),
                         parse_error: None,
+                        line_count: 1,
                     },
                 ],
             }],

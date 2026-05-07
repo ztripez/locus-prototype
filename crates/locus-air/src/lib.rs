@@ -26,7 +26,14 @@ use serde::{Deserialize, Serialize};
 ///   normalized so leading `crate` is rewritten to the package's lib name —
 ///   keeps import paths consistent with [`AirType::symbol`] for cross-paradigm
 ///   pattern matching (DG, future paradigms).
-pub const AIR_SCHEMA_VERSION: u32 = 4;
+/// - **5**: paradigm-slice scaffolding for CX, DC, AB, PA. Adds
+///   `AirFile.line_count` and `AirFunction.line_count` (CX),
+///   `AirType.doc` and `AirFunction.doc` joined doc-comment text (DC),
+///   `TypeKind::Trait` for trait declarations and a new `AirItem::Impl`
+///   variant carrying every `impl` block — inherent or trait-implementing —
+///   with its method names (AB, PA). All additions append to the end of
+///   their owning structs so existing AIR JSON stays mostly stable.
+pub const AIR_SCHEMA_VERSION: u32 = 5;
 
 // ot: canonical
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -61,6 +68,10 @@ pub struct AirFile {
     pub items: Vec<AirItem>,
     pub hints: Vec<AirHint>,
     pub parse_error: Option<String>,
+    /// Total number of source lines in the file. Used by the CX (Complexity
+    /// Budget) paradigm slice; counted by the language adapter from the raw
+    /// source string so it isn't affected by the syn parse outcome.
+    pub line_count: u32,
 }
 
 // ot: canonical
@@ -73,6 +84,7 @@ pub enum AirItem {
     Usage(AirUsage),
     TruthAction(AirTruthAction),
     Import(AirImport),
+    Impl(AirImpl),
 }
 
 // ot: canonical
@@ -89,6 +101,11 @@ pub struct AirType {
     pub derives: Vec<String>,
     pub attrs: Vec<String>,
     pub span: AirSpan,
+    /// Joined doc-comment text (`///` and `#[doc = "..."]`), one line per
+    /// source comment with the rustdoc-convention single leading space
+    /// stripped. `None` when the type has no doc comments. Consumed by the
+    /// DC (Documentation) paradigm slice.
+    pub doc: Option<String>,
 }
 
 // ot: canonical
@@ -98,6 +115,7 @@ pub enum TypeKind {
     Enum,
     Alias,
     Union,
+    Trait,
 }
 
 // ot: canonical
@@ -132,6 +150,29 @@ pub struct AirFunction {
     pub visibility: Visibility,
     pub params: Vec<(String, String)>,
     pub return_type: Option<String>,
+    pub span: AirSpan,
+    /// Lines spanned by the function (inclusive: `end_line - start_line + 1`).
+    /// Drives the CX (Complexity Budget) paradigm slice.
+    pub line_count: u32,
+    /// Joined doc-comment text (`///` and `#[doc = "..."]`), one line per
+    /// source comment with the rustdoc-convention single leading space
+    /// stripped. `None` when the function has no doc comments. Consumed by
+    /// the DC (Documentation) paradigm slice.
+    pub doc: Option<String>,
+}
+
+// ot: canonical
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AirImpl {
+    /// `Some("path::to::Trait")` for `impl Trait for Type`; `None` for
+    /// inherent `impl Type`. Rendered with the same clean type-text
+    /// formatting as [`AirType`] symbols.
+    pub trait_path: Option<String>,
+    /// The `Type` in `impl ... for Type`.
+    pub self_ty: String,
+    /// Names of methods declared inside the impl, in declaration order.
+    /// Empty for empty impls.
+    pub method_names: Vec<String>,
     pub span: AirSpan,
 }
 

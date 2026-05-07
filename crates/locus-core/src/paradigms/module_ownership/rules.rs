@@ -130,6 +130,7 @@ mod tests {
             derives: Vec::new(),
             attrs: Vec::new(),
             span: AirSpan::new("t.rs", 1, 1),
+            doc: None,
         })
     }
 
@@ -144,6 +145,7 @@ mod tests {
             derives: Vec::new(),
             attrs: Vec::new(),
             span: AirSpan::new("t.rs", 1, 1),
+            doc: None,
         })
     }
 
@@ -160,6 +162,7 @@ mod tests {
                     items,
                     hints: Vec::new(),
                     parse_error: None,
+                    line_count: 1,
                 }],
             }],
         }
@@ -323,6 +326,7 @@ mod tests {
                         items: n_pub_types(10),
                         hints: Vec::new(),
                         parse_error: None,
+                        line_count: 1,
                     },
                     AirFile {
                         path: "b.rs".into(),
@@ -330,6 +334,7 @@ mod tests {
                         items: n_pub_types(7),
                         hints: Vec::new(),
                         parse_error: None,
+                        line_count: 1,
                     },
                 ],
             }],

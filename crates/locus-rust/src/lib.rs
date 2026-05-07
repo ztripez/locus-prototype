@@ -121,6 +121,7 @@ fn scan_file(pkg_root: &Path, path: &Path, crate_name: &str) -> Result<AirFile, 
     let path_str = path.to_string_lossy().into_owned();
     let module_path = derive_module_path(pkg_root, path, crate_name);
     let hints = scan_hints(&source, &path_str);
+    let line_count = source.lines().count() as u32;
 
     match syn::parse_file(&source) {
         Ok(file) => {
@@ -131,6 +132,7 @@ fn scan_file(pkg_root: &Path, path: &Path, crate_name: &str) -> Result<AirFile, 
                 items,
                 hints,
                 parse_error: None,
+                line_count,
             })
         }
         Err(err) => Ok(AirFile {
@@ -139,6 +141,7 @@ fn scan_file(pkg_root: &Path, path: &Path, crate_name: &str) -> Result<AirFile, 
             items: Vec::new(),
             hints,
             parse_error: Some(err.to_string()),
+            line_count,
         }),
     }
 }

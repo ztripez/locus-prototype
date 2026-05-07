@@ -872,6 +872,7 @@ mod tests {
                     })],
                     hints: Vec::new(),
                     parse_error: None,
+                    line_count: 1,
                 }],
             }],
         }
@@ -1003,6 +1004,7 @@ mod tests {
             derives: Vec::new(),
             attrs: Vec::new(),
             span: AirSpan::new(file_path, 1, 1),
+            doc: None,
         })
     }
 
@@ -1022,6 +1024,8 @@ mod tests {
                 .collect(),
             return_type: ret.map(|s| s.to_string()),
             span: AirSpan::new(file_path, 1, 1),
+            line_count: 1,
+            doc: None,
         })
     }
 
@@ -1040,6 +1044,7 @@ mod tests {
                         items,
                         hints: Vec::new(),
                         parse_error: None,
+                        line_count: 1,
                     })
                     .collect(),
             }],
@@ -1517,6 +1522,7 @@ mod tests {
                         target_span: Some(AirSpan::new("src/api/v1.rs", 10, 10)),
                     }],
                     parse_error: None,
+                    line_count: 1,
                 }],
             }],
         };

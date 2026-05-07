@@ -5,13 +5,14 @@
 
 use crate::type_render::{render_path, render_type};
 use locus_air::{
-    ActionKind, AirConversion, AirField, AirFunction, AirImport, AirItem, AirSpan, AirTruthAction,
-    AirType, AirVariant, ConversionMechanism, TypeKind, Visibility,
+    ActionKind, AirConversion, AirField, AirFunction, AirImpl, AirImport, AirItem, AirSpan,
+    AirTruthAction, AirType, AirVariant, ConversionMechanism, TypeKind, Visibility,
 };
 use quote::ToTokens;
 use syn::{
-    Expr, Fields, File, ImplItem, Item, ItemEnum, ItemFn, ItemImpl, ItemMod, ItemStruct, ItemType,
-    ItemUnion, ItemUse, Pat, ReturnType, Stmt, UseTree, Visibility as SynVis, spanned::Spanned,
+    Expr, ExprLit, Fields, File, ImplItem, Item, ItemEnum, ItemFn, ItemImpl, ItemMod, ItemStruct,
+    ItemTrait, ItemType, ItemUnion, ItemUse, Lit, Meta, Pat, ReturnType, Stmt, UseTree,
+    Visibility as SynVis, spanned::Spanned,
 };
 
 pub fn collect_items(file: &File, file_path: &str, module: Option<&str>) -> Vec<AirItem> {
@@ -42,6 +43,7 @@ fn walk_items(
             Item::Enum(e) => emit_enum(e, module, file_path, out),
             Item::Type(a) => emit_alias(a, module, file_path, out),
             Item::Union(u) => emit_union(u, module, file_path, out),
+            Item::Trait(t) => emit_trait(t, module, file_path, out),
             Item::Fn(f) => emit_fn(f, module, file_path, out),
             Item::Impl(i) => emit_impl(i, module, file_path, out),
             Item::Mod(m) => emit_mod(m, module, crate_name, file_path, out),
@@ -55,7 +57,7 @@ fn emit_struct(s: &ItemStruct, module: &str, file_path: &str, out: &mut Vec<AirI
     let name = s.ident.to_string();
     let symbol = format!("{module}::{name}");
     let fields = collect_named_fields(&s.fields);
-    let (derives, attrs) = split_attrs(&s.attrs);
+    let (derives, attrs, doc) = split_attrs(&s.attrs);
     out.push(AirItem::Type(AirType {
         kind: TypeKind::Struct,
         name,
@@ -66,13 +68,14 @@ fn emit_struct(s: &ItemStruct, module: &str, file_path: &str, out: &mut Vec<AirI
         derives,
         attrs,
         span: span_of(file_path, s.span()),
+        doc,
     }));
 }
 
 fn emit_enum(e: &ItemEnum, module: &str, file_path: &str, out: &mut Vec<AirItem>) {
     let name = e.ident.to_string();
     let symbol = format!("{module}::{name}");
-    let (derives, attrs) = split_attrs(&e.attrs);
+    let (derives, attrs, doc) = split_attrs(&e.attrs);
     let variants = e
         .variants
         .iter()
@@ -91,13 +94,14 @@ fn emit_enum(e: &ItemEnum, module: &str, file_path: &str, out: &mut Vec<AirItem>
         derives,
         attrs,
         span: span_of(file_path, e.span()),
+        doc,
     }));
 }
 
 fn emit_alias(a: &ItemType, module: &str, file_path: &str, out: &mut Vec<AirItem>) {
     let name = a.ident.to_string();
     let symbol = format!("{module}::{name}");
-    let (derives, attrs) = split_attrs(&a.attrs);
+    let (derives, attrs, doc) = split_attrs(&a.attrs);
     let alias_target = render_type(&a.ty);
     out.push(AirItem::Type(AirType {
         kind: TypeKind::Alias,
@@ -113,13 +117,14 @@ fn emit_alias(a: &ItemType, module: &str, file_path: &str, out: &mut Vec<AirItem
         derives,
         attrs,
         span: span_of(file_path, a.span()),
+        doc,
     }));
 }
 
 fn emit_union(u: &ItemUnion, module: &str, file_path: &str, out: &mut Vec<AirItem>) {
     let name = u.ident.to_string();
     let symbol = format!("{module}::{name}");
-    let (derives, attrs) = split_attrs(&u.attrs);
+    let (derives, attrs, doc) = split_attrs(&u.attrs);
     let fields = u
         .fields
         .named
@@ -140,6 +145,25 @@ fn emit_union(u: &ItemUnion, module: &str, file_path: &str, out: &mut Vec<AirIte
         derives,
         attrs,
         span: span_of(file_path, u.span()),
+        doc,
+    }));
+}
+
+fn emit_trait(t: &ItemTrait, module: &str, file_path: &str, out: &mut Vec<AirItem>) {
+    let name = t.ident.to_string();
+    let symbol = format!("{module}::{name}");
+    let (derives, attrs, doc) = split_attrs(&t.attrs);
+    out.push(AirItem::Type(AirType {
+        kind: TypeKind::Trait,
+        name,
+        symbol,
+        visibility: vis_of(&t.vis),
+        fields: Vec::new(),
+        variants: Vec::new(),
+        derives,
+        attrs,
+        span: span_of(file_path, t.span()),
+        doc,
     }));
 }
 
@@ -167,13 +191,19 @@ fn emit_fn(f: &ItemFn, module: &str, file_path: &str, out: &mut Vec<AirItem>) {
         ReturnType::Type(_, ty) => Some(render_type(ty)),
     };
 
+    let span = span_of(file_path, f.span());
+    let line_count = span.line_end.saturating_sub(span.line_start) + 1;
+    let (_derives, _attrs, doc) = split_attrs(&f.attrs);
+
     out.push(AirItem::Function(AirFunction {
         name: name.clone(),
         symbol: symbol.clone(),
         visibility: vis_of(&f.vis),
         params: params.clone(),
         return_type: return_type.clone(),
-        span: span_of(file_path, f.span()),
+        span: span.clone(),
+        line_count,
+        doc,
     }));
 
     // Free-function converter signal: single arg, returns something concept-shaped.
@@ -199,6 +229,29 @@ fn emit_fn(f: &ItemFn, module: &str, file_path: &str, out: &mut Vec<AirItem>) {
 
 fn emit_impl(i: &ItemImpl, module: &str, file_path: &str, out: &mut Vec<AirItem>) {
     let self_ty = render_type(&i.self_ty);
+
+    // Emit a summary AirItem::Impl for every impl block. Conversion-shaped
+    // impls additionally produce AirItem::Conversion below; that overlap is
+    // intentional — different paradigms (PA, AB) consume the impl summary,
+    // while OT consumes the conversion view.
+    let trait_path_text = i
+        .trait_
+        .as_ref()
+        .map(|(_, trait_path, _)| render_path(trait_path));
+    let method_names = i
+        .items
+        .iter()
+        .filter_map(|item| match item {
+            ImplItem::Fn(m) => Some(m.sig.ident.to_string()),
+            _ => None,
+        })
+        .collect();
+    out.push(AirItem::Impl(AirImpl {
+        trait_path: trait_path_text,
+        self_ty: self_ty.clone(),
+        method_names,
+        span: span_of(file_path, i.span()),
+    }));
 
     if let Some((_, trait_path, _)) = &i.trait_ {
         let last = trait_path
@@ -361,20 +414,41 @@ fn vis_of(v: &SynVis) -> Visibility {
     }
 }
 
-fn split_attrs(attrs: &[syn::Attribute]) -> (Vec<String>, Vec<String>) {
+/// Returns `(derives, other_attrs, doc)`. Doc attrs (both `///` and
+/// `#[doc = "..."]`, which `syn` normalizes into the same shape) are
+/// extracted into `doc` and removed from `other_attrs` so they don't double-
+/// count under `AirType.attrs` / `AirFunction` attrs.
+fn split_attrs(attrs: &[syn::Attribute]) -> (Vec<String>, Vec<String>, Option<String>) {
     let mut derives = Vec::new();
     let mut others = Vec::new();
+    let mut doc_lines: Vec<String> = Vec::new();
     for a in attrs {
         if a.path().is_ident("derive") {
             let _ = a.parse_nested_meta(|meta| {
                 derives.push(meta.path.to_token_stream().to_string());
                 Ok(())
             });
+        } else if a.path().is_ident("doc") {
+            if let Meta::NameValue(nv) = &a.meta
+                && let Expr::Lit(ExprLit {
+                    lit: Lit::Str(s), ..
+                }) = &nv.value
+            {
+                let raw = s.value();
+                // Rustdoc convention: a single leading space is added by `///`
+                // and should be stripped so the doc text matches the source.
+                doc_lines.push(raw.strip_prefix(' ').unwrap_or(&raw).to_string());
+            }
         } else {
             others.push(a.to_token_stream().to_string());
         }
     }
-    (derives, others)
+    let doc = if doc_lines.is_empty() {
+        None
+    } else {
+        Some(doc_lines.join("\n"))
+    };
+    (derives, others, doc)
 }
 
 fn span_of(file: &str, sp: proc_macro2::Span) -> AirSpan {

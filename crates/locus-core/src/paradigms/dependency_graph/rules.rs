@@ -483,6 +483,7 @@ mod tests {
                     items,
                     hints: Vec::new(),
                     parse_error: None,
+                    line_count: 1,
                 }],
             }],
         }
@@ -580,6 +581,7 @@ mod tests {
                             items: imports.into_iter().map(import).collect(),
                             hints: Vec::new(),
                             parse_error: None,
+                            line_count: 1,
                         })
                         .collect(),
                 })
