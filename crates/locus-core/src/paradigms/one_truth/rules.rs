@@ -5,9 +5,12 @@
 //! - [`ot002`]: undeclared concept-shaped type (warning by default)
 //! - [`ot003`]: boundary type leaked into a non-boundary function signature
 //! - [`ot004`]: direct canonical construction outside owner / accepted converter
+//! - [`ot005`]: accepted boundary with no accepted converter
 //! - [`ot006`]: unregistered conversion between accepted endpoints
+//! - [`ot007`]: adapter-to-adapter conversion (both endpoints are boundaries)
 //!
-//! Future: OT005 (missing converter), OT007 (adapter-to-adapter), OT008–OT012.
+//! Future: OT008–OT012 (warning-tier polish: domain logic on boundary,
+//! scattered validation, shadow enums, shadow newtypes, primitive obsession).
 //!
 //! All rules except OT001/OT002 are lockfile-driven — they stay silent until
 //! `locus init` (or `locus accept`) has populated the OT section. This is
@@ -16,7 +19,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use locus_air::{ActionKind, AirItem, AirWorkspace};
+use locus_air::{ActionKind, AirItem, AirSpan, AirWorkspace, HintKind};
 
 use super::infer::{ConceptCluster, FIELD_OVERLAP_THRESHOLD, InferredRole};
 use super::lockfile_schema::OtSection;
@@ -439,6 +442,170 @@ fn file_of_symbol(air: &AirWorkspace, target: &str) -> Option<String> {
         }
     }
     None
+}
+
+/// Look up the span of the AIR type whose `symbol` matches `target`.
+fn span_of_symbol(air: &AirWorkspace, target: &str) -> Option<AirSpan> {
+    for pkg in &air.packages {
+        for file in &pkg.files {
+            for item in &file.items {
+                if let AirItem::Type(ty) = item
+                    && ty.symbol == target
+                {
+                    return Some(ty.span.clone());
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Last `::`-segment of a path-like identifier (`crate::dto::UserDto` →
+/// `UserDto`). Trims whitespace from the result so it can match against
+/// `AirConversion` endpoints, which sometimes carry leading `& ` from refs.
+fn short_name(path: &str) -> &str {
+    path.rsplit("::").next().unwrap_or(path).trim()
+}
+
+/// OT005 — missing converter for an accepted boundary.
+///
+/// Fires when a concept has accepted boundaries but no accepted converter
+/// mentions a given boundary (in either direction). The spec eventually wants
+/// this to track inbound vs outbound directions; for Phase 2 we only require
+/// at least one converter touching the boundary.
+///
+/// Always Fatal: a boundary with no converter is a dead end — boundary data
+/// either can't reach the canonical or can't leave it.
+pub fn ot005(air: &AirWorkspace, section: &OtSection, mode: CheckMode) -> Vec<Diagnostic> {
+    let mut out = Vec::new();
+    for (concept_id, entry) in &section.concepts {
+        for boundary in &entry.boundaries {
+            let short = short_name(&boundary.symbol);
+            let has_converter = entry
+                .converters
+                .iter()
+                .any(|c| short_name(&c.from) == short || short_name(&c.to) == short);
+            if has_converter {
+                continue;
+            }
+            let span = span_of_symbol(air, &boundary.symbol)
+                .unwrap_or_else(|| AirSpan::new(boundary.symbol.clone(), 1, 1));
+            out.push(Diagnostic {
+                rule_id: "OT005".to_string(),
+                severity: mode.elevate(Severity::Fatal),
+                span,
+                concept: Some(concept_id.clone()),
+                message: format!(
+                    "boundary `{}` (concept `{concept_id}`) has no accepted converter \
+                     to/from the canonical",
+                    boundary.symbol
+                ),
+                why: vec![
+                    format!("canonical: `{}`", entry.canonical.symbol),
+                    format!(
+                        "no entry under `paradigms.OT.concepts.{concept_id}.converters` \
+                         mentions `{short}` on either side"
+                    ),
+                ],
+                suggested_fix: Some(format!(
+                    "add an `impl TryFrom<{short}> for {}` (or its inverse) and rerun \
+                     `locus init`; alternatively remove the boundary acceptance if it's \
+                     no longer needed",
+                    short_name(&entry.canonical.symbol),
+                )),
+            });
+        }
+    }
+    out
+}
+
+/// OT007 — adapter-to-adapter conversion.
+///
+/// Fires on every `AirConversion` whose endpoints are both lockfile-accepted
+/// boundaries (in any concept). Adapter-to-adapter conversions bypass the
+/// canonical and create a hidden translation path; the preferred shape is
+/// `adapter → canonical → adapter`.
+///
+/// Suppressed when a `// ot: protocol-translation reason="…"` hint binds to
+/// the conversion's span — the explicit "yes I really mean this" escape hatch
+/// from the spec.
+///
+/// Always Fatal otherwise.
+pub fn ot007(air: &AirWorkspace, section: &OtSection, mode: CheckMode) -> Vec<Diagnostic> {
+    let mut boundary_to_concept: BTreeMap<String, String> = BTreeMap::new();
+    for (concept_id, entry) in &section.concepts {
+        for b in &entry.boundaries {
+            boundary_to_concept.insert(short_name(&b.symbol).to_string(), concept_id.clone());
+        }
+    }
+    if boundary_to_concept.is_empty() {
+        return Vec::new();
+    }
+
+    let mut out = Vec::new();
+    for pkg in &air.packages {
+        for file in &pkg.files {
+            for item in &file.items {
+                let AirItem::Conversion(c) = item else {
+                    continue;
+                };
+                let from_short = short_name(&c.from);
+                let to_short = short_name(&c.to);
+                let Some(from_concept) = boundary_to_concept.get(from_short) else {
+                    continue;
+                };
+                let Some(to_concept) = boundary_to_concept.get(to_short) else {
+                    continue;
+                };
+
+                if conversion_has_protocol_translation_hint(&file.hints, &c.span) {
+                    continue;
+                }
+
+                let cross_label = if from_concept == to_concept {
+                    "within the same concept".to_string()
+                } else {
+                    format!("across concepts (`{from_concept}` → `{to_concept}`)")
+                };
+                out.push(Diagnostic {
+                    rule_id: "OT007".to_string(),
+                    severity: mode.elevate(Severity::Fatal),
+                    span: c.span.clone(),
+                    concept: Some(from_concept.clone()),
+                    message: format!(
+                        "adapter-to-adapter conversion `{}` ({} → {}) — both endpoints \
+                         are accepted boundaries",
+                        c.symbol, c.from, c.to
+                    ),
+                    why: vec![
+                        format!("`{from_short}` is a boundary for `{from_concept}`"),
+                        format!("`{to_short}` is a boundary for `{to_concept}`"),
+                        format!("conversion routes {cross_label}"),
+                        "preferred path: adapter → canonical → adapter".into(),
+                    ],
+                    suggested_fix: Some(
+                        "go through the canonical (e.g. `Canonical::try_from(from)?` then \
+                         `Other::from(canonical)`), or annotate the conversion with \
+                         `// ot: protocol-translation reason=\"...\"` if it's an \
+                         intentional shortcut"
+                            .into(),
+                    ),
+                });
+            }
+        }
+    }
+    out
+}
+
+/// True if any `// ot: protocol-translation` hint in the file has a
+/// `target_span` that lands within the conversion's span.
+fn conversion_has_protocol_translation_hint(hints: &[locus_air::AirHint], span: &AirSpan) -> bool {
+    hints.iter().any(|h| {
+        matches!(h.kind, HintKind::ProtocolTranslation { .. })
+            && h.target_span
+                .as_ref()
+                .is_some_and(|t| t.line_start >= span.line_start && t.line_start <= span.line_end)
+    })
 }
 
 /// Whole-identifier match: returns true if `name` appears in `text` not as a
@@ -1154,6 +1321,251 @@ mod tests {
         )]);
         let section = OtSection::default();
         assert!(ot004(&air, &section, CheckMode::Human).is_empty());
+    }
+
+    // ---- OT005 ----
+
+    #[test]
+    fn ot005_fires_when_boundary_has_no_converter() {
+        let air = air_with_files(vec![
+            (
+                "src/identity.rs",
+                vec![ty_in_file(
+                    "crate::identity::User",
+                    "User",
+                    "src/identity.rs",
+                )],
+            ),
+            (
+                "src/dto.rs",
+                vec![ty_in_file("crate::dto::UserDto", "UserDto", "src/dto.rs")],
+            ),
+        ]);
+        let section = section_with_canonical_and_boundary(
+            "crate::identity::User",
+            "crate::dto::UserDto",
+            &[], // no converters accepted
+        );
+        let diags = ot005(&air, &section, CheckMode::Human);
+        assert_eq!(diags.len(), 1);
+        assert_eq!(diags[0].rule_id, "OT005");
+        assert_eq!(diags[0].severity, Severity::Fatal);
+        assert!(diags[0].message.contains("UserDto"));
+        assert!(
+            diags[0].span.file.ends_with("src/dto.rs"),
+            "should pin to the boundary's defining file; got {}",
+            diags[0].span.file
+        );
+    }
+
+    #[test]
+    fn ot005_quiet_when_a_converter_mentions_the_boundary() {
+        let air = air_with_files(vec![
+            (
+                "src/identity.rs",
+                vec![ty_in_file(
+                    "crate::identity::User",
+                    "User",
+                    "src/identity.rs",
+                )],
+            ),
+            (
+                "src/dto.rs",
+                vec![ty_in_file("crate::dto::UserDto", "UserDto", "src/dto.rs")],
+            ),
+        ]);
+        let section = section_with_canonical_and_boundary(
+            "crate::identity::User",
+            "crate::dto::UserDto",
+            &["crate::dto::impl TryFrom<UserDto> for User"],
+        );
+        assert!(ot005(&air, &section, CheckMode::Human).is_empty());
+    }
+
+    #[test]
+    fn ot005_silent_when_no_boundaries_accepted() {
+        let air = air_with_files(vec![(
+            "src/identity.rs",
+            vec![ty_in_file(
+                "crate::identity::User",
+                "User",
+                "src/identity.rs",
+            )],
+        )]);
+        use super::super::lockfile_schema::{AcceptedCanonical, ConceptEntry, Source};
+        let mut concepts = BTreeMap::new();
+        concepts.insert(
+            "user".into(),
+            ConceptEntry {
+                canonical: AcceptedCanonical {
+                    symbol: "crate::identity::User".into(),
+                    source: Source::Hint,
+                },
+                boundaries: Vec::new(),
+                converters: Vec::new(),
+            },
+        );
+        let section = OtSection { concepts };
+        assert!(ot005(&air, &section, CheckMode::Human).is_empty());
+    }
+
+    // ---- OT007 ----
+
+    fn section_with_two_boundaries(
+        canonical: &str,
+        b1: (&str, &str),
+        b2: (&str, &str),
+    ) -> OtSection {
+        use super::super::lockfile_schema::{
+            AcceptedBoundary, AcceptedCanonical, ConceptEntry, Source,
+        };
+        let mut concepts = BTreeMap::new();
+        concepts.insert(
+            "user".into(),
+            ConceptEntry {
+                canonical: AcceptedCanonical {
+                    symbol: canonical.into(),
+                    source: Source::Hint,
+                },
+                boundaries: vec![
+                    AcceptedBoundary {
+                        symbol: b1.0.into(),
+                        boundary: Some(b1.1.into()),
+                        source: Source::Hint,
+                    },
+                    AcceptedBoundary {
+                        symbol: b2.0.into(),
+                        boundary: Some(b2.1.into()),
+                        source: Source::Hint,
+                    },
+                ],
+                converters: Vec::new(),
+            },
+        );
+        OtSection { concepts }
+    }
+
+    fn conversion_in_file(
+        symbol: &str,
+        from: &str,
+        to: &str,
+        file_path: &str,
+        line: u32,
+    ) -> AirItem {
+        AirItem::Conversion(AirConversion {
+            from: from.into(),
+            to: to.into(),
+            mechanism: ConversionMechanism::From,
+            symbol: symbol.into(),
+            span: AirSpan::new(file_path, line, line),
+        })
+    }
+
+    #[test]
+    fn ot007_fires_on_adapter_to_adapter() {
+        let air = air_with_files(vec![(
+            "src/api/v1.rs",
+            vec![conversion_in_file(
+                "crate::api::v1::impl From<UserDtoV1> for UserDtoV2",
+                "UserDtoV1",
+                "UserDtoV2",
+                "src/api/v1.rs",
+                10,
+            )],
+        )]);
+        let section = section_with_two_boundaries(
+            "crate::identity::User",
+            ("crate::api::v1::UserDtoV1", "api.v1"),
+            ("crate::api::v2::UserDtoV2", "api.v2"),
+        );
+        let diags = ot007(&air, &section, CheckMode::Human);
+        assert_eq!(diags.len(), 1);
+        assert_eq!(diags[0].rule_id, "OT007");
+        assert_eq!(diags[0].severity, Severity::Fatal);
+        assert!(
+            diags[0].message.contains("UserDtoV1") && diags[0].message.contains("UserDtoV2"),
+            "message: {}",
+            diags[0].message
+        );
+    }
+
+    #[test]
+    fn ot007_quiet_with_protocol_translation_hint() {
+        use locus_air::AirHint;
+        let air = AirWorkspace {
+            schema_version: AIR_SCHEMA_VERSION,
+            packages: vec![AirPackage {
+                name: "x".into(),
+                version: "0".into(),
+                root_dir: "/".into(),
+                files: vec![AirFile {
+                    path: "src/api/v1.rs".into(),
+                    module_path: Some("crate".into()),
+                    items: vec![conversion_in_file(
+                        "crate::api::v1::translate",
+                        "UserDtoV1",
+                        "UserDtoV2",
+                        "src/api/v1.rs",
+                        10,
+                    )],
+                    hints: vec![AirHint {
+                        kind: HintKind::ProtocolTranslation {
+                            reason: Some("compatibility endpoint".into()),
+                        },
+                        raw: "// ot: protocol-translation reason=\"compatibility endpoint\"".into(),
+                        span: AirSpan::new("src/api/v1.rs", 9, 9),
+                        target_span: Some(AirSpan::new("src/api/v1.rs", 10, 10)),
+                    }],
+                    parse_error: None,
+                }],
+            }],
+        };
+        let section = section_with_two_boundaries(
+            "crate::identity::User",
+            ("crate::api::v1::UserDtoV1", "api.v1"),
+            ("crate::api::v2::UserDtoV2", "api.v2"),
+        );
+        assert!(
+            ot007(&air, &section, CheckMode::Human).is_empty(),
+            "protocol-translation hint should suppress OT007"
+        );
+    }
+
+    #[test]
+    fn ot007_silent_when_no_boundaries_accepted() {
+        let air = air_with_files(vec![(
+            "src/api/v1.rs",
+            vec![conversion_in_file(
+                "crate::api::v1::translate",
+                "Foo",
+                "Bar",
+                "src/api/v1.rs",
+                10,
+            )],
+        )]);
+        let section = OtSection::default();
+        assert!(ot007(&air, &section, CheckMode::Human).is_empty());
+    }
+
+    #[test]
+    fn ot007_quiet_when_only_one_endpoint_is_a_boundary() {
+        // boundary → canonical isn't OT007 — that's the expected path.
+        let air = air_with_files(vec![(
+            "src/dto.rs",
+            vec![conversion_in_file(
+                "crate::dto::impl TryFrom<UserDto> for User",
+                "UserDto",
+                "User",
+                "src/dto.rs",
+                10,
+            )],
+        )]);
+        let section = section_with_canonical_and_boundary(
+            "crate::identity::User",
+            "crate::dto::UserDto",
+            &[],
+        );
+        assert!(ot007(&air, &section, CheckMode::Human).is_empty());
     }
 
     #[test]

@@ -52,7 +52,9 @@ impl Paradigm for OneTruth {
         out.extend(rules::ot002(&clusters, mode));
         out.extend(rules::ot003(air, &section, mode));
         out.extend(rules::ot004(air, &section, mode));
+        out.extend(rules::ot005(air, &section, mode));
         out.extend(rules::ot006(air, &section, mode));
+        out.extend(rules::ot007(air, &section, mode));
         out
     }
 }
