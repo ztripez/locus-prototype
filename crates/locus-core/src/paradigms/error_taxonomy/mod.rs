@@ -6,9 +6,10 @@
 //! - ER001: multiple public error types in the same module (heuristic
 //!   warning that flags taxonomy forks like `UserError` + `CreateUserError`
 //!   sitting next to each other in one file).
-//!
-//! ER001 is lockfile-free; the rule fires from AIR alone. Future rules will
-//! consume the (currently empty) [`lockfile_schema::ErSection`].
+//! - ER002: a `Result<_, E>` return whose `E` matches a forbidden
+//!   "string-shaped" / catch-all pattern. Lockfile-driven via
+//!   [`lockfile_schema::ErSection::forbidden_error_types`]; silent until
+//!   that list is populated.
 
 // ot: canonical
 
@@ -39,6 +40,8 @@ impl Paradigm for ErrorTaxonomy {
     fn check(&self, air: &AirWorkspace, lockfile: &Lockfile, mode: CheckMode) -> Vec<Diagnostic> {
         let section: lockfile_schema::ErSection =
             lockfile.paradigm_section(ER_PREFIX).unwrap_or_default();
-        rules::er001(air, &section, mode)
+        let mut diags = rules::er001(air, &section, mode);
+        diags.extend(rules::er002(air, &section, mode));
+        diags
     }
 }

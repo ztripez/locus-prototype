@@ -5,13 +5,15 @@
 //!   is a declared boundary error type. Boundary errors leaking into domain
 //!   function signatures break the failure-lineage invariant — the layer
 //!   edge that should have wrapped the transport error didn't.
+//! - [`fl002`]: a "panic-shaped" callee (`unwrap` / `expect` /
+//!   `unwrap_or_default` / `panic` / `todo` / `unimplemented`) fires from a
+//!   file whose `module_path` is not in `invariant_owner_paths`. The
+//!   agent's "make it compile by unwrapping" anti-pattern.
 //!
 //! Future FL rules will tackle the harder cases the spec calls out (silent
-//! `.ok()` swallows, `unwrap_or_default` on required loads, retry loops
-//! without policy). Those need AIR call-site detail we don't have yet, so
-//! FL001 starts with the variant that's purely signature-shaped.
+//! `.ok()` swallows, retry loops without policy).
 
-use locus_air::{AirItem, AirWorkspace};
+use locus_air::{AirCallSite, AirItem, AirWorkspace, CallKind};
 
 use super::lockfile_schema::{FlSection, matches_pattern};
 use crate::diagnostics::{CheckMode, Diagnostic, Severity};
@@ -154,6 +156,117 @@ fn extract_result_error_type(rendered: &str) -> Option<&str> {
     }
 }
 
+/// FL002 — unwrap-family failure swallowing.
+///
+/// For every `AirItem::CallSite` whose `kind` is `Method` or `Macro` and
+/// whose `callee` (last `::` segment for path-qualified macros) matches any
+/// pattern in `forbidden_callees`, fire a diagnostic when the call site's
+/// enclosing-file `module_path` does NOT match any pattern in
+/// `invariant_owner_paths`. Function-shaped calls are intentionally
+/// excluded — `panic!` is a `Macro`, `unwrap`/`expect` are `Method`s, and
+/// `Function` calls would only false-positive on user code that happens to
+/// name a function `unwrap`.
+///
+/// Severity: Warning by default; Fatal under `--agent-strict`. The fact is
+/// deterministic — `mode.elevate(Severity::Warning)` — but the policy is a
+/// lockfile decision, so the human-mode posture is "warn, don't break CI".
+///
+/// Silent until `invariant_owner_paths` is populated, mirroring every other
+/// lockfile-driven rule. The default `forbidden_callees` list is non-empty
+/// but the rule still doesn't fire until the user has declared *where the
+/// legitimate panic-callsites live*.
+pub fn fl002(air: &AirWorkspace, section: &FlSection, mode: CheckMode) -> Vec<Diagnostic> {
+    if section.invariant_owner_paths.is_empty() || section.forbidden_callees.is_empty() {
+        return Vec::new();
+    }
+
+    let mut out = Vec::new();
+    for pkg in &air.packages {
+        for file in &pkg.files {
+            let Some(module_path) = file.module_path.as_deref() else {
+                continue;
+            };
+            if section
+                .invariant_owner_paths
+                .iter()
+                .any(|pat| matches_pattern(pat, module_path))
+            {
+                continue; // file itself is an accepted invariant owner
+            }
+            for item in &file.items {
+                let AirItem::CallSite(cs) = item else {
+                    continue;
+                };
+                // Function-shaped calls don't carry the unwrap/panic
+                // semantics we care about (and would false-positive on user
+                // free functions named `unwrap`). Method and Macro only.
+                if !matches!(cs.kind, CallKind::Method | CallKind::Macro) {
+                    continue;
+                }
+                let last = cs.callee.rsplit("::").next().unwrap_or(&cs.callee);
+                let Some(forbidden_pattern) = section
+                    .forbidden_callees
+                    .iter()
+                    .find(|pat| matches_pattern(pat, last))
+                else {
+                    continue;
+                };
+                out.push(diagnostic_for_fl002(
+                    cs,
+                    module_path,
+                    forbidden_pattern,
+                    mode,
+                ));
+            }
+        }
+    }
+    out
+}
+
+fn diagnostic_for_fl002(
+    cs: &AirCallSite,
+    module_path: &str,
+    forbidden_pattern: &str,
+    mode: CheckMode,
+) -> Diagnostic {
+    let function_label = cs
+        .function
+        .as_deref()
+        .unwrap_or("<unknown enclosing function>");
+    Diagnostic {
+        rule_id: "FL002".to_string(),
+        severity: mode.elevate(Severity::Warning),
+        span: cs.span.clone(),
+        concept: None,
+        message: format!(
+            "panic-shaped call `{}` in `{module_path}` (fn `{function_label}`) — \
+             matches `paradigms.FL.forbidden_callees` pattern `{forbidden_pattern}`",
+            cs.callee,
+        ),
+        why: vec![
+            format!("callee `{}`", cs.callee),
+            format!("enclosing function: `{function_label}`"),
+            format!(
+                "module `{module_path}` does not match any \
+                 `paradigms.FL.invariant_owner_paths` pattern"
+            ),
+            format!(
+                "callee matches forbidden pattern `{forbidden_pattern}` in \
+                 `paradigms.FL.forbidden_callees`"
+            ),
+        ],
+        suggested_fix: Some(format!(
+            "replace this `{}` with structured error propagation — return \
+             a `Result` and let the caller handle the failure path — or, if \
+             `{module_path}` is a legitimate invariant owner (supervisor, \
+             startup-asserting entry point, test-support module), accept it \
+             by adding the module to `paradigms.FL.invariant_owner_paths` \
+             in `locus.lock`",
+            cs.callee,
+        )),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -198,6 +311,7 @@ mod tests {
         FlSection {
             domain_paths: vec!["x::domain::*".into()],
             boundary_error_patterns: vec!["reqwest::Error".into(), "sqlx::*".into()],
+            ..Default::default()
         }
     }
 
@@ -272,11 +386,13 @@ mod tests {
         let only_domain = FlSection {
             domain_paths: vec!["x::domain::*".into()],
             boundary_error_patterns: Vec::new(),
+            ..Default::default()
         };
         assert!(fl001(&air, &only_domain, CheckMode::Human).is_empty());
         let only_boundary = FlSection {
             domain_paths: Vec::new(),
             boundary_error_patterns: vec!["reqwest::Error".into()],
+            ..Default::default()
         };
         assert!(fl001(&air, &only_boundary, CheckMode::Human).is_empty());
         assert!(fl001(&air, &FlSection::default(), CheckMode::Human).is_empty());
@@ -427,6 +543,213 @@ mod tests {
         assert_eq!(
             extract_result_error_type("std::result::Result<User, MyError>"),
             None,
+        );
+    }
+
+    // ---- fl002 behavioural tests ----
+
+    use super::super::lockfile_schema::default_forbidden_callees;
+
+    fn call_site(callee: &str, kind: CallKind, function: Option<&str>, line: u32) -> AirItem {
+        AirItem::CallSite(AirCallSite {
+            callee: callee.to_string(),
+            kind,
+            function: function.map(|s| s.to_string()),
+            span: AirSpan::new("src/domain/user.rs", line, line),
+        })
+    }
+
+    /// Onboarded baseline for FL002: at least one invariant-owner pattern is
+    /// declared; default `forbidden_callees` covers the unwrap family.
+    fn fl002_section() -> FlSection {
+        FlSection {
+            domain_paths: Vec::new(),
+            boundary_error_patterns: Vec::new(),
+            forbidden_callees: default_forbidden_callees(),
+            invariant_owner_paths: vec!["x::supervisor::*".into()],
+        }
+    }
+
+    #[test]
+    fn fl002_fires_on_unwrap_method_call_in_non_invariant_owner_module() {
+        let air = air_with_module(
+            "x::domain::user",
+            vec![call_site(
+                "unwrap",
+                CallKind::Method,
+                Some("x::domain::user::greet"),
+                7,
+            )],
+        );
+        let diags = fl002(&air, &fl002_section(), CheckMode::Human);
+        assert_eq!(diags.len(), 1);
+        assert_eq!(diags[0].rule_id, "FL002");
+        assert_eq!(diags[0].severity, Severity::Warning);
+        assert!(diags[0].concept.is_none());
+        assert_eq!(diags[0].span.line_start, 7);
+        assert!(
+            diags[0].message.contains("unwrap"),
+            "message should surface the callee; got: {}",
+            diags[0].message,
+        );
+        assert!(
+            diags[0].message.contains("x::domain::user"),
+            "message should surface the module path; got: {}",
+            diags[0].message,
+        );
+        assert!(
+            diags[0]
+                .why
+                .iter()
+                .any(|w| w.contains("invariant_owner_paths")),
+            "why should reference invariant_owner_paths; got: {:?}",
+            diags[0].why,
+        );
+        assert!(
+            diags[0]
+                .why
+                .iter()
+                .any(|w| w.contains("x::domain::user::greet")),
+            "why should reference enclosing function; got: {:?}",
+            diags[0].why,
+        );
+        assert!(
+            diags[0]
+                .why
+                .iter()
+                .any(|w| w.contains("forbidden_callees") || w.contains("unwrap")),
+            "why should reference the forbidden callee; got: {:?}",
+            diags[0].why,
+        );
+    }
+
+    #[test]
+    fn fl002_fires_on_panic_macro_call_without_double_colon() {
+        // `panic!` invocation: visitor records `callee = "panic"`, `Macro` kind.
+        let air = air_with_module(
+            "x::domain::user",
+            vec![call_site(
+                "panic",
+                CallKind::Macro,
+                Some("x::domain::user::oops"),
+                12,
+            )],
+        );
+        let diags = fl002(&air, &fl002_section(), CheckMode::Human);
+        assert_eq!(diags.len(), 1);
+        assert!(
+            diags[0].message.contains("panic"),
+            "message should mention the panic callee; got: {}",
+            diags[0].message,
+        );
+    }
+
+    #[test]
+    fn fl002_quiet_when_callee_is_in_invariant_owner_module() {
+        // Same `unwrap` call, but the file's module_path matches an invariant
+        // owner pattern — accepted, no diagnostic.
+        let air = air_with_module(
+            "x::supervisor::startup",
+            vec![call_site(
+                "unwrap",
+                CallKind::Method,
+                Some("x::supervisor::startup::boot"),
+                3,
+            )],
+        );
+        assert!(fl002(&air, &fl002_section(), CheckMode::Human).is_empty());
+    }
+
+    #[test]
+    fn fl002_silent_when_invariant_owner_paths_empty() {
+        // No `invariant_owner_paths` configured → silent posture, even though
+        // `forbidden_callees` defaults are non-empty.
+        let air = air_with_module(
+            "x::domain::user",
+            vec![call_site(
+                "unwrap",
+                CallKind::Method,
+                Some("x::domain::user::greet"),
+                7,
+            )],
+        );
+        let section = FlSection {
+            domain_paths: Vec::new(),
+            boundary_error_patterns: Vec::new(),
+            forbidden_callees: default_forbidden_callees(),
+            invariant_owner_paths: Vec::new(),
+        };
+        assert!(
+            fl002(&air, &section, CheckMode::Human).is_empty(),
+            "rule should wait for explicit invariant_owner_paths declaration",
+        );
+    }
+
+    #[test]
+    fn fl002_agent_strict_elevates_warning_to_fatal() {
+        let air = air_with_module(
+            "x::domain::user",
+            vec![call_site(
+                "unwrap",
+                CallKind::Method,
+                Some("x::domain::user::greet"),
+                7,
+            )],
+        );
+        let diags = fl002(&air, &fl002_section(), CheckMode::AgentStrict);
+        assert_eq!(diags.len(), 1);
+        assert_eq!(diags[0].severity, Severity::Fatal);
+    }
+
+    #[test]
+    fn fl002_quiet_on_function_kind_callees() {
+        // Function-shaped calls are intentionally excluded — a user free
+        // function named `unwrap` shouldn't trip FL002.
+        let air = air_with_module(
+            "x::domain::user",
+            vec![call_site(
+                "unwrap",
+                CallKind::Function,
+                Some("x::domain::user::greet"),
+                7,
+            )],
+        );
+        assert!(fl002(&air, &fl002_section(), CheckMode::Human).is_empty());
+    }
+
+    #[test]
+    fn fl002_quiet_on_unrelated_callees() {
+        let air = air_with_module(
+            "x::domain::user",
+            vec![call_site(
+                "len",
+                CallKind::Method,
+                Some("x::domain::user::greet"),
+                7,
+            )],
+        );
+        assert!(fl002(&air, &fl002_section(), CheckMode::Human).is_empty());
+    }
+
+    #[test]
+    fn fl002_matches_path_qualified_macro_via_last_segment() {
+        // `std::panic!` → callee `"std::panic"`. We match on the last `::`
+        // segment, so this should still fire.
+        let air = air_with_module(
+            "x::domain::user",
+            vec![call_site(
+                "std::panic",
+                CallKind::Macro,
+                Some("x::domain::user::oops"),
+                7,
+            )],
+        );
+        let diags = fl002(&air, &fl002_section(), CheckMode::Human);
+        assert_eq!(diags.len(), 1);
+        assert!(
+            diags[0].message.contains("std::panic"),
+            "message should preserve the full callee; got: {}",
+            diags[0].message,
         );
     }
 }

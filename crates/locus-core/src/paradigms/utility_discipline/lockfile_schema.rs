@@ -21,6 +21,13 @@ pub struct UtSection {
     /// utility modules. Pattern syntax mirrors DG: simple suffix wildcards.
     #[serde(default)]
     pub utility_paths: Vec<String>,
+    /// Import-path patterns that are forbidden inside any file matching
+    /// `utility_paths`. Used by UT002: a utility module is by definition
+    /// domain-free, so importing a feature/domain concept (`crate::domain::*`,
+    /// `*::roles::*`, …) means the helper "knows about" semantics it shouldn't.
+    /// Empty by default — UT002 stays silent until the user opts in.
+    #[serde(default)]
+    pub forbidden_imports: Vec<String>,
 }
 
 /// Pattern syntax: simple suffix wildcard, mirroring DG.

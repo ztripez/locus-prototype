@@ -2,15 +2,19 @@
 //!
 //! Implemented:
 //! - [`rm001`]: function performs too many distinct kinds of work.
+//! - [`rm002`]: converter performs a side-effect fact.
 //!
 //! Lockfile-driven: stays silent until the user opts in by setting
-//! `paradigms.RM.default_max_action_kinds`. This mirrors the DG/UT pattern —
+//! `paradigms.RM.default_max_action_kinds` (RM001) or by populating
+//! `paradigms.RM.converter_paths` (RM002). This mirrors the DG/UT pattern —
 //! pre-onboarding we don't have the data (or the user's intent) to call any
 //! particular density "wrong."
 
 use std::collections::BTreeMap;
 
-use locus_air::{ActionKind, AirItem, AirSpan, AirTruthAction, AirWorkspace};
+use locus_air::{
+    ActionKind, AirFact, AirItem, AirSpan, AirTruthAction, AirWorkspace, FactKind, FactTarget,
+};
 
 use super::lockfile_schema::{RmSection, matches_pattern};
 use crate::diagnostics::{CheckMode, Diagnostic, Severity};
@@ -185,6 +189,138 @@ fn format_kind(k: &ActionKind) -> String {
     }
 }
 
+/// RM002 — converter performs a side-effect fact.
+///
+/// For every `AirFact` whose `kind` is one of the side-effect-shaped kinds
+/// (`SpawnedWork`, `Logging`, `ConfigRead`) and whose `target` is
+/// `FactTarget::Function { symbol }`, look up the targeted function's file
+/// and fire when the file's `module_path` matches any pattern in
+/// `converter_paths`. Converters are supposed to be pure mapping; mixing in
+/// any side effect collapses the boundary that justifies a converter layer
+/// in the first place.
+///
+/// Severity: Warning by default; Fatal under `--agent-strict`. Deterministic
+/// — driven entirely by lockfile patterns and loader-emitted facts.
+///
+/// Silent when `converter_paths` is empty: same opt-in UX as the rest of the
+/// paradigm.
+pub fn rm002(air: &AirWorkspace, section: &RmSection, mode: CheckMode) -> Vec<Diagnostic> {
+    if section.converter_paths.is_empty() {
+        return Vec::new();
+    }
+
+    let mut out = Vec::new();
+    for fact in &air.facts {
+        if !is_side_effect_fact_kind(fact.kind) {
+            continue;
+        }
+        let FactTarget::Function { symbol } = &fact.target else {
+            continue;
+        };
+        let Some((module_path, fn_span)) = lookup_function(air, symbol) else {
+            continue;
+        };
+        let matched_pattern = section
+            .converter_paths
+            .iter()
+            .find(|pat| matches_pattern(pat, module_path));
+        let Some(matched_pattern) = matched_pattern else {
+            continue;
+        };
+        out.push(rm002_diagnostic(
+            fact,
+            symbol,
+            module_path,
+            fn_span,
+            matched_pattern,
+            mode,
+        ));
+    }
+    out
+}
+
+fn is_side_effect_fact_kind(kind: FactKind) -> bool {
+    matches!(
+        kind,
+        FactKind::SpawnedWork | FactKind::Logging | FactKind::ConfigRead
+    )
+}
+
+fn format_fact_kind(kind: FactKind) -> &'static str {
+    match kind {
+        FactKind::SpawnedWork => "spawned-work",
+        FactKind::Logging => "logging",
+        FactKind::ConfigRead => "config-read",
+        FactKind::ExternalIo => "external-io",
+        FactKind::PersistenceWrite => "persistence-write",
+        FactKind::BlockingCall => "blocking-call",
+        FactKind::HotPath => "hot-path",
+        FactKind::RequestContext => "request-context",
+        FactKind::BoundaryEntry => "boundary-entry",
+        FactKind::RuntimeStateOwner => "runtime-state-owner",
+        FactKind::BackgroundWorker => "background-worker",
+    }
+}
+
+/// Resolve `symbol` against AIR. Returns the enclosing file's module_path
+/// and the function's span. Mirrors `runtime_work::rules::lookup_function`.
+fn lookup_function<'a>(air: &'a AirWorkspace, symbol: &str) -> Option<(&'a str, AirSpan)> {
+    for pkg in &air.packages {
+        for file in &pkg.files {
+            for item in &file.items {
+                if let AirItem::Function(f) = item
+                    && f.symbol == symbol
+                {
+                    let module = file.module_path.as_deref()?;
+                    return Some((module, f.span.clone()));
+                }
+            }
+        }
+    }
+    None
+}
+
+fn rm002_diagnostic(
+    fact: &AirFact,
+    symbol: &str,
+    module_path: &str,
+    fn_span: AirSpan,
+    matched_pattern: &str,
+    mode: CheckMode,
+) -> Diagnostic {
+    let span = match &fact.target {
+        FactTarget::Span(s) => s.clone(),
+        FactTarget::Function { .. } | FactTarget::File { .. } => fn_span,
+    };
+    let kind_label = format_fact_kind(fact.kind);
+    let evidence = fact.evidence.as_deref().unwrap_or("?");
+    let mut why = vec![
+        format!("module `{module_path}` matches converter-path pattern `{matched_pattern}`"),
+        format!("fact kind: {kind_label}"),
+        format!("evidence: `{evidence}`"),
+        format!("enclosing function: `{symbol}`"),
+    ];
+    for r in &fact.reasons {
+        why.push(r.clone());
+    }
+    Diagnostic {
+        rule_id: "RM002".to_string(),
+        severity: mode.elevate(Severity::Warning),
+        span,
+        concept: None,
+        message: format!(
+            "converter `{symbol}` in module `{module_path}` performs a {kind_label} side effect"
+        ),
+        why,
+        suggested_fix: Some(format!(
+            "move the {kind_label} side effect out of `{symbol}` and into a caller \
+             (an orchestrator or use-case). Keep the converter pure mapping. If this \
+             module is *not* actually a converter, remove its pattern from \
+             `paradigms.RM.converter_paths` in `locus.lock`."
+        )),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -244,6 +380,7 @@ mod tests {
         RmSection {
             default_max_action_kinds: Some(cap),
             exempt_paths: Vec::new(),
+            converter_paths: Vec::new(),
         }
     }
 
@@ -347,6 +484,7 @@ mod tests {
         let section = RmSection {
             default_max_action_kinds: Some(2),
             exempt_paths: vec!["crate::handler::tests::*".into()],
+            converter_paths: Vec::new(),
         };
         assert!(rm001(&air, &section, CheckMode::Human).is_empty());
     }
@@ -542,5 +680,248 @@ mod tests {
             ],
         )]);
         assert!(rm001(&air, &enabled_section(2), CheckMode::Human).is_empty());
+    }
+
+    // ---------- RM002 ----------
+
+    fn fact(kind: FactKind, symbol: &str, evidence: &str, reason: &str) -> AirFact {
+        AirFact {
+            kind,
+            target: FactTarget::Function {
+                symbol: symbol.into(),
+            },
+            source: "test".into(),
+            confidence: 1.0,
+            reasons: vec![reason.into()],
+            evidence: Some(evidence.into()),
+        }
+    }
+
+    fn air_with_facts(
+        files: Vec<(&str, Option<&str>, Vec<AirItem>)>,
+        facts: Vec<AirFact>,
+    ) -> AirWorkspace {
+        let mut air = air_with(files);
+        air.facts = facts;
+        air
+    }
+
+    fn converter_section(patterns: Vec<&str>) -> RmSection {
+        RmSection {
+            default_max_action_kinds: None,
+            exempt_paths: Vec::new(),
+            converter_paths: patterns.into_iter().map(|s| s.to_string()).collect(),
+        }
+    }
+
+    #[test]
+    fn rm002_fires_on_logging_in_converter_module() {
+        let air = air_with_facts(
+            vec![(
+                "src/mapping/user.rs",
+                Some("crate::mapping::user"),
+                vec![func(
+                    "crate::mapping::user::to_dto",
+                    "src/mapping/user.rs",
+                    7,
+                )],
+            )],
+            vec![fact(
+                FactKind::Logging,
+                "crate::mapping::user::to_dto",
+                "tracing::info!",
+                "`tracing::info!` is a logging primitive",
+            )],
+        );
+        let section = converter_section(vec!["crate::mapping::*"]);
+        let diags = rm002(&air, &section, CheckMode::Human);
+        assert_eq!(diags.len(), 1);
+        let d = &diags[0];
+        assert_eq!(d.rule_id, "RM002");
+        assert_eq!(d.severity, Severity::Warning);
+        assert_eq!(d.span.line_start, 7);
+        assert!(d.message.contains("crate::mapping::user::to_dto"));
+        assert!(d.message.contains("logging"));
+        assert!(
+            d.why.iter().any(|w| w.contains("crate::mapping::*")),
+            "expected matched pattern in why; got {:?}",
+            d.why
+        );
+        assert!(
+            d.why.iter().any(|w| w.contains("tracing::info!")),
+            "expected evidence in why; got {:?}",
+            d.why
+        );
+        assert!(
+            d.why.iter().any(|w| w.contains("logging")),
+            "expected fact-kind label in why; got {:?}",
+            d.why
+        );
+        assert!(
+            d.why.iter().any(|w| w.contains("to_dto")),
+            "expected enclosing function in why; got {:?}",
+            d.why
+        );
+        assert!(
+            d.why.iter().any(|w| w.contains("logging primitive")),
+            "expected loader reason propagated; got {:?}",
+            d.why
+        );
+    }
+
+    #[test]
+    fn rm002_fires_on_spawned_work_in_converter_module() {
+        let air = air_with_facts(
+            vec![(
+                "src/mapping/user.rs",
+                Some("crate::mapping::user"),
+                vec![func(
+                    "crate::mapping::user::to_dto",
+                    "src/mapping/user.rs",
+                    9,
+                )],
+            )],
+            vec![fact(
+                FactKind::SpawnedWork,
+                "crate::mapping::user::to_dto",
+                "tokio::spawn",
+                "spawn-shaped call",
+            )],
+        );
+        let section = converter_section(vec!["crate::mapping::*"]);
+        let diags = rm002(&air, &section, CheckMode::Human);
+        assert_eq!(diags.len(), 1);
+        assert_eq!(diags[0].rule_id, "RM002");
+        assert!(diags[0].message.contains("spawned-work"));
+    }
+
+    #[test]
+    fn rm002_fires_on_config_read_in_converter_module() {
+        let air = air_with_facts(
+            vec![(
+                "src/mapping/user.rs",
+                Some("crate::mapping::user"),
+                vec![func(
+                    "crate::mapping::user::to_dto",
+                    "src/mapping/user.rs",
+                    11,
+                )],
+            )],
+            vec![fact(
+                FactKind::ConfigRead,
+                "crate::mapping::user::to_dto",
+                "std::env::var",
+                "env-var read",
+            )],
+        );
+        let section = converter_section(vec!["crate::mapping::*"]);
+        let diags = rm002(&air, &section, CheckMode::Human);
+        assert_eq!(diags.len(), 1);
+        assert_eq!(diags[0].rule_id, "RM002");
+        assert!(diags[0].message.contains("config-read"));
+    }
+
+    #[test]
+    fn rm002_quiet_on_non_side_effect_facts_and_non_converter_paths() {
+        let air = air_with_facts(
+            vec![
+                (
+                    "src/mapping/user.rs",
+                    Some("crate::mapping::user"),
+                    vec![func(
+                        "crate::mapping::user::to_dto",
+                        "src/mapping/user.rs",
+                        7,
+                    )],
+                ),
+                (
+                    "src/handler.rs",
+                    Some("crate::handler"),
+                    vec![func("crate::handler::create_user", "src/handler.rs", 12)],
+                ),
+            ],
+            vec![
+                // Non-side-effect kind targeting a converter — must not fire.
+                AirFact {
+                    kind: FactKind::BlockingCall,
+                    target: FactTarget::Function {
+                        symbol: "crate::mapping::user::to_dto".into(),
+                    },
+                    source: "test".into(),
+                    confidence: 1.0,
+                    reasons: Vec::new(),
+                    evidence: Some("std::thread::sleep".into()),
+                },
+                AirFact {
+                    kind: FactKind::ExternalIo,
+                    target: FactTarget::Function {
+                        symbol: "crate::mapping::user::to_dto".into(),
+                    },
+                    source: "test".into(),
+                    confidence: 1.0,
+                    reasons: Vec::new(),
+                    evidence: Some("reqwest::get".into()),
+                },
+                // Side-effect kind targeting a non-converter — must not fire.
+                fact(
+                    FactKind::Logging,
+                    "crate::handler::create_user",
+                    "tracing::info!",
+                    "logging primitive",
+                ),
+            ],
+        );
+        let section = converter_section(vec!["crate::mapping::*"]);
+        assert!(rm002(&air, &section, CheckMode::Human).is_empty());
+    }
+
+    #[test]
+    fn rm002_silent_when_converter_paths_empty() {
+        let air = air_with_facts(
+            vec![(
+                "src/mapping/user.rs",
+                Some("crate::mapping::user"),
+                vec![func(
+                    "crate::mapping::user::to_dto",
+                    "src/mapping/user.rs",
+                    7,
+                )],
+            )],
+            vec![fact(
+                FactKind::Logging,
+                "crate::mapping::user::to_dto",
+                "tracing::info!",
+                "logging primitive",
+            )],
+        );
+        // Default RmSection has empty converter_paths; rule must be silent
+        // even when a side-effect fact is present.
+        let section = RmSection::default();
+        assert!(rm002(&air, &section, CheckMode::Human).is_empty());
+    }
+
+    #[test]
+    fn rm002_agent_strict_elevates_to_fatal() {
+        let air = air_with_facts(
+            vec![(
+                "src/mapping/user.rs",
+                Some("crate::mapping::user"),
+                vec![func(
+                    "crate::mapping::user::to_dto",
+                    "src/mapping/user.rs",
+                    7,
+                )],
+            )],
+            vec![fact(
+                FactKind::Logging,
+                "crate::mapping::user::to_dto",
+                "tracing::info!",
+                "logging primitive",
+            )],
+        );
+        let section = converter_section(vec!["crate::mapping::*"]);
+        let diags = rm002(&air, &section, CheckMode::AgentStrict);
+        assert_eq!(diags.len(), 1);
+        assert_eq!(diags[0].severity, Severity::Fatal);
     }
 }

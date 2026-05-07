@@ -17,7 +17,7 @@ use std::path::Path;
 /// - `src/foo/bar.rs` → `<crate_name>::foo::bar`
 ///
 /// Does not resolve `#[path = "..."]` overrides; those need full mod-tree
-/// inspection and belong to a later phase.
+/// inspection, which is out of scope here.
 pub fn derive_module_path(pkg_root: &Path, file: &Path, crate_name: &str) -> Option<String> {
     let src = pkg_root.join("src");
     let rel = file.strip_prefix(&src).ok()?;

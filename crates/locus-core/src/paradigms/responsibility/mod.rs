@@ -9,6 +9,7 @@
 //!
 //! Phase scope so far:
 //! - RM001: function performs too many distinct kinds of work.
+//! - RM002: converter performs a side-effect fact.
 
 // ot: canonical
 
@@ -41,6 +42,8 @@ impl Paradigm for Responsibility {
     fn check(&self, air: &AirWorkspace, lockfile: &Lockfile, mode: CheckMode) -> Vec<Diagnostic> {
         let section: lockfile_schema::RmSection =
             lockfile.paradigm_section(RM_PREFIX).unwrap_or_default();
-        rules::rm001(air, &section, mode)
+        let mut diags = rules::rm001(air, &section, mode);
+        diags.extend(rules::rm002(air, &section, mode));
+        diags
     }
 }

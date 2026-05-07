@@ -5,6 +5,10 @@
 //! Phase scope so far:
 //! - DC001: public type or function has no doc comment. Opt-in via
 //!   `paradigms.DC.require_public_docs`; silent by default.
+//! - DC002: public type or function carries a doc comment containing a
+//!   forbidden phrase (LLM-transcript residue, stale planning markers).
+//!   Active by default thanks to a seeded `forbidden_doc_phrases` list;
+//!   clearing the list opts out.
 
 // ot: canonical
 
@@ -38,6 +42,8 @@ impl Paradigm for Documentation {
     fn check(&self, air: &AirWorkspace, lockfile: &Lockfile, mode: CheckMode) -> Vec<Diagnostic> {
         let section: lockfile_schema::DcSection =
             lockfile.paradigm_section(DC_PREFIX).unwrap_or_default();
-        rules::dc001(air, &section, mode)
+        let mut diags = rules::dc001(air, &section, mode);
+        diags.extend(rules::dc002(air, &section, mode));
+        diags
     }
 }

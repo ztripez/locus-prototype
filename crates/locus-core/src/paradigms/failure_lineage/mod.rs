@@ -10,6 +10,9 @@
 //! Phase scope so far:
 //! - FL001: domain function returns `Result<_, E>` where E is a declared
 //!   boundary error type.
+//! - FL002: panic-shaped callee (`unwrap` / `expect` / `unwrap_or_default` /
+//!   `panic` / `todo` / `unimplemented`) fires from a module that isn't in
+//!   `invariant_owner_paths`.
 
 // ot: canonical
 
@@ -42,6 +45,8 @@ impl Paradigm for FailureLineage {
     fn check(&self, air: &AirWorkspace, lockfile: &Lockfile, mode: CheckMode) -> Vec<Diagnostic> {
         let section: lockfile_schema::FlSection =
             lockfile.paradigm_section(FL_PREFIX).unwrap_or_default();
-        rules::fl001(air, &section, mode)
+        let mut out = rules::fl001(air, &section, mode);
+        out.extend(rules::fl002(air, &section, mode));
+        out
     }
 }

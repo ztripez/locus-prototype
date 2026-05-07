@@ -31,6 +31,14 @@ pub struct RmSection {
     /// DG/UT — `foo::bar`, `foo::*`, `*`.
     #[serde(default)]
     pub exempt_paths: Vec<String>,
+    /// Module patterns matching `AirFile.module_path` for files whose
+    /// functions are *converters* — pure mapping between data shapes. Any
+    /// side-effect fact (`SpawnedWork`, `Logging`, `ConfigRead`) targeting
+    /// a function in one of these modules is RM002. Same suffix-wildcard
+    /// syntax as DG/UT — `foo::bar`, `foo::*`, `*`. Empty default keeps
+    /// RM002 silent until the user opts in.
+    #[serde(default)]
+    pub converter_paths: Vec<String>,
 }
 
 impl RmSection {
@@ -73,6 +81,7 @@ mod tests {
         let s = RmSection {
             default_max_action_kinds: Some(4),
             exempt_paths: Vec::new(),
+            converter_paths: Vec::new(),
         };
         assert_eq!(s.effective_default(), 4);
     }

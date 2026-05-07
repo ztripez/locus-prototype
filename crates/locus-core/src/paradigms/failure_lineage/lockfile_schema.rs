@@ -20,7 +20,7 @@
 
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct FlSection {
     /// Module patterns matching `AirFile.module_path` for files declared as
     /// "domain" — i.e. files whose function signatures must not leak boundary
@@ -33,6 +33,61 @@ pub struct FlSection {
     /// in a domain function signature. Pattern syntax mirrors `domain_paths`.
     #[serde(default)]
     pub boundary_error_patterns: Vec<String>,
+
+    /// Callee names considered "panic-shaped" — i.e. they mask a missing
+    /// invariant rather than propagate a structured error. FL002 matches
+    /// each `AirItem::CallSite.callee` (last `::` segment for path-qualified
+    /// macros) against these patterns. Default covers the standard
+    /// agent-introduced "make it compile" family: `unwrap`, `expect`,
+    /// `unwrap_or_default`, `panic`, `todo`, `unimplemented`. The user can
+    /// tighten or loosen via the lockfile.
+    #[serde(default = "default_forbidden_callees")]
+    pub forbidden_callees: Vec<String>,
+
+    /// Module patterns matching `AirFile.module_path` for files where the
+    /// panic-shaped callees above are legitimate — typically supervisors,
+    /// startup-asserting bin entry points, or test-support modules that
+    /// own the invariant being asserted. FL002 stays silent until this list
+    /// is populated, mirroring every other lockfile-driven rule.
+    ///
+    /// The spec (`docs/PARADIGMS.md` line 811: "panics/unwraps outside
+    /// invariant owners *or tests*") expects test paths to be carved out.
+    /// We can't auto-detect `#[cfg(test)]` from AIR — `AirFunction` /
+    /// `AirFile` don't carry attribute state — so test-path patterns are a
+    /// user lockfile decision. Recommended starter set when populating:
+    /// `["*::tests::*", "*::test::*", "tests::*", "tests::*::*"]` plus any
+    /// project-specific invariant-owner modules. We deliberately don't seed
+    /// these defaults here because a non-empty seed would flip FL002 from
+    /// "silent until configured" to "fires on every codebase" — a posture
+    /// the rest of Locus avoids.
+    #[serde(default)]
+    pub invariant_owner_paths: Vec<String>,
+}
+
+impl Default for FlSection {
+    fn default() -> Self {
+        Self {
+            domain_paths: Vec::new(),
+            boundary_error_patterns: Vec::new(),
+            forbidden_callees: default_forbidden_callees(),
+            invariant_owner_paths: Vec::new(),
+        }
+    }
+}
+
+/// Default forbidden callees for FL002: the standard agent-introduced
+/// "make it compile by unwrapping" family. Matched against
+/// `AirCallSite.callee` (last `::` segment for path-qualified macros), so
+/// these are bare names — no `std::` prefix.
+pub fn default_forbidden_callees() -> Vec<String> {
+    vec![
+        "unwrap".to_string(),
+        "expect".to_string(),
+        "unwrap_or_default".to_string(),
+        "panic".to_string(),
+        "todo".to_string(),
+        "unimplemented".to_string(),
+    ]
 }
 
 /// Pattern syntax: simple suffix wildcard, mirroring DG / UT.
@@ -79,6 +134,28 @@ mod tests {
         assert!(matches_pattern("*", ""));
         assert!(matches_pattern("*", "anything"));
         assert!(matches_pattern("*", "anything::nested"));
+    }
+
+    #[test]
+    fn default_section_seeds_forbidden_callees_and_keeps_owner_paths_empty() {
+        let s = FlSection::default();
+        assert!(s.domain_paths.is_empty());
+        assert!(s.boundary_error_patterns.is_empty());
+        assert!(s.invariant_owner_paths.is_empty());
+        for expected in [
+            "unwrap",
+            "expect",
+            "unwrap_or_default",
+            "panic",
+            "todo",
+            "unimplemented",
+        ] {
+            assert!(
+                s.forbidden_callees.iter().any(|c| c == expected),
+                "default forbidden callees missing `{expected}`: {:?}",
+                s.forbidden_callees,
+            );
+        }
     }
 
     #[test]

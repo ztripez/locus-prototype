@@ -9,6 +9,7 @@
 //!
 //! Phase scope so far:
 //! - UT001: utility module defines a public type.
+//! - UT002: utility module imports a forbidden feature/domain path.
 
 // ot: canonical
 
@@ -40,6 +41,8 @@ impl Paradigm for UtilityDiscipline {
     fn check(&self, air: &AirWorkspace, lockfile: &Lockfile, mode: CheckMode) -> Vec<Diagnostic> {
         let section: lockfile_schema::UtSection =
             lockfile.paradigm_section(UT_PREFIX).unwrap_or_default();
-        rules::ut001(air, &section, mode)
+        let mut diags = rules::ut001(air, &section, mode);
+        diags.extend(rules::ut002(air, &section, mode));
+        diags
     }
 }
