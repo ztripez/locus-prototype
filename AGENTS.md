@@ -83,6 +83,7 @@ These are the in-repo restatement of `docs/AGENT_GUARDRAILS.md` — read that do
 - **Inference-first UX.** Verbose annotations are a UX failure. The tool infers role; users accept ambiguous cases via CLI (`locus accept …`).
 - **Make the canonical path shorter than the shadow path** — generators are part of the product, not a nice-to-have.
 - **Source facts vs. accepted ownership.** Adapters emit facts; paradigms apply rules; lockfile is the acceptance record. Never let one bleed into another.
+- **Every rule implementation needs an independent doc-conformance sign-off.** Before merging any new `XX###` rule, dispatch a separate agent to read the rule's spec entry in `docs/PARADIGMS.md` (and `docs/project-jumpoff.md` for OT) alongside the implementation, and confirm: detection logic matches the spec; default severity matches the severity-tier table; agent-strict elevation matches the spec; lockfile schema additions are namespaced under `paradigms.<prefix>` and documented; the rule stays silent until the relevant lockfile section is populated. The reviewer is independent of the implementer — pass file paths and line numbers, not your own reasoning. If the reviewer flags drift, fix it before marking the rule done.
 
 ## AIR shape gotcha
 

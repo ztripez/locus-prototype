@@ -8,9 +8,11 @@
 //! - [`ot005`]: accepted boundary with no accepted converter
 //! - [`ot006`]: unregistered conversion between accepted endpoints
 //! - [`ot007`]: adapter-to-adapter conversion (both endpoints are boundaries)
-//!
-//! Future: OT008–OT012 (warning-tier polish: domain logic on boundary,
-//! scattered validation, shadow enums, shadow newtypes, primitive obsession).
+//! - [`ot008`]: domain-shaped method on an accepted boundary
+//! - [`ot009`]: scattered validation/normalization outside the canonical owner
+//! - [`ot010`]: shadow enum overlapping an accepted canonical enum
+//! - [`ot011`]: shadow newtype/value object overlapping a canonical value object
+//! - [`ot012`]: primitive-typed field where a canonical value object is expected
 //!
 //! All rules except OT001/OT002 are lockfile-driven — they stay silent until
 //! `locus init` (or `locus accept`) has populated the OT section. This is
@@ -19,7 +21,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use locus_air::{ActionKind, AirItem, AirSpan, AirWorkspace, HintKind};
+use locus_air::{ActionKind, AirItem, AirSpan, AirWorkspace, HintKind, TypeKind};
 
 use super::infer::{ConceptCluster, FIELD_OVERLAP_THRESHOLD, InferredRole};
 use super::lockfile_schema::OtSection;
@@ -634,6 +636,573 @@ fn type_text_references(text: &str, name: &str) -> bool {
 
 fn is_ident_byte(b: u8) -> bool {
     b.is_ascii_alphanumeric() || b == b'_'
+}
+
+/// OT008 — domain logic on a boundary adapter.
+///
+/// Fires when an inherent `impl AcceptedBoundary { ... }` declares a method
+/// whose name is *not* in the boundary-shape allowlist (`from`, `try_from`,
+/// `into`, `serialize`, `fmt`, …). Domain queries / behaviours
+/// (`is_active`, `validate`, `apply_to`, `total_price`, …) belong on the
+/// canonical, not the wire/storage shape.
+///
+/// Confidence 0.85 — name-only heuristic; the method body could be a pure
+/// projection and we can't tell from AIR. Per the spec's severity table
+/// (`docs/PARADIGMS.md` §"Severity tiers"), this is warning by default and
+/// fatal under `--agent-strict`. [`Severity::from_confidence`] does the
+/// mapping.
+pub fn ot008(air: &AirWorkspace, section: &OtSection, mode: CheckMode) -> Vec<Diagnostic> {
+    let mut boundary_short_to_concept: BTreeMap<String, String> = BTreeMap::new();
+    for (concept_id, entry) in &section.concepts {
+        for b in &entry.boundaries {
+            boundary_short_to_concept.insert(short_name(&b.symbol).to_string(), concept_id.clone());
+        }
+    }
+    if boundary_short_to_concept.is_empty() {
+        return Vec::new();
+    }
+
+    let confidence = 0.85;
+    let Some(severity) = Severity::from_confidence(confidence, mode) else {
+        return Vec::new();
+    };
+
+    let mut out = Vec::new();
+    for pkg in &air.packages {
+        for file in &pkg.files {
+            for item in &file.items {
+                let AirItem::Impl(im) = item else {
+                    continue;
+                };
+                if im.trait_path.is_some() {
+                    // Trait impls (`impl From<X> for Y`, `impl Display for Y`,
+                    // serde derives, etc.) are projection by construction —
+                    // they're how boundary types translate, not domain logic.
+                    continue;
+                }
+                let self_short = short_name(&im.self_ty);
+                let Some(concept_id) = boundary_short_to_concept.get(self_short) else {
+                    continue;
+                };
+                for method in &im.method_names {
+                    if is_boundary_shape_method(method) {
+                        continue;
+                    }
+                    out.push(Diagnostic {
+                        rule_id: "OT008".to_string(),
+                        severity,
+                        span: im.span.clone(),
+                        concept: Some(concept_id.clone()),
+                        message: format!(
+                            "boundary `{self_short}` carries domain-shaped method \
+                             `{method}` — boundary adapters should only translate, \
+                             not reason about, the concept"
+                        ),
+                        why: vec![
+                            format!("`{self_short}` is the accepted boundary for `{concept_id}`"),
+                            format!(
+                                "`{method}` is not in the boundary-shape allowlist \
+                                 (from/try_from/into/as_*/to_*/serialize/deserialize/fmt/new/default/builder)"
+                            ),
+                            format!("inference confidence: {confidence:.2}"),
+                        ],
+                        suggested_fix: Some(format!(
+                            "move `{method}` onto the canonical for `{concept_id}` \
+                             (where domain behaviour lives), or rename it into the \
+                             boundary-shape allowlist if it really is pure translation"
+                        )),
+                    });
+                }
+            }
+        }
+    }
+    out
+}
+
+/// True for method names that are part of the *translation* surface of a
+/// boundary adapter (and so allowed by OT008). The list is conservative —
+/// when in doubt prefer false-positive (a flag) over false-negative
+/// (a missed domain leak), then expand the allowlist if the user pushes back.
+fn is_boundary_shape_method(name: &str) -> bool {
+    // Exact-match conversions, accessors, factories, and stdlib trait shims.
+    const EXACT: &[&str] = &[
+        "from",
+        "try_from",
+        "into",
+        "try_into",
+        "serialize",
+        "deserialize",
+        "fmt",
+        "display",
+        "new",
+        "default",
+        "builder",
+        "build",
+        "clone",
+        "as_ref",
+        "as_mut",
+        "as_str",
+        "as_bytes",
+        "into_inner",
+        "inner",
+        "len",
+        "is_empty",
+    ];
+    if EXACT.contains(&name) {
+        return true;
+    }
+    // Conventional translation prefixes.
+    name.starts_with("as_")
+        || name.starts_with("to_")
+        || name.starts_with("into_")
+        || name.starts_with("from_")
+        || name.starts_with("try_")
+        || name.starts_with("with_")
+}
+
+/// OT009 — scattered validation/normalization.
+///
+/// Fires when a function lives outside the canonical's owner file *and*
+/// outside any accepted converter, but its *name* and *signature* both look
+/// like validation/normalization of a known canonical (e.g. `validate_email`
+/// returning a `Result<EmailAddress, _>`, or `normalize_user_id(s: &str)
+/// -> UserId`). Both signals are required so generic helpers
+/// (`fn validate_input(...)`) don't trip the rule.
+///
+/// Confidence 0.75. The spec lists this as "warning by default; fatal under
+/// `--agent-strict` for high-confidence cases" — `from_confidence(0.75,
+/// AgentStrict)` returns `Fatal`, `(0.75, Human)` returns `Warning`.
+pub fn ot009(air: &AirWorkspace, section: &OtSection, mode: CheckMode) -> Vec<Diagnostic> {
+    let mut canonicals: BTreeMap<String, (String, String)> = BTreeMap::new(); // short → (concept, owner_file)
+    for (concept_id, entry) in &section.concepts {
+        let symbol = &entry.canonical.symbol;
+        let Some(short) = symbol.rsplit("::").next() else {
+            continue;
+        };
+        let Some(file_path) = file_of_symbol(air, symbol) else {
+            continue;
+        };
+        canonicals.insert(short.to_string(), (concept_id.clone(), file_path));
+    }
+    if canonicals.is_empty() {
+        return Vec::new();
+    }
+    let accepted_converters: BTreeSet<&str> = section
+        .concepts
+        .values()
+        .flat_map(|e| e.converters.iter().map(|c| c.symbol.as_str()))
+        .collect();
+
+    let confidence = 0.75;
+    let Some(severity) = Severity::from_confidence(confidence, mode) else {
+        return Vec::new();
+    };
+
+    let mut out = Vec::new();
+    for pkg in &air.packages {
+        for file in &pkg.files {
+            for item in &file.items {
+                let AirItem::Function(f) = item else {
+                    continue;
+                };
+                if accepted_converters.contains(f.symbol.as_str()) {
+                    continue;
+                }
+                let Some(prefix) = matched_validate_prefix(&f.name) else {
+                    continue;
+                };
+                // Find a canonical referenced in params/return — that's the
+                // "operates on a known concept" part of the signal.
+                let mut concept_match: Option<(&str, &str)> = None;
+                for (short, (concept, owner)) in &canonicals {
+                    let signature_hits =
+                        f.params.iter().any(|(_, t)| type_text_references(t, short))
+                            || f.return_type
+                                .as_deref()
+                                .is_some_and(|t| type_text_references(t, short));
+                    if signature_hits {
+                        concept_match = Some((concept.as_str(), owner.as_str()));
+                        break;
+                    }
+                }
+                let Some((concept_id, owner_file)) = concept_match else {
+                    continue;
+                };
+                if file.path == owner_file {
+                    continue; // validator inside the canonical's own module is fine
+                }
+                out.push(Diagnostic {
+                    rule_id: "OT009".to_string(),
+                    severity,
+                    span: f.span.clone(),
+                    concept: Some(concept_id.to_string()),
+                    message: format!(
+                        "`{}` looks like {prefix} for canonical `{concept_id}` but lives \
+                         outside the owner module and outside any accepted converter",
+                        f.symbol
+                    ),
+                    why: vec![
+                        format!(
+                            "function name starts with `{prefix}` (validation/normalization shape)"
+                        ),
+                        format!("signature references canonical for `{concept_id}`"),
+                        format!("owner module: `{owner_file}`"),
+                        format!("inference confidence: {confidence:.2}"),
+                    ],
+                    suggested_fix: Some(format!(
+                        "move this into the owner of `{concept_id}` (so the canonical \
+                         enforces its own invariants), or accept this function as a \
+                         converter via `locus init` if it's the legitimate edge"
+                    )),
+                });
+            }
+        }
+    }
+    out
+}
+
+/// Returns the matched prefix if `name` starts with one of the
+/// validation/normalization shape prefixes recognised by OT009.
+fn matched_validate_prefix(name: &str) -> Option<&'static str> {
+    const PREFIXES: &[&str] = &[
+        "validate_",
+        "is_valid_",
+        "check_",
+        "verify_",
+        "ensure_",
+        "normalize_",
+        "sanitize_",
+        "canonicalize_",
+        "parse_",
+        "clean_",
+    ];
+    PREFIXES.iter().copied().find(|p| name.starts_with(p))
+}
+
+/// OT010 — shadow enum.
+///
+/// Fires for each enum that:
+/// 1. Is not lockfile-accepted (canonical or boundary), and
+/// 2. Shares ≥ 50% of its variant names with an accepted canonical enum.
+///
+/// 50% is the same Jaccard threshold OT002 uses for struct field overlap
+/// (`FIELD_OVERLAP_THRESHOLD`). Confidence is 0.85 — variant-name overlap is
+/// a fairly specific signal but not bullet-proof (`Active`/`Inactive` shows
+/// up everywhere).
+pub fn ot010(air: &AirWorkspace, section: &OtSection, mode: CheckMode) -> Vec<Diagnostic> {
+    // Collect every accepted canonical enum's variant set.
+    let mut canonical_enums: Vec<(String, String, BTreeSet<String>)> = Vec::new(); // (concept, symbol, variants)
+    for (concept_id, entry) in &section.concepts {
+        let symbol = &entry.canonical.symbol;
+        let Some((variants, kind)) = type_variants_and_kind(air, symbol) else {
+            continue;
+        };
+        if kind != TypeKind::Enum {
+            continue;
+        }
+        canonical_enums.push((concept_id.clone(), symbol.clone(), variants));
+    }
+    if canonical_enums.is_empty() {
+        return Vec::new();
+    }
+    let confidence = 0.85;
+    let Some(severity) = Severity::from_confidence(confidence, mode) else {
+        return Vec::new();
+    };
+
+    let mut out = Vec::new();
+    for pkg in &air.packages {
+        for file in &pkg.files {
+            for item in &file.items {
+                let AirItem::Type(ty) = item else {
+                    continue;
+                };
+                if ty.kind != TypeKind::Enum {
+                    continue;
+                }
+                if section.role_of(&ty.symbol).is_some() {
+                    continue; // already accepted
+                }
+                let candidate_variants: BTreeSet<String> =
+                    ty.variants.iter().map(|v| v.name.clone()).collect();
+                if candidate_variants.is_empty() {
+                    continue;
+                }
+                for (concept_id, canonical_symbol, canonical_variants) in &canonical_enums {
+                    if &ty.symbol == canonical_symbol {
+                        continue;
+                    }
+                    let overlap = jaccard_str(&candidate_variants, canonical_variants);
+                    if overlap < FIELD_OVERLAP_THRESHOLD {
+                        continue;
+                    }
+                    out.push(Diagnostic {
+                        rule_id: "OT010".to_string(),
+                        severity,
+                        span: ty.span.clone(),
+                        concept: Some(concept_id.clone()),
+                        message: format!(
+                            "enum `{}` overlaps {:.0}% with accepted canonical `{canonical_symbol}` \
+                             but is not accepted as canonical or boundary",
+                            ty.symbol,
+                            overlap * 100.0
+                        ),
+                        why: vec![
+                            format!("variants: {{{}}}", join_sorted(&candidate_variants)),
+                            format!(
+                                "canonical `{canonical_symbol}` variants: {{{}}}",
+                                join_sorted(canonical_variants)
+                            ),
+                            format!("Jaccard overlap: {:.2}", overlap),
+                            format!("inference confidence: {confidence:.2}"),
+                        ],
+                        suggested_fix: Some(format!(
+                            "remove `{}` and use `{canonical_symbol}` directly, or accept \
+                             this enum as a boundary for `{concept_id}` via \
+                             `// ot: boundary {concept_id} <name>` then rerun `locus init`",
+                            ty.name
+                        )),
+                    });
+                    break;
+                }
+            }
+        }
+    }
+    out
+}
+
+/// OT011 — shadow newtype / value object.
+///
+/// Fires for each single-field struct (a "newtype") whose **name** matches
+/// an accepted canonical (by short name) but whose symbol isn't accepted.
+/// Common shape: `pub struct UserId(pub String);` defined in two places.
+///
+/// Confidence 0.80 — name-match is a strong signal; the field-type check
+/// keeps us off generic `Wrapper<T>`-style structs.
+pub fn ot011(air: &AirWorkspace, section: &OtSection, mode: CheckMode) -> Vec<Diagnostic> {
+    let mut canonical_short: BTreeMap<String, (String, String)> = BTreeMap::new(); // short → (concept, full)
+    for (concept_id, entry) in &section.concepts {
+        let symbol = &entry.canonical.symbol;
+        if let Some(short) = symbol.rsplit("::").next() {
+            canonical_short.insert(short.to_string(), (concept_id.clone(), symbol.clone()));
+        }
+    }
+    if canonical_short.is_empty() {
+        return Vec::new();
+    }
+    let confidence = 0.80;
+    let Some(severity) = Severity::from_confidence(confidence, mode) else {
+        return Vec::new();
+    };
+
+    let mut out = Vec::new();
+    for pkg in &air.packages {
+        for file in &pkg.files {
+            for item in &file.items {
+                let AirItem::Type(ty) = item else {
+                    continue;
+                };
+                if ty.kind != TypeKind::Struct || ty.fields.len() != 1 {
+                    continue;
+                }
+                if section.role_of(&ty.symbol).is_some() {
+                    continue;
+                }
+                let Some((concept_id, canonical_symbol)) = canonical_short.get(ty.name.as_str())
+                else {
+                    continue;
+                };
+                if &ty.symbol == canonical_symbol {
+                    continue; // canonical itself, just not accepted under that concept yet
+                }
+                out.push(Diagnostic {
+                    rule_id: "OT011".to_string(),
+                    severity,
+                    span: ty.span.clone(),
+                    concept: Some(concept_id.clone()),
+                    message: format!(
+                        "newtype `{}` shadows accepted canonical `{canonical_symbol}` \
+                         (concept `{concept_id}`)",
+                        ty.symbol
+                    ),
+                    why: vec![
+                        format!("single-field struct named `{}`", ty.name),
+                        format!("canonical for `{concept_id}`: `{canonical_symbol}`"),
+                        format!("inference confidence: {confidence:.2}"),
+                    ],
+                    suggested_fix: Some(format!(
+                        "remove `{}` and import `{canonical_symbol}` instead; if this \
+                         really is a parallel boundary representation, accept it via \
+                         `// ot: boundary {concept_id} <name>` then rerun `locus init`",
+                        ty.symbol
+                    )),
+                });
+            }
+        }
+    }
+    out
+}
+
+/// OT012 — primitive obsession around a known canonical.
+///
+/// Fires for each struct field whose:
+/// - name (snake_case) maps to an accepted canonical (PascalCase) by short name,
+/// - type-text is a primitive (`String`, `&str`, integer, bool, …), and
+/// - enclosing struct is not lockfile-accepted (i.e. not a boundary adapter).
+///
+/// Boundary adapters are the legitimate place for primitive-typed fields
+/// because they mirror the wire shape. Application/domain types should
+/// carry the canonical value object instead.
+///
+/// Confidence 0.70. Per the spec's agent-strict severity table this is
+/// fatal under `--agent-strict` and warning otherwise.
+pub fn ot012(air: &AirWorkspace, section: &OtSection, mode: CheckMode) -> Vec<Diagnostic> {
+    let mut canonical_short: BTreeMap<String, String> = BTreeMap::new();
+    for (concept_id, entry) in &section.concepts {
+        if let Some(short) = entry.canonical.symbol.rsplit("::").next() {
+            canonical_short.insert(short.to_string(), concept_id.clone());
+        }
+    }
+    if canonical_short.is_empty() {
+        return Vec::new();
+    }
+    let confidence = 0.70;
+    let Some(severity) = Severity::from_confidence(confidence, mode) else {
+        return Vec::new();
+    };
+
+    let mut out = Vec::new();
+    for pkg in &air.packages {
+        for file in &pkg.files {
+            for item in &file.items {
+                let AirItem::Type(ty) = item else {
+                    continue;
+                };
+                if ty.kind != TypeKind::Struct {
+                    continue;
+                }
+                if section.role_of(&ty.symbol).is_some() {
+                    continue; // accepted boundary or canonical — primitives OK here
+                }
+                for field in &ty.fields {
+                    let Some(canonical_short_name) = snake_to_pascal(&field.name) else {
+                        continue;
+                    };
+                    let Some(concept_id) = canonical_short.get(&canonical_short_name) else {
+                        continue;
+                    };
+                    if !is_primitive_type_text(&field.type_text) {
+                        continue;
+                    }
+                    out.push(Diagnostic {
+                        rule_id: "OT012".to_string(),
+                        severity,
+                        span: ty.span.clone(),
+                        concept: Some(concept_id.clone()),
+                        message: format!(
+                            "field `{}::{}: {}` is a primitive substitute for canonical \
+                             `{canonical_short_name}` (concept `{concept_id}`)",
+                            ty.symbol, field.name, field.type_text
+                        ),
+                        why: vec![
+                            format!(
+                                "field name `{}` maps to canonical `{canonical_short_name}`",
+                                field.name
+                            ),
+                            format!("type `{}` is a primitive", field.type_text),
+                            format!("enclosing type `{}` is not an accepted boundary", ty.symbol),
+                            format!("inference confidence: {confidence:.2}"),
+                        ],
+                        suggested_fix: Some(format!(
+                            "use `{canonical_short_name}` instead of `{}` for `{}`, or \
+                             accept `{}` as a boundary via `// ot: boundary {concept_id} \
+                             <name>` if it's a wire-shape adapter",
+                            field.type_text, field.name, ty.symbol
+                        )),
+                    });
+                }
+            }
+        }
+    }
+    out
+}
+
+/// `user_id` → `UserId`; `email` → `Email`. Returns `None` if the input
+/// is empty or has consecutive underscores producing empty segments —
+/// either way we don't have a clean mapping to PascalCase.
+fn snake_to_pascal(snake: &str) -> Option<String> {
+    if snake.is_empty() {
+        return None;
+    }
+    let mut out = String::with_capacity(snake.len());
+    for seg in snake.split('_') {
+        if seg.is_empty() {
+            return None;
+        }
+        let mut chars = seg.chars();
+        if let Some(first) = chars.next() {
+            out.extend(first.to_uppercase());
+            out.push_str(chars.as_str());
+        }
+    }
+    Some(out)
+}
+
+/// True for type-text strings the OT module considers primitive substitutes
+/// for value objects. References (`&str`, `&String`) and `Option<…>` of a
+/// primitive count too — the field is still primitive-typed downstream.
+fn is_primitive_type_text(text: &str) -> bool {
+    let t = text.trim().trim_start_matches('&').trim();
+    const PRIMS: &[&str] = &[
+        "String", "str", "i8", "i16", "i32", "i64", "i128", "isize", "u8", "u16", "u32", "u64",
+        "u128", "usize", "f32", "f64", "bool", "char",
+    ];
+    if PRIMS.contains(&t) {
+        return true;
+    }
+    if let Some(inner) = t.strip_prefix("Option<").and_then(|s| s.strip_suffix('>')) {
+        return is_primitive_type_text(inner);
+    }
+    false
+}
+
+/// `(variants, kind)` for the type whose `symbol` matches `target`.
+fn type_variants_and_kind(
+    air: &AirWorkspace,
+    target: &str,
+) -> Option<(BTreeSet<String>, TypeKind)> {
+    for pkg in &air.packages {
+        for file in &pkg.files {
+            for item in &file.items {
+                if let AirItem::Type(ty) = item
+                    && ty.symbol == target
+                {
+                    return Some((
+                        ty.variants.iter().map(|v| v.name.clone()).collect(),
+                        ty.kind,
+                    ));
+                }
+            }
+        }
+    }
+    None
+}
+
+fn jaccard_str(a: &BTreeSet<String>, b: &BTreeSet<String>) -> f32 {
+    if a.is_empty() && b.is_empty() {
+        return 0.0;
+    }
+    let inter = a.intersection(b).count();
+    let union = a.union(b).count();
+    if union == 0 {
+        0.0
+    } else {
+        inter as f32 / union as f32
+    }
+}
+
+fn join_sorted(set: &BTreeSet<String>) -> String {
+    set.iter().cloned().collect::<Vec<_>>().join(", ")
 }
 
 #[cfg(test)]
@@ -1606,5 +2175,649 @@ mod tests {
         );
         let diags = ot004(&air, &section, CheckMode::Human);
         assert_eq!(diags.len(), 1);
+    }
+
+    // ---- OT008 / OT009 / OT010 / OT011 / OT012 helpers ----
+
+    fn impl_in_file(
+        self_ty: &str,
+        trait_path: Option<&str>,
+        method_names: &[&str],
+        file_path: &str,
+    ) -> AirItem {
+        AirItem::Impl(locus_air::AirImpl {
+            trait_path: trait_path.map(|s| s.to_string()),
+            self_ty: self_ty.into(),
+            method_names: method_names.iter().map(|s| s.to_string()).collect(),
+            span: AirSpan::new(file_path, 1, 1),
+        })
+    }
+
+    fn enum_in_file(symbol: &str, name: &str, variants: &[&str], file_path: &str) -> AirItem {
+        use locus_air::AirVariant;
+        AirItem::Type(AirType {
+            kind: TypeKind::Enum,
+            name: name.into(),
+            symbol: symbol.into(),
+            visibility: Visibility::Public,
+            fields: Vec::new(),
+            variants: variants
+                .iter()
+                .map(|v| AirVariant {
+                    name: (*v).to_string(),
+                    fields: Vec::new(),
+                })
+                .collect(),
+            derives: Vec::new(),
+            attrs: Vec::new(),
+            span: AirSpan::new(file_path, 1, 1),
+            doc: None,
+        })
+    }
+
+    fn struct_with_fields(
+        symbol: &str,
+        name: &str,
+        fields: &[(&str, &str)],
+        file_path: &str,
+    ) -> AirItem {
+        AirItem::Type(AirType {
+            kind: TypeKind::Struct,
+            name: name.into(),
+            symbol: symbol.into(),
+            visibility: Visibility::Public,
+            fields: fields
+                .iter()
+                .map(|(n, t)| AirField {
+                    name: (*n).to_string(),
+                    type_text: (*t).to_string(),
+                    visibility: Visibility::Public,
+                })
+                .collect(),
+            variants: Vec::new(),
+            derives: Vec::new(),
+            attrs: Vec::new(),
+            span: AirSpan::new(file_path, 1, 1),
+            doc: None,
+        })
+    }
+
+    // ---- OT008 ----
+
+    #[test]
+    fn ot008_fires_on_domain_method_on_boundary_inherent_impl() {
+        let air = air_with_files(vec![(
+            "src/dto.rs",
+            vec![impl_in_file(
+                "UserDto",
+                None,
+                &["from", "is_active"], // `is_active` is the smoking gun
+                "src/dto.rs",
+            )],
+        )]);
+        let section = section_with_canonical_and_boundary(
+            "crate::identity::User",
+            "crate::dto::UserDto",
+            &[],
+        );
+        let diags = ot008(&air, &section, CheckMode::Human);
+        assert_eq!(diags.len(), 1, "expected one diagnostic; got {diags:?}");
+        assert_eq!(diags[0].rule_id, "OT008");
+        assert_eq!(diags[0].severity, Severity::Warning);
+        assert!(diags[0].message.contains("is_active"));
+    }
+
+    #[test]
+    fn ot008_quiet_on_pure_translation_impls() {
+        let air = air_with_files(vec![(
+            "src/dto.rs",
+            vec![impl_in_file(
+                "UserDto",
+                None,
+                &["from", "try_from", "as_str", "to_string"],
+                "src/dto.rs",
+            )],
+        )]);
+        let section = section_with_canonical_and_boundary(
+            "crate::identity::User",
+            "crate::dto::UserDto",
+            &[],
+        );
+        assert!(ot008(&air, &section, CheckMode::Human).is_empty());
+    }
+
+    #[test]
+    fn ot008_quiet_on_trait_impls() {
+        let air = air_with_files(vec![(
+            "src/dto.rs",
+            vec![impl_in_file(
+                "UserDto",
+                Some("std::fmt::Display"), // trait impl
+                &["fmt", "weird_method"],
+                "src/dto.rs",
+            )],
+        )]);
+        let section = section_with_canonical_and_boundary(
+            "crate::identity::User",
+            "crate::dto::UserDto",
+            &[],
+        );
+        assert!(ot008(&air, &section, CheckMode::Human).is_empty());
+    }
+
+    #[test]
+    fn ot008_silent_when_no_boundaries_accepted() {
+        let air = air_with_files(vec![(
+            "src/dto.rs",
+            vec![impl_in_file("UserDto", None, &["is_active"], "src/dto.rs")],
+        )]);
+        let section = OtSection::default();
+        assert!(ot008(&air, &section, CheckMode::Human).is_empty());
+    }
+
+    #[test]
+    fn ot008_agent_strict_elevates_to_fatal() {
+        let air = air_with_files(vec![(
+            "src/dto.rs",
+            vec![impl_in_file("UserDto", None, &["is_active"], "src/dto.rs")],
+        )]);
+        let section = section_with_canonical_and_boundary(
+            "crate::identity::User",
+            "crate::dto::UserDto",
+            &[],
+        );
+        let diags = ot008(&air, &section, CheckMode::AgentStrict);
+        assert_eq!(diags.len(), 1);
+        assert_eq!(diags[0].severity, Severity::Fatal);
+    }
+
+    // ---- OT009 ----
+
+    #[test]
+    fn ot009_fires_on_validate_function_outside_owner_module() {
+        let air = air_with_files(vec![
+            (
+                "src/identity.rs",
+                vec![ty_in_file(
+                    "crate::identity::User",
+                    "User",
+                    "src/identity.rs",
+                )],
+            ),
+            (
+                "src/handler.rs",
+                vec![fn_in_file(
+                    "crate::handler::validate_user",
+                    vec![("u", "User")],
+                    Some("Result<User, ()>"),
+                    "src/handler.rs",
+                )],
+            ),
+        ]);
+        let section = section_with_canonical_and_boundary(
+            "crate::identity::User",
+            "crate::dto::UserDto",
+            &[],
+        );
+        let diags = ot009(&air, &section, CheckMode::Human);
+        assert_eq!(diags.len(), 1, "expected OT009 to fire; got {diags:?}");
+        assert_eq!(diags[0].rule_id, "OT009");
+        assert_eq!(diags[0].severity, Severity::Warning);
+    }
+
+    #[test]
+    fn ot009_quiet_when_validator_lives_in_owner_module() {
+        let air = air_with_files(vec![(
+            "src/identity.rs",
+            vec![
+                ty_in_file("crate::identity::User", "User", "src/identity.rs"),
+                fn_in_file(
+                    "crate::identity::validate_user",
+                    vec![("u", "User")],
+                    Some("Result<User, ()>"),
+                    "src/identity.rs",
+                ),
+            ],
+        )]);
+        let section = section_with_canonical_and_boundary(
+            "crate::identity::User",
+            "crate::dto::UserDto",
+            &[],
+        );
+        assert!(ot009(&air, &section, CheckMode::Human).is_empty());
+    }
+
+    #[test]
+    fn ot009_quiet_when_validator_is_accepted_converter() {
+        let air = air_with_files(vec![
+            (
+                "src/identity.rs",
+                vec![ty_in_file(
+                    "crate::identity::User",
+                    "User",
+                    "src/identity.rs",
+                )],
+            ),
+            (
+                "src/api.rs",
+                vec![fn_in_file(
+                    "crate::api::validate_user",
+                    vec![("u", "User")],
+                    Some("Result<User, ()>"),
+                    "src/api.rs",
+                )],
+            ),
+        ]);
+        let section = section_with_canonical_and_boundary(
+            "crate::identity::User",
+            "crate::dto::UserDto",
+            &["crate::api::validate_user"],
+        );
+        assert!(ot009(&air, &section, CheckMode::Human).is_empty());
+    }
+
+    #[test]
+    fn ot009_quiet_for_validators_not_referencing_a_canonical() {
+        // A `validate_input(s: &str) -> bool` doesn't touch any canonical;
+        // OT009 should not flag it.
+        let air = air_with_files(vec![
+            (
+                "src/identity.rs",
+                vec![ty_in_file(
+                    "crate::identity::User",
+                    "User",
+                    "src/identity.rs",
+                )],
+            ),
+            (
+                "src/handler.rs",
+                vec![fn_in_file(
+                    "crate::handler::validate_input",
+                    vec![("s", "&str")],
+                    Some("bool"),
+                    "src/handler.rs",
+                )],
+            ),
+        ]);
+        let section = section_with_canonical_and_boundary(
+            "crate::identity::User",
+            "crate::dto::UserDto",
+            &[],
+        );
+        assert!(ot009(&air, &section, CheckMode::Human).is_empty());
+    }
+
+    #[test]
+    fn ot009_agent_strict_elevates_to_fatal() {
+        let air = air_with_files(vec![
+            (
+                "src/identity.rs",
+                vec![ty_in_file(
+                    "crate::identity::User",
+                    "User",
+                    "src/identity.rs",
+                )],
+            ),
+            (
+                "src/handler.rs",
+                vec![fn_in_file(
+                    "crate::handler::validate_user",
+                    vec![("u", "User")],
+                    Some("Result<User, ()>"),
+                    "src/handler.rs",
+                )],
+            ),
+        ]);
+        let section = section_with_canonical_and_boundary(
+            "crate::identity::User",
+            "crate::dto::UserDto",
+            &[],
+        );
+        let diags = ot009(&air, &section, CheckMode::AgentStrict);
+        assert_eq!(diags.len(), 1);
+        assert_eq!(diags[0].severity, Severity::Fatal);
+    }
+
+    // ---- OT010 ----
+
+    #[test]
+    fn ot010_fires_on_overlapping_unaccepted_enum() {
+        let air = air_with_files(vec![
+            (
+                "src/identity.rs",
+                vec![enum_in_file(
+                    "crate::identity::Status",
+                    "Status",
+                    &["Active", "Disabled", "Pending"],
+                    "src/identity.rs",
+                )],
+            ),
+            (
+                "src/elsewhere.rs",
+                vec![enum_in_file(
+                    "crate::elsewhere::UserState",
+                    "UserState",
+                    &["Active", "Disabled", "Banned"],
+                    "src/elsewhere.rs",
+                )],
+            ),
+        ]);
+        let section = {
+            use super::super::lockfile_schema::{
+                AcceptedCanonical, ConceptEntry, OtSection, Source,
+            };
+            let mut concepts = BTreeMap::new();
+            concepts.insert(
+                "status".to_string(),
+                ConceptEntry {
+                    canonical: AcceptedCanonical {
+                        symbol: "crate::identity::Status".into(),
+                        source: Source::Hint,
+                    },
+                    boundaries: Vec::new(),
+                    converters: Vec::new(),
+                },
+            );
+            OtSection { concepts }
+        };
+        let diags = ot010(&air, &section, CheckMode::Human);
+        assert_eq!(diags.len(), 1);
+        assert_eq!(diags[0].rule_id, "OT010");
+        assert_eq!(diags[0].severity, Severity::Warning);
+        assert!(diags[0].message.contains("UserState"));
+    }
+
+    #[test]
+    fn ot010_quiet_when_overlap_below_threshold() {
+        let air = air_with_files(vec![
+            (
+                "src/identity.rs",
+                vec![enum_in_file(
+                    "crate::identity::Status",
+                    "Status",
+                    &["Active", "Disabled", "Pending"],
+                    "src/identity.rs",
+                )],
+            ),
+            (
+                "src/elsewhere.rs",
+                vec![enum_in_file(
+                    "crate::elsewhere::Color",
+                    "Color",
+                    &["Red", "Green", "Blue"],
+                    "src/elsewhere.rs",
+                )],
+            ),
+        ]);
+        let section = {
+            use super::super::lockfile_schema::{
+                AcceptedCanonical, ConceptEntry, OtSection, Source,
+            };
+            let mut concepts = BTreeMap::new();
+            concepts.insert(
+                "status".to_string(),
+                ConceptEntry {
+                    canonical: AcceptedCanonical {
+                        symbol: "crate::identity::Status".into(),
+                        source: Source::Hint,
+                    },
+                    boundaries: Vec::new(),
+                    converters: Vec::new(),
+                },
+            );
+            OtSection { concepts }
+        };
+        assert!(ot010(&air, &section, CheckMode::Human).is_empty());
+    }
+
+    #[test]
+    fn ot010_silent_when_canonical_is_not_an_enum() {
+        let air = air_with_files(vec![(
+            "src/elsewhere.rs",
+            vec![enum_in_file(
+                "crate::elsewhere::Status",
+                "Status",
+                &["A", "B"],
+                "src/elsewhere.rs",
+            )],
+        )]);
+        let section = section_with_canonical_and_boundary(
+            "crate::identity::User",
+            "crate::dto::UserDto",
+            &[],
+        );
+        assert!(ot010(&air, &section, CheckMode::Human).is_empty());
+    }
+
+    // ---- OT011 ----
+
+    #[test]
+    fn ot011_fires_on_shadow_newtype_with_same_name() {
+        let air = air_with_files(vec![
+            (
+                "src/identity.rs",
+                vec![struct_with_fields(
+                    "crate::identity::UserId",
+                    "UserId",
+                    &[("0", "String")],
+                    "src/identity.rs",
+                )],
+            ),
+            (
+                "src/dto.rs",
+                vec![struct_with_fields(
+                    "crate::dto::UserId",
+                    "UserId",
+                    &[("0", "String")],
+                    "src/dto.rs",
+                )],
+            ),
+        ]);
+        let section = {
+            use super::super::lockfile_schema::{
+                AcceptedCanonical, ConceptEntry, OtSection, Source,
+            };
+            let mut concepts = BTreeMap::new();
+            concepts.insert(
+                "user-id".to_string(),
+                ConceptEntry {
+                    canonical: AcceptedCanonical {
+                        symbol: "crate::identity::UserId".into(),
+                        source: Source::Hint,
+                    },
+                    boundaries: Vec::new(),
+                    converters: Vec::new(),
+                },
+            );
+            OtSection { concepts }
+        };
+        let diags = ot011(&air, &section, CheckMode::Human);
+        assert_eq!(diags.len(), 1);
+        assert_eq!(diags[0].rule_id, "OT011");
+        assert!(diags[0].message.contains("crate::dto::UserId"));
+    }
+
+    #[test]
+    fn ot011_quiet_for_multi_field_structs() {
+        let air = air_with_files(vec![(
+            "src/dto.rs",
+            vec![struct_with_fields(
+                "crate::dto::UserId",
+                "UserId",
+                &[("a", "String"), ("b", "String")],
+                "src/dto.rs",
+            )],
+        )]);
+        let section = {
+            use super::super::lockfile_schema::{
+                AcceptedCanonical, ConceptEntry, OtSection, Source,
+            };
+            let mut concepts = BTreeMap::new();
+            concepts.insert(
+                "user-id".to_string(),
+                ConceptEntry {
+                    canonical: AcceptedCanonical {
+                        symbol: "crate::identity::UserId".into(),
+                        source: Source::Hint,
+                    },
+                    boundaries: Vec::new(),
+                    converters: Vec::new(),
+                },
+            );
+            OtSection { concepts }
+        };
+        assert!(ot011(&air, &section, CheckMode::Human).is_empty());
+    }
+
+    // ---- OT012 ----
+
+    #[test]
+    fn ot012_fires_on_primitive_field_named_after_canonical() {
+        let air = air_with_files(vec![
+            (
+                "src/identity.rs",
+                vec![struct_with_fields(
+                    "crate::identity::UserId",
+                    "UserId",
+                    &[("0", "String")],
+                    "src/identity.rs",
+                )],
+            ),
+            (
+                "src/cmd.rs",
+                vec![struct_with_fields(
+                    "crate::cmd::UserCommand",
+                    "UserCommand",
+                    &[("user_id", "String")],
+                    "src/cmd.rs",
+                )],
+            ),
+        ]);
+        let section = {
+            use super::super::lockfile_schema::{
+                AcceptedCanonical, ConceptEntry, OtSection, Source,
+            };
+            let mut concepts = BTreeMap::new();
+            concepts.insert(
+                "user-id".to_string(),
+                ConceptEntry {
+                    canonical: AcceptedCanonical {
+                        symbol: "crate::identity::UserId".into(),
+                        source: Source::Hint,
+                    },
+                    boundaries: Vec::new(),
+                    converters: Vec::new(),
+                },
+            );
+            OtSection { concepts }
+        };
+        let diags = ot012(&air, &section, CheckMode::Human);
+        assert_eq!(diags.len(), 1);
+        assert_eq!(diags[0].rule_id, "OT012");
+        assert_eq!(diags[0].severity, Severity::Warning);
+        assert!(diags[0].message.contains("user_id"));
+        assert!(diags[0].message.contains("String"));
+    }
+
+    #[test]
+    fn ot012_quiet_when_field_typed_as_canonical() {
+        let air = air_with_files(vec![
+            (
+                "src/identity.rs",
+                vec![struct_with_fields(
+                    "crate::identity::UserId",
+                    "UserId",
+                    &[("0", "String")],
+                    "src/identity.rs",
+                )],
+            ),
+            (
+                "src/cmd.rs",
+                vec![struct_with_fields(
+                    "crate::cmd::UserCommand",
+                    "UserCommand",
+                    &[("user_id", "UserId")],
+                    "src/cmd.rs",
+                )],
+            ),
+        ]);
+        let section = {
+            use super::super::lockfile_schema::{
+                AcceptedCanonical, ConceptEntry, OtSection, Source,
+            };
+            let mut concepts = BTreeMap::new();
+            concepts.insert(
+                "user-id".to_string(),
+                ConceptEntry {
+                    canonical: AcceptedCanonical {
+                        symbol: "crate::identity::UserId".into(),
+                        source: Source::Hint,
+                    },
+                    boundaries: Vec::new(),
+                    converters: Vec::new(),
+                },
+            );
+            OtSection { concepts }
+        };
+        assert!(ot012(&air, &section, CheckMode::Human).is_empty());
+    }
+
+    #[test]
+    fn ot012_quiet_when_struct_is_accepted_boundary() {
+        // Boundaries mirror the wire shape; primitives there are fine.
+        let air = air_with_files(vec![(
+            "src/dto.rs",
+            vec![struct_with_fields(
+                "crate::dto::UserDto",
+                "UserDto",
+                &[("user_id", "String")],
+                "src/dto.rs",
+            )],
+        )]);
+        let section = {
+            use super::super::lockfile_schema::{
+                AcceptedBoundary, AcceptedCanonical, ConceptEntry, OtSection, Source,
+            };
+            let mut concepts = BTreeMap::new();
+            concepts.insert(
+                "user-id".to_string(),
+                ConceptEntry {
+                    canonical: AcceptedCanonical {
+                        symbol: "crate::identity::UserId".into(),
+                        source: Source::Hint,
+                    },
+                    boundaries: vec![AcceptedBoundary {
+                        symbol: "crate::dto::UserDto".into(),
+                        boundary: None,
+                        source: Source::Hint,
+                    }],
+                    converters: Vec::new(),
+                },
+            );
+            OtSection { concepts }
+        };
+        assert!(ot012(&air, &section, CheckMode::Human).is_empty());
+    }
+
+    #[test]
+    fn snake_to_pascal_round_trips_known_shapes() {
+        assert_eq!(snake_to_pascal("user_id").as_deref(), Some("UserId"));
+        assert_eq!(snake_to_pascal("email").as_deref(), Some("Email"));
+        assert_eq!(
+            snake_to_pascal("email_address").as_deref(),
+            Some("EmailAddress")
+        );
+        assert!(snake_to_pascal("").is_none());
+        assert!(snake_to_pascal("a__b").is_none());
+    }
+
+    #[test]
+    fn is_primitive_type_text_handles_refs_and_options() {
+        assert!(is_primitive_type_text("String"));
+        assert!(is_primitive_type_text("&str"));
+        assert!(is_primitive_type_text("i64"));
+        assert!(is_primitive_type_text("Option<String>"));
+        assert!(!is_primitive_type_text("UserId"));
+        assert!(!is_primitive_type_text("Vec<String>"));
     }
 }

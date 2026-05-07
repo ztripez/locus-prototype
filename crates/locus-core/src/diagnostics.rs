@@ -41,6 +41,33 @@ impl Severity {
     pub fn is_fatal(self) -> bool {
         matches!(self, Severity::Fatal)
     }
+
+    /// Map an inference confidence score to a severity tier per the spec
+    /// (`docs/project-jumpoff.md` §"Inference Strategy"):
+    ///
+    /// - `>= 0.90` — strong inference, fires as `Fatal`
+    /// - `>= 0.70` — fires as `Warning` (or `Fatal` under `--agent-strict`)
+    /// - `>= 0.50` — `Advisory` only
+    /// - `< 0.50`  — suppressed (returns `None`)
+    ///
+    /// Used by inference-shaped rules (OT002, OT008–OT012) where the
+    /// detector produces a confidence score; deterministic rules
+    /// (`OT001` duplicate canonical, `DG001` forbidden import) skip this
+    /// helper and emit a fixed severity directly.
+    pub fn from_confidence(confidence: f32, mode: CheckMode) -> Option<Severity> {
+        if confidence >= 0.90 {
+            Some(Severity::Fatal)
+        } else if confidence >= 0.70 {
+            Some(match mode {
+                CheckMode::AgentStrict => Severity::Fatal,
+                CheckMode::Human => Severity::Warning,
+            })
+        } else if confidence >= 0.50 {
+            Some(Severity::Advisory)
+        } else {
+            None
+        }
+    }
 }
 
 /// Whether a paradigm should treat warnings as fatal. Set by the CLI's

@@ -93,7 +93,9 @@ use locus_core::paradigms::test_architecture::{
 use locus_core::paradigms::utility_discipline::{
     UT_PREFIX, edit::add_utility_path, lockfile_schema::UtSection,
 };
-use locus_core::{CheckMode, Diagnostic, Lockfile, Severity, registry};
+use locus_core::{
+    CheckMode, Diagnostic, Lockfile, Severity, apply_exceptions, registry, today_utc,
+};
 
 // ot: boundary cli.invocation cli
 #[derive(Parser, Debug)]
@@ -1533,6 +1535,8 @@ fn check(args: CheckArgs) -> Result<()> {
     for paradigm in registry() {
         all.extend(paradigm.check(&air, &lockfile, mode));
     }
+    let today = today_utc();
+    let all = apply_exceptions(all, &air, &lockfile, Some(&today));
 
     let stdout = io::stdout();
     let mut out = BufWriter::new(stdout.lock());

@@ -7,11 +7,13 @@
 //! per-paradigm modules under [`paradigms`].
 
 pub mod diagnostics;
+pub mod exceptions;
 pub mod loaders;
 pub mod lockfile;
 pub mod paradigms;
 
 pub use diagnostics::{CheckMode, Diagnostic, Severity};
+pub use exceptions::{EXPIRED_EXCEPTION_RULE, apply_exceptions, today_utc};
 pub use loaders::{Loader, apply_loaders};
 pub use lockfile::{Lockfile, LockfileError};
 pub use paradigms::{Paradigm, registry};
