@@ -5,23 +5,37 @@
 
 use crate::type_render::{render_path, render_type};
 use locus_air::{
-    ActionKind, AirConversion, AirField, AirFunction, AirItem, AirSpan, AirTruthAction, AirType,
-    AirVariant, ConversionMechanism, TypeKind, Visibility,
+    ActionKind, AirConversion, AirField, AirFunction, AirImport, AirItem, AirSpan, AirTruthAction,
+    AirType, AirVariant, ConversionMechanism, TypeKind, Visibility,
 };
 use quote::ToTokens;
 use syn::{
     Expr, Fields, File, ImplItem, Item, ItemEnum, ItemFn, ItemImpl, ItemMod, ItemStruct, ItemType,
-    ItemUnion, Pat, ReturnType, Stmt, Visibility as SynVis, spanned::Spanned,
+    ItemUnion, ItemUse, Pat, ReturnType, Stmt, UseTree, Visibility as SynVis, spanned::Spanned,
 };
 
 pub fn collect_items(file: &File, file_path: &str, module: Option<&str>) -> Vec<AirItem> {
     let mut out = Vec::new();
     let module_str = module.unwrap_or("crate").to_string();
-    walk_items(&file.items, &module_str, file_path, &mut out);
+    // crate-name prefix used to rewrite `crate::*` import paths into the
+    // package-prefixed symbol form. Falls back to the literal "crate" when
+    // the caller didn't supply a module — keeps tests that still pass `None`
+    // working.
+    let crate_name = module
+        .and_then(|m| m.split("::").next())
+        .unwrap_or("crate")
+        .to_string();
+    walk_items(&file.items, &module_str, &crate_name, file_path, &mut out);
     out
 }
 
-fn walk_items(items: &[Item], module: &str, file_path: &str, out: &mut Vec<AirItem>) {
+fn walk_items(
+    items: &[Item],
+    module: &str,
+    crate_name: &str,
+    file_path: &str,
+    out: &mut Vec<AirItem>,
+) {
     for item in items {
         match item {
             Item::Struct(s) => emit_struct(s, module, file_path, out),
@@ -30,7 +44,8 @@ fn walk_items(items: &[Item], module: &str, file_path: &str, out: &mut Vec<AirIt
             Item::Union(u) => emit_union(u, module, file_path, out),
             Item::Fn(f) => emit_fn(f, module, file_path, out),
             Item::Impl(i) => emit_impl(i, module, file_path, out),
-            Item::Mod(m) => emit_mod(m, module, file_path, out),
+            Item::Mod(m) => emit_mod(m, module, crate_name, file_path, out),
+            Item::Use(u) => emit_use(u, crate_name, file_path, out),
             _ => {}
         }
     }
@@ -236,12 +251,75 @@ fn emit_impl(i: &ItemImpl, module: &str, file_path: &str, out: &mut Vec<AirItem>
     }
 }
 
-fn emit_mod(m: &ItemMod, parent_module: &str, file_path: &str, out: &mut Vec<AirItem>) {
+fn emit_mod(
+    m: &ItemMod,
+    parent_module: &str,
+    crate_name: &str,
+    file_path: &str,
+    out: &mut Vec<AirItem>,
+) {
     let Some((_, items)) = &m.content else {
         return; // out-of-line module; its file is walked separately.
     };
     let nested = format!("{parent_module}::{}", m.ident);
-    walk_items(items, &nested, file_path, out);
+    walk_items(items, &nested, crate_name, file_path, out);
+}
+
+fn emit_use(u: &ItemUse, crate_name: &str, file_path: &str, out: &mut Vec<AirItem>) {
+    let mut paths = Vec::new();
+    flatten_use_tree(&u.tree, String::new(), &mut paths);
+    let visibility = vis_of(&u.vis);
+    let span = span_of(file_path, u.span());
+    for raw in paths {
+        let path = normalize_use_path(raw, crate_name);
+        out.push(AirItem::Import(AirImport {
+            path,
+            visibility,
+            span: span.clone(),
+        }));
+    }
+}
+
+fn flatten_use_tree(tree: &UseTree, prefix: String, out: &mut Vec<String>) {
+    let join = |p: &str, seg: &str| -> String {
+        if p.is_empty() {
+            seg.to_string()
+        } else {
+            format!("{p}::{seg}")
+        }
+    };
+    match tree {
+        UseTree::Path(p) => {
+            let next = join(&prefix, &p.ident.to_string());
+            flatten_use_tree(&p.tree, next, out);
+        }
+        UseTree::Name(n) => out.push(join(&prefix, &n.ident.to_string())),
+        UseTree::Rename(r) => out.push(join(&prefix, &r.ident.to_string())),
+        UseTree::Glob(_) => out.push(if prefix.is_empty() {
+            "*".to_string()
+        } else {
+            format!("{prefix}::*")
+        }),
+        UseTree::Group(g) => {
+            for inner in &g.items {
+                flatten_use_tree(inner, prefix.clone(), out);
+            }
+        }
+    }
+}
+
+/// Rewrite leading `crate::` to the package's lib name so the AIR import
+/// path lines up with [`AirType::symbol`] (also package-prefixed). `self::`
+/// and `super::` paths are left literal — accurate resolution of those would
+/// require knowing the file's full module chain, which is a Phase 3 problem.
+fn normalize_use_path(path: String, crate_name: &str) -> String {
+    if path == "crate" {
+        return crate_name.to_string();
+    }
+    if let Some(rest) = path.strip_prefix("crate::") {
+        return format!("{crate_name}::{rest}");
+    }
+    path
 }
 
 fn collect_named_fields(fields: &Fields) -> Vec<AirField> {

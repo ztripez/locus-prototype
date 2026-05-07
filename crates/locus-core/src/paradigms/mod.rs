@@ -4,6 +4,7 @@
 //! trait. Paradigms share `Diagnostic` / `Lockfile` infrastructure but never
 //! depend on each other.
 
+pub mod dependency_graph;
 pub mod one_truth;
 
 use crate::diagnostics::{CheckMode, Diagnostic};
@@ -31,5 +32,8 @@ pub trait Paradigm {
 /// phases extend the slice as `dependency_graph::DependencyGraph`,
 /// `boundary_ownership::BoundaryOwnership`, etc. land.
 pub fn registry() -> Vec<Box<dyn Paradigm>> {
-    vec![Box::new(one_truth::OneTruth)]
+    vec![
+        Box::new(one_truth::OneTruth),
+        Box::new(dependency_graph::DependencyGraph),
+    ]
 }

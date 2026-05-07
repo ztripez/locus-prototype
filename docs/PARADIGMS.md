@@ -464,6 +464,40 @@ identity -> billing internals
 DG — Dependency Graph / Direction
 ```
 
+### Rules
+
+#### DG001 — Forbidden import
+
+For every `AirItem::Import` in every file, walk the lockfile's `forbidden_edges`. Fire when the file's `module_path` matches the edge's `from` pattern AND the import path matches the edge's `to` pattern.
+
+Always Fatal: a forbidden edge is a directional violation declared by the user themselves.
+
+### Lockfile shape
+
+```json
+{
+  "paradigms": {
+    "DG": {
+      "forbidden_edges": [
+        {
+          "from": "lore_engine_core::domain::*",
+          "to": "lore_engine_core::api::*",
+          "reason": "domain must not depend on transport"
+        }
+      ]
+    }
+  }
+}
+```
+
+Pattern syntax (intentionally minimal in this phase):
+
+- `foo::bar` — exact match
+- `foo::*` — `foo` itself or any descendant
+- `*` — anything
+
+`init` for DG is a no-op — there's no inference that can decide "domain shouldn't reach api" for a project; the user has to declare that intent. A future report-only `locus dg snapshot` could enumerate the current import graph as a starting point, but populating `forbidden_edges` is a human decision.
+
 ---
 
 ## Paradigm 5: Boundary Ownership

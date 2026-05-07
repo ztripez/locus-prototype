@@ -11,15 +11,20 @@ This file is the per-repo dev-handoff for Claude Code (and other agents — `CLA
 
 ## Project status
 
-OT (Canonical Domain Ownership) is wired end-to-end: AIR emission, paradigm host, OT002 rule, lockfile, `locus init / accept / check` CLI. Locus's own source is annotated; `locus check --workspace .` is clean.
+Two paradigms shipping:
+
+- **OT** (Canonical Domain Ownership) — OT001, OT002, OT003, OT004, OT005, OT006, OT007 all implemented. End-to-end wiring: AIR emission, paradigm host, lockfile, `locus init / accept canonical|boundary / check` CLI.
+- **DG** (Dependency Graph / Direction) — DG001 (forbidden import) implemented. Lockfile carries `forbidden_edges` with `from`/`to` glob patterns; the user declares which directional crossings are forbidden, DG001 catches them.
+
+Locus's own source is annotated; `locus check --workspace .` is clean.
 
 Workspace layout:
 
 ```
 crates/
-  locus-air/       # paradigm-neutral data + serde, schema v3
-  locus-core/      # paradigm host + OT module, shared diagnostics + lockfile
-  locus-rust/      # cargo_metadata + walkdir + syn + ot: hints + clean type renderer
+  locus-air/       # paradigm-neutral data + serde, schema v4 (adds AirItem::Import)
+  locus-core/      # paradigm host + OT + DG modules, shared diagnostics + lockfile
+  locus-rust/      # cargo_metadata + walkdir + syn + ot: hints + import scanning + clean type renderer
   locus-cli/       # binary `locus`: emit-air | init | accept canonical|boundary | check
   locus-report/    # STUB; populated when SARIF/JSON formatters are needed
 tests/fixtures/sample-crate/   # standalone fixture; NOT a workspace member
@@ -103,14 +108,12 @@ locus check --workspace . --agent-strict # warnings → fatal
 
 ## Implementation roadmap
 
-- ✅ AIR emission (Rust adapter, package-prefixed symbols, clean type rendering)
-- ✅ OT paradigm: `init` / `accept canonical|boundary` / `check`, OT002 with `--agent-strict` elevation
-- 🔜 OT001 (duplicate canonical) and OT006 (unregistered conversion) — both nearly trivial now that the lockfile records canonical symbols
-- 🔜 OT003 (boundary leak), OT004 (direct canonical construction), OT007 (adapter-to-adapter conversion)
-- Then: second paradigm — most likely DG (Dependency Graph), since the facts (`AirUsage`) are already in AIR
-- Then: deterministic loaders (`docs/PARADIGMS.md` covers the loader system) for framework-specific normalized facts
-
-Don't jump ahead. Paradigms after OT depend on the lockfile/diagnostic conventions settling.
+- ✅ AIR emission (Rust adapter, package-prefixed symbols, clean type rendering, imports)
+- ✅ OT paradigm: OT001–OT007 all implemented; `init` / `accept canonical|boundary` / `check` end-to-end with `--agent-strict` elevation
+- ✅ DG paradigm: DG001 (forbidden import) implemented, `forbidden_edges` lockfile schema with glob patterns
+- 🔜 OT008–OT012 (warning-tier polish: domain logic on boundary, scattered validation, shadow enums/newtypes, primitive obsession). These need new visitor work — method-level scanning and value-object tracking.
+- 🔜 DG002+ (cycles, cross-feature reach, shared-module reaching feature)
+- Then: deterministic loaders (`docs/PARADIGMS.md` covers the loader system) for framework-specific normalized facts. Loader output enriches AIR with normalized facts like `hot_path`, `request_context`, `blocking_call` that future paradigms (AC, TX, SE, OB) consume.
 
 ## Common commands
 

@@ -22,7 +22,11 @@ use serde::{Deserialize, Serialize};
 ///   instead of using the literal `crate` prefix. This makes symbols globally
 ///   unique across a Cargo workspace; without it, two crates can both emit
 ///   `crate::user::User` and collide in the lockfile.
-pub const AIR_SCHEMA_VERSION: u32 = 3;
+/// - **4**: adds `AirItem::Import` for every `use` statement. Paths are
+///   normalized so leading `crate` is rewritten to the package's lib name —
+///   keeps import paths consistent with [`AirType::symbol`] for cross-paradigm
+///   pattern matching (DG, future paradigms).
+pub const AIR_SCHEMA_VERSION: u32 = 4;
 
 // ot: canonical
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -68,6 +72,7 @@ pub enum AirItem {
     Conversion(AirConversion),
     Usage(AirUsage),
     TruthAction(AirTruthAction),
+    Import(AirImport),
 }
 
 // ot: canonical
@@ -186,6 +191,18 @@ pub enum ActionKind {
     StringCompare,
     Validate,
     Normalize,
+}
+
+// ot: canonical
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AirImport {
+    /// Fully-rendered import path. `use foo::bar::Baz` → `"foo::bar::Baz"`.
+    /// `use a::{b, c}` is flattened: each leaf becomes its own AirImport.
+    /// Leading `crate::` is normalized to the package's lib name so paths
+    /// are consistent with [`AirType::symbol`].
+    pub path: String,
+    pub visibility: Visibility,
+    pub span: AirSpan,
 }
 
 // ot: canonical
