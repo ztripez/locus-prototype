@@ -11,10 +11,17 @@ This file is the per-repo dev-handoff for Claude Code (and other agents — `CLA
 
 ## Project status
 
-Two paradigms shipping:
+19 paradigms registered; 32 rules implemented. Highlight set:
 
-- **OT** (Canonical Domain Ownership) — OT001, OT002, OT003, OT004, OT005, OT006, OT007 all implemented. End-to-end wiring: AIR emission, paradigm host, lockfile, `locus init / accept canonical|boundary / check` CLI.
-- **DG** (Dependency Graph / Direction) — DG001 (forbidden import), DG002 (dependency cycle of any size via Tarjan SCC), DG003 (cross-feature internals reach), DG004 (shared module reaching feature) implemented. Lockfile carries `forbidden_edges`, `features` (with `public_api` patterns), and `shared_paths`. CLI mutators: `locus dg forbid-edge`, `locus dg define-feature`, `locus dg add-shared-path`.
+- **OT** (Canonical Domain Ownership) — OT001–OT012 implemented. End-to-end wiring: AIR emission, paradigm host, lockfile, `locus init / accept canonical|boundary / check` CLI.
+- **DG** (Dependency Graph / Direction) — DG001 (forbidden import), DG002 (dependency cycle via Tarjan SCC), DG003 (cross-feature internals reach), DG004 (shared module reaching feature). Lockfile carries `forbidden_edges`, `features` (with `public_api` patterns), and `shared_paths`. CLI mutators: `locus dg forbid-edge`, `locus dg define-feature`, `locus dg add-shared-path`.
+- **FL** (Failure Lineage) — FL001 (boundary error in domain signature), FL002 (panic-shaped callees), FL003 (silent-discard `.ok()` / `.err()` / `.unwrap_or_else()`).
+- **DC**, **ER**, **UT**, **RM** — each has a second rule beyond XX001 (DC002 doc-residue phrases, ER002 string-shaped errors, UT002 forbidden imports, RM002 converter side-effects).
+- The remaining 13 paradigms (AB, BO, CF, CR, CX, DA, DC←already listed, ER←already listed, FO, MO, OB, PA, RW, TA, UT←already listed) ship one rule each at XX001.
+
+**Cross-paradigm infrastructure shipped:**
+- `Severity::from_confidence(c, mode)` — spec's 0.50/0.70/0.90 tier helper, used by inference-shaped rules.
+- `locus_core::exceptions` — `// ot: allow XX###` source hints + `Lockfile.exceptions[]` lockfile entries. Expired exceptions emit `LOCUS001` warnings instead of silently re-firing.
 
 Locus's own source is annotated; `locus check --workspace .` is clean.
 
@@ -22,10 +29,10 @@ Workspace layout:
 
 ```
 crates/
-  locus-air/       # paradigm-neutral data + serde, schema v4 (adds AirItem::Import)
-  locus-core/      # paradigm host + OT + DG modules, shared diagnostics + lockfile
+  locus-air/       # paradigm-neutral data + serde, schema v8 (FactKind aligned with spec)
+  locus-core/      # paradigm host + 19 paradigm modules, shared diagnostics + lockfile + exceptions
   locus-rust/      # cargo_metadata + walkdir + syn + ot: hints + import scanning + clean type renderer
-  locus-cli/       # binary `locus`: emit-air | init | accept canonical|boundary | check
+  locus-cli/       # binary `locus`: emit-air | init | accept canonical|boundary | check + per-paradigm mutators
   locus-report/    # STUB; populated when SARIF/JSON formatters are needed
 tests/fixtures/sample-crate/   # standalone fixture; NOT a workspace member
 ```
@@ -112,12 +119,18 @@ locus check --workspace . --agent-strict # warnings → fatal
 
 ## Implementation roadmap
 
-- ✅ AIR emission (Rust adapter, package-prefixed symbols, clean type rendering, imports)
-- ✅ OT paradigm: OT001–OT007 all implemented; `init` / `accept canonical|boundary` / `check` end-to-end with `--agent-strict` elevation
-- ✅ DG paradigm: DG001 (forbidden import) implemented, `forbidden_edges` lockfile schema with glob patterns
-- 🔜 OT008–OT012 (warning-tier polish: domain logic on boundary, scattered validation, shadow enums/newtypes, primitive obsession). These need new visitor work — method-level scanning and value-object tracking.
-- 🔜 DG002+ (cycles, cross-feature reach, shared-module reaching feature)
-- Then: deterministic loaders (`docs/PARADIGMS.md` covers the loader system) for framework-specific normalized facts. Loader output enriches AIR with normalized facts like `hot_path`, `request_context`, `blocking_call` that future paradigms (AC, TX, SE, OB) consume.
+- ✅ AIR emission v8 (Rust adapter, package-prefixed symbols, clean type rendering, imports, call sites, impl blocks, doc comments, line counts, normalized loader facts).
+- ✅ OT paradigm: OT001–OT012 all shipped; `init` / `accept canonical|boundary` / `check` end-to-end with `--agent-strict` elevation.
+- ✅ DG paradigm: DG001–DG004 (forbidden imports, cycles via Tarjan, cross-feature internals reach, shared-module reaching feature).
+- ✅ FL paradigm: FL001 (boundary error in domain), FL002 (panic-shaped callees), FL003 (silent-discard `.ok()` / `.err()` / `.unwrap_or_else()`).
+- ✅ Cross-paradigm: `Severity::from_confidence` tier helper; `// ot: allow` + lockfile exceptions wired through the CLI's `check` pipeline.
+- ✅ Second rules for DC, ER, UT, RM (DC002 doc-residue phrases, ER002 string-shaped errors, UT002 forbidden imports, RM002 converter side-effects).
+- 🔜 **Silent-error coverage gap** — FL003 catches `.ok()` / `.err()` method calls but the visitor doesn't yet emit items for: `let _ = result;` (discarded binding), `if let Ok(x) = result { ... }` without `else` (implicit silent Err), `match result { ... Err(_) => () }` (silent arm body), or `result.unwrap_or(default)` followed by no propagation. Each requires a new `AirItem` variant and a syn-visitor pass. Spec coverage is in `docs/PARADIGMS.md` §"Paradigm 12: Failure Lineage Ownership" → "Implementation status".
+- 🔜 Second rules for the remaining 13 paradigms (AB, BO, CF, CR, CX, DA, FO, MO, OB, PA, RW, TA + the implementation-already-listed ones for completeness).
+- 🔜 CLI oracle commands: `locus explain`, `locus query <kind>`, `locus debt` (lists active + expired exceptions), `locus graph`, `locus prune`, `locus add adapter`. Spec: `docs/PARADIGMS.md` §"Locus as an Architectural Oracle".
+- 🔜 `--changed` / `--patch` modes for diff-aware checking — without these, agent-strict elevates *all* warnings, not just new ones.
+- 🔜 SARIF / JSON formatters in `locus-report` (currently a stub; CLI hand-rolls output).
+- Then: deterministic loaders (`docs/PARADIGMS.md` covers the loader system) for framework-specific normalized facts. Loader output enriches AIR with `hot_path`, `request_context`, `blocking_call`, etc. that future paradigms (AC, TX, SE) consume.
 
 ## Common commands
 

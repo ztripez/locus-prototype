@@ -94,6 +94,51 @@ This keeps Locus deterministic, extensible, and architecture-focused.
 
 ---
 
+## Implementation status (snapshot)
+
+This document is the *target* spec — the full set of paradigms Locus is designed to guard. Not everything below is implemented yet. This section is the live snapshot so contributors can see what's shipped, what's partial, and what's still aspirational.
+
+**AIR coverage today** (schema v8): symbols, types (struct / enum / alias / union / trait), fields, variants, derives, doc text, functions (signature + line count + doc), inherent and trait `impl` blocks (with method names), imports (flattened, `crate::` normalized), call sites (Function / Method / Macro with rendered callee text and enclosing function), conversions (From / TryFrom / inherent / free), truth actions (`Construct` / `EnumMatch` / `StringCompare` / `Validate` / `Normalize`), source hints (`// ot: …`), normalized loader facts (`spawned_work`, `config_read`, `logging` produced by the `std-rt` loader; `external_io`, `persistence_write`, `blocking_call`, `hot_path`, `request_context`, `boundary_entry`, `runtime_state_owner`, `background_worker` reserved for future loaders).
+
+**Not yet in AIR** (rules that need these will be partial or absent until the visitor lands them):
+
+- general literal capture beyond truth actions
+- discarded bindings (`let _ = result;`)
+- `if let Ok(x) = ...` arm coverage
+- `match` arm bodies (we record the match target but not what each arm does)
+- retry-loop shapes
+- attribute presence on functions (no `#[cfg(test)]` detection)
+
+**Rules implemented per paradigm:**
+
+| Paradigm | Rules shipped | Total in spec | Notes |
+|----------|---------------|---------------|-------|
+| OT (1) | OT001–OT012 | OT001–OT012 | Complete. End-to-end CLI: `init` / `accept canonical|boundary` / `check`. |
+| CF (2) | CF001 | many — see chapter | env-read outside `config_paths`. Magic-constant / inline-policy detection awaits literal-capture. |
+| DA (3) | DA001 | many | single-impl traits without accepted port role. |
+| DG (4) | DG001–DG004 | DG001–DG004+ | Forbidden imports, cycles (Tarjan SCC), cross-feature internals reach, shared-module reaching feature. |
+| BO (5) | BO001 | many | forbidden import in domain module. |
+| PA (6) | PA001 | many | port + adapter in same file. |
+| CR (7) | CR001 | many | service-shaped construction outside composition root. |
+| RM (8) | RM001, RM002 | many | RM002 (NEW): converter performs side-effect fact (`spawned_work` / `logging` / `config_read`). |
+| MO (9) | MO001 | many | too many public types per file. |
+| CX (10) | CX001 | several | function exceeds line budget. |
+| UT (11) | UT001, UT002 | many | UT002: utility module imports a forbidden feature/domain path. |
+| FL (12) | FL001, FL002, **FL003** | many | **FL003 (NEW)**: silent error discard via `.ok()` / `.err()` / `.unwrap_or_else()`. See FL chapter for the silent-error coverage gap. |
+| ER (13) | ER001, ER002 | several | ER002: string-shaped error in `Result<_, E>` return type. |
+| RW (14) | RW001 | many | spawn outside runtime owner module. |
+| FO (15) | FO001 | many | same type name across two features. |
+| AB (16) | AB001 | many | speculative single-impl trait. |
+| DC (17) | DC001, DC002 | several | DC002: LLM-residue phrases in public doc comments. |
+| OB (18) | OB001 | many | forbidden log target in non-observer file. |
+| TA (19) | TA001 | many | public type in test module. |
+
+**Cross-paradigm infrastructure:**
+- `Severity::from_confidence(c, mode)` implements the spec's 0.50 / 0.70 / 0.90 inference tier table.
+- `// ot: allow XX### reason="…" expires="YYYY-MM-DD"` source hints + `Lockfile.exceptions[]` lockfile entries are honoured by the CLI's `check` pipeline. Expired exceptions emit a `LOCUS001` warning instead of silently re-firing.
+
+---
+
 ## Paradigm 1: Canonical Domain Ownership
 
 ### Problem
@@ -830,6 +875,24 @@ Failure owners can be callers, domain errors, boundary mappers, retry policies, 
 ```text
 FL — Failure Lineage Ownership
 ```
+
+### Implementation status
+
+| Rule | Detects | AIR consumed | Severity (human / agent-strict) |
+|------|---------|--------------|---------------------------------|
+| FL001 | `Result<_, E>` return in a `domain_paths` file where `E` matches `boundary_error_patterns` | `AirItem::Function.return_type` | Fatal / Fatal |
+| FL002 | Panic-shaped callee (`unwrap` / `expect` / `unwrap_or_default` / `panic!` / `todo!` / `unimplemented!`) outside `invariant_owner_paths` | `AirItem::CallSite` (Method, Macro) | Warning / Fatal |
+| FL003 | Silent-discard method call (`.ok()` / `.err()` / `.unwrap_or_else()`) outside `invariant_owner_paths` | `AirItem::CallSite` (Method) | Warning / Fatal |
+
+**Coverage gaps** — silent-error patterns the visitor can't currently see (no AIR item emitted for them, so no rule can check them):
+
+- `let _ = result;` — discarded binding
+- `if let Ok(x) = result { ... }` (no `else`) — implicit silent `Err` branch
+- `match result { Ok(x) => x, Err(_) => default }` — explicit silent swallow inside an arm body
+- `result.unwrap_or(default)` followed by no error path — fallback-as-discard
+- Spawned-task failures with no sink (needs `RuntimeStateOwner` fact production)
+
+These land when AIR adds the corresponding source-fact items. Until then, FL003 catches the `.ok()`/`.err()` shape and CLAUDE.md's roadmap tracks the visitor work.
 
 ---
 

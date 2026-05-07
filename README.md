@@ -43,25 +43,24 @@ Blocking findings must be derived from deterministic source facts and accepted o
 
 Locus separates source facts from architectural decisions.
 
-Language adapters emit normalized source facts into AIR, the Architecture Intermediate Representation:
+Language adapters emit normalized source facts into AIR, the Architecture Intermediate Representation. Schema v8 carries:
 
-- symbols,
-- types,
-- fields,
-- functions,
-- imports,
-- calls,
-- literals,
-- branches,
-- comments,
-- conversions,
-- error handling patterns,
-- runtime actions,
-- basic complexity metrics.
+- symbols (package-prefixed for cross-crate uniqueness),
+- types (struct / enum / alias / union / trait) with fields, variants, derives, and doc text,
+- functions with signature, line count, and doc text,
+- inherent and trait `impl` blocks with their method names,
+- imports (each `use` leaf flattened, `crate::` prefix normalized),
+- call sites (function / method / macro) with rendered callee text and enclosing function,
+- conversions (`From`, `TryFrom`, inherent methods, free functions),
+- truth actions (construct, enum-match, string-compare, validate, normalize),
+- source hints (`// ot: canonical | boundary | converter | protocol-translation | generated-boundary | allow`),
+- normalized loader facts (`spawned_work`, `config_read`, `logging` today; `external_io`, `persistence_write`, `blocking_call`, `hot_path`, `request_context`, `boundary_entry`, `runtime_state_owner`, `background_worker` reserved for future loaders).
 
-The core rule engine consumes AIR plus accepted ownership metadata and emits diagnostics.
+What's *not* yet in AIR (planned, tracked in `CLAUDE.md` roadmap): general literal capture beyond truth actions, full branch / arm-body inspection, discarded-binding (`let _ =`) tracking, retry-loop shape detection. These limit how deeply some rules can match the spec.
 
-Framework or runtime-specific knowledge should enter through deterministic sub-paradigm loaders. Loaders enrich AIR with normalized facts such as `hot_path`, `request_context`, `blocking_call`, `spawned_work`, `persistence_write`, or `boundary_entry`. Core Locus rules operate on those normalized facts, not framework-specific opinions.
+The core rule engine consumes AIR plus accepted ownership metadata in `locus.lock` and emits diagnostics.
+
+Framework or runtime-specific knowledge enters through deterministic sub-paradigm loaders. The current `std-rt` loader covers Rust language-level patterns (`tokio::spawn` / `std::thread::spawn` / `rayon::spawn` → `spawned_work`; `std::env::var` family → `config_read`; the print/dbg/log macro family → `logging`). Framework-specific loaders (reqwest, sqlx, tracing-spans, axum, …) are out of scope until the paradigm rule set is more complete — Locus rules operate on the normalized facts, not framework-specific opinions.
 
 ## Main documents
 

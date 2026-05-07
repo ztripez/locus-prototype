@@ -47,8 +47,10 @@ pub struct FlSection {
     /// Module patterns matching `AirFile.module_path` for files where the
     /// panic-shaped callees above are legitimate — typically supervisors,
     /// startup-asserting bin entry points, or test-support modules that
-    /// own the invariant being asserted. FL002 stays silent until this list
-    /// is populated, mirroring every other lockfile-driven rule.
+    /// own the invariant being asserted. Shared by FL002 (panic-shaped
+    /// callees) and FL003 (silent-discard callees) — both rules stay
+    /// silent until this list is populated, mirroring every other
+    /// lockfile-driven rule.
     ///
     /// The spec (`docs/PARADIGMS.md` line 811: "panics/unwraps outside
     /// invariant owners *or tests*") expects test paths to be carved out.
@@ -57,11 +59,29 @@ pub struct FlSection {
     /// user lockfile decision. Recommended starter set when populating:
     /// `["*::tests::*", "*::test::*", "tests::*", "tests::*::*"]` plus any
     /// project-specific invariant-owner modules. We deliberately don't seed
-    /// these defaults here because a non-empty seed would flip FL002 from
-    /// "silent until configured" to "fires on every codebase" — a posture
-    /// the rest of Locus avoids.
+    /// these defaults here because a non-empty seed would flip FL002/FL003
+    /// from "silent until configured" to "fires on every codebase" — a
+    /// posture the rest of Locus avoids.
     #[serde(default)]
     pub invariant_owner_paths: Vec<String>,
+
+    /// Method-call callees considered "silent error discard" — they convert
+    /// a `Result` into a value-or-default *without* propagating the error.
+    /// FL003 matches each `AirItem::CallSite` with `kind == Method` and
+    /// `callee == <name>` against this list. Default covers the agent's
+    /// classic silent-swallow pattern: `.ok()` on a `Result` (drops the
+    /// error, returns `Option`), `.err()` (drops the success), and
+    /// `.unwrap_or_else` when paired with a closure that ignores its
+    /// argument (we can't see the closure body, so the conservative call
+    /// is to flag it and let the user accept it via `// ot: allow FL003`).
+    ///
+    /// Note: bare-name matching means we'll see `.ok()` on `Option`-shaped
+    /// receivers too. Most std types have no `.ok()` method — `Option`
+    /// itself doesn't — so the false-positive surface is small. The
+    /// receiver-type would be needed to be precise; receiver resolution is
+    /// out of AIR's scope today, so the rule is intentionally conservative.
+    #[serde(default = "default_silent_discard_callees")]
+    pub silent_discard_callees: Vec<String>,
 }
 
 impl Default for FlSection {
@@ -71,6 +91,7 @@ impl Default for FlSection {
             boundary_error_patterns: Vec::new(),
             forbidden_callees: default_forbidden_callees(),
             invariant_owner_paths: Vec::new(),
+            silent_discard_callees: default_silent_discard_callees(),
         }
     }
 }
@@ -87,6 +108,19 @@ pub fn default_forbidden_callees() -> Vec<String> {
         "panic".to_string(),
         "todo".to_string(),
         "unimplemented".to_string(),
+    ]
+}
+
+/// Default silent-discard callees for FL003: the agent's "make the error
+/// go away without propagating it" family. Matched against
+/// `AirCallSite.callee` for method calls only (`CallKind::Method`).
+/// Spec: `docs/PARADIGMS.md` line 804–807 (".ok() / unwrap_or_default
+/// masking, etc.").
+pub fn default_silent_discard_callees() -> Vec<String> {
+    vec![
+        "ok".to_string(),
+        "err".to_string(),
+        "unwrap_or_else".to_string(),
     ]
 }
 
@@ -154,6 +188,13 @@ mod tests {
                 s.forbidden_callees.iter().any(|c| c == expected),
                 "default forbidden callees missing `{expected}`: {:?}",
                 s.forbidden_callees,
+            );
+        }
+        for expected in ["ok", "err", "unwrap_or_else"] {
+            assert!(
+                s.silent_discard_callees.iter().any(|c| c == expected),
+                "default silent-discard callees missing `{expected}`: {:?}",
+                s.silent_discard_callees,
             );
         }
     }

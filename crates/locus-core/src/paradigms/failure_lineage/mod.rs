@@ -13,6 +13,9 @@
 //! - FL002: panic-shaped callee (`unwrap` / `expect` / `unwrap_or_default` /
 //!   `panic` / `todo` / `unimplemented`) fires from a module that isn't in
 //!   `invariant_owner_paths`.
+//! - FL003: silent-discard method call (`.ok()` / `.err()` /
+//!   `.unwrap_or_else()`) fires from a module that isn't in
+//!   `invariant_owner_paths` — the inverse of FL002.
 
 // ot: canonical
 
@@ -47,6 +50,7 @@ impl Paradigm for FailureLineage {
             lockfile.paradigm_section(FL_PREFIX).unwrap_or_default();
         let mut out = rules::fl001(air, &section, mode);
         out.extend(rules::fl002(air, &section, mode));
+        out.extend(rules::fl003(air, &section, mode));
         out
     }
 }
