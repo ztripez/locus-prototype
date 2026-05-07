@@ -1,0 +1,20 @@
+# Build outputs
+/target
+tests/fixtures/sample-crate/target/
+
+# insta snapshot temp files
+**/*.snap.new
+
+# Test fixture is a stand-alone Cargo crate; we never build it as part of
+# the locus workspace, so its lockfile and the OT lockfile produced by
+# `locus init` are regenerable artifacts, not source.
+tests/fixtures/sample-crate/Cargo.lock
+tests/fixtures/sample-crate/locus.lock
+
+# Editor / OS noise
+.DS_Store
+*.swp
+*.swo
+
+# Per-project Claude state (machine-specific, do not version)
+.claude/

@@ -1,0 +1,9 @@
+[package]
+name = "locus-report"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+locus-air.workspace = true

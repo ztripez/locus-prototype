@@ -1,0 +1,35 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/locus-air",
+    "crates/locus-core",
+    "crates/locus-rust",
+    "crates/locus-cli",
+    "crates/locus-report",
+]
+exclude = ["tests/fixtures"]
+
+[workspace.package]
+edition = "2024"
+version = "0.1.0"
+license = "MIT OR Apache-2.0"
+publish = false
+
+[workspace.dependencies]
+locus-air = { path = "crates/locus-air" }
+locus-core = { path = "crates/locus-core" }
+locus-rust = { path = "crates/locus-rust" }
+locus-report = { path = "crates/locus-report" }
+
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+syn = { version = "2", features = ["full", "extra-traits", "visit"] }
+quote = "1"
+proc-macro2 = { version = "1", features = ["span-locations"] }
+walkdir = "2"
+cargo_metadata = "0.18"
+clap = { version = "4", features = ["derive"] }
+anyhow = "1"
+thiserror = "1"
+indoc = "2"
+insta = { version = "1", features = ["json"] }

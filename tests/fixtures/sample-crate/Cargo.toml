@@ -1,0 +1,18 @@
+# Standalone fixture crate. NOT part of the locus workspace — `[workspace]`
+# below severs membership so `cargo build --workspace` ignores it.
+#
+# This crate is consumed only by `locus_rust::scan` (which uses
+# `cargo metadata --no-deps` and parses sources with `syn`). It is never
+# compiled. Derives like `Serialize`/`Deserialize` therefore do not need a
+# real `serde` dependency — they are just tokens to the visitor.
+
+[workspace]
+
+[package]
+name = "sample-crate"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[lib]
+path = "src/lib.rs"

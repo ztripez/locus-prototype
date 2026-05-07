@@ -1,0 +1,181 @@
+//! Integration test: scan the sample-crate fixture and run the OT paradigm.
+//! Asserts exactly one OT002 diagnostic, fired on `UserModel`.
+
+use locus_core::paradigms::one_truth::OT_PREFIX;
+use locus_core::paradigms::one_truth::lockfile_schema::OtSection;
+use locus_core::{CheckMode, Lockfile, Severity, registry};
+
+fn fixture_path() -> std::path::PathBuf {
+    let manifest = std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR");
+    std::path::PathBuf::from(manifest)
+        .join("../../tests/fixtures/sample-crate")
+        .canonicalize()
+        .expect("fixture path resolves")
+}
+
+#[test]
+fn ot002_fires_on_user_model_only() {
+    let air = locus_rust::scan(&fixture_path()).expect("scan succeeds");
+    let lockfile = Lockfile::empty();
+    let mut diags = Vec::new();
+    for paradigm in registry() {
+        diags.extend(paradigm.check(&air, &lockfile, CheckMode::Human));
+    }
+
+    let ot002: Vec<_> = diags.iter().filter(|d| d.rule_id == "OT002").collect();
+    assert_eq!(
+        ot002.len(),
+        1,
+        "expected exactly one OT002 diagnostic; got {} ({:?})",
+        ot002.len(),
+        ot002
+    );
+
+    let d = ot002[0];
+    assert!(
+        d.message.contains("UserModel"),
+        "OT002 should target UserModel; message: {}",
+        d.message
+    );
+    assert_eq!(d.concept.as_deref(), Some("user"));
+    assert_eq!(d.severity, Severity::Warning, "fatal only in agent-strict");
+    assert!(
+        d.span.file.ends_with("shadow.rs"),
+        "span should point at shadow.rs, got {}",
+        d.span.file
+    );
+    assert!(
+        d.suggested_fix
+            .as_ref()
+            .is_some_and(|f| f.contains("ot: boundary")),
+        "fix should suggest the boundary annotation; got {:?}",
+        d.suggested_fix
+    );
+}
+
+#[test]
+fn agent_strict_makes_ot002_fatal() {
+    let air = locus_rust::scan(&fixture_path()).expect("scan succeeds");
+    let lockfile = Lockfile::empty();
+    let mut diags = Vec::new();
+    for paradigm in registry() {
+        diags.extend(paradigm.check(&air, &lockfile, CheckMode::AgentStrict));
+    }
+    let ot002: Vec<_> = diags.iter().filter(|d| d.rule_id == "OT002").collect();
+    assert_eq!(ot002.len(), 1);
+    assert_eq!(ot002[0].severity, Severity::Fatal);
+}
+
+#[test]
+fn init_promotes_annotated_canonical_and_boundary_into_lockfile() {
+    let air = locus_rust::scan(&fixture_path()).expect("scan succeeds");
+    let registry = registry();
+    let ot = registry
+        .iter()
+        .find(|p| p.rule_prefix() == OT_PREFIX)
+        .expect("OT registered");
+    let value = ot.init(&air);
+    let section: OtSection = serde_json::from_value(value).expect("OT section deserializes");
+
+    let user = section.concepts.get("user").expect("`user` concept");
+    assert_eq!(user.canonical.symbol, "sample_crate::identity::User");
+    let boundary_symbols: Vec<_> = user.boundaries.iter().map(|b| b.symbol.as_str()).collect();
+    assert!(
+        boundary_symbols.contains(&"sample_crate::dto::UserDto"),
+        "UserDto must be accepted as boundary; got {boundary_symbols:?}"
+    );
+    assert!(
+        !boundary_symbols.contains(&"sample_crate::shadow::UserModel"),
+        "UserModel is unannotated; must NOT be in the lockfile"
+    );
+    assert!(
+        user.boundaries
+            .iter()
+            .any(|b| b.boundary.as_deref() == Some("api.v1")),
+        "boundary label `api.v1` should be carried over from the hint"
+    );
+    assert!(
+        !user.converters.is_empty(),
+        "expected at least one converter (TryFrom<UserDto> for User)"
+    );
+}
+
+#[test]
+fn check_against_populated_lockfile_still_flags_user_model() {
+    // After `locus init`, the lockfile knows about User + UserDto. UserModel
+    // remains Unknown and must still trigger OT002.
+    let air = locus_rust::scan(&fixture_path()).expect("scan succeeds");
+    let registry = registry();
+    let mut lockfile = Lockfile::empty();
+    for p in &registry {
+        let section = p.init(&air);
+        lockfile
+            .paradigms
+            .insert(p.rule_prefix().to_string(), section);
+    }
+
+    let mut diags = Vec::new();
+    for p in &registry {
+        diags.extend(p.check(&air, &lockfile, CheckMode::Human));
+    }
+    let ot002: Vec<_> = diags.iter().filter(|d| d.rule_id == "OT002").collect();
+    assert_eq!(ot002.len(), 1, "expected exactly one OT002 (UserModel)");
+    assert!(ot002[0].message.contains("UserModel"));
+}
+
+#[test]
+fn lockfile_only_acceptance_blocks_ot002_even_without_hint() {
+    // Build a lockfile that pretends UserModel is the canonical for `user`,
+    // and User is a boundary. This is contrived, but proves the check
+    // consults the lockfile and not just hints.
+    let air = locus_rust::scan(&fixture_path()).expect("scan succeeds");
+    let mut lockfile = Lockfile::empty();
+    let section = serde_json::json!({
+        "concepts": {
+            "user": {
+                "canonical": { "symbol": "sample_crate::shadow::UserModel", "source": "accepted" },
+                "boundaries": [
+                    { "symbol": "sample_crate::identity::User", "boundary": null, "source": "accepted" },
+                    { "symbol": "sample_crate::dto::UserDto", "boundary": "api.v1", "source": "accepted" }
+                ],
+                "converters": []
+            }
+        }
+    });
+    lockfile.paradigms.insert(OT_PREFIX.to_string(), section);
+
+    let registry = registry();
+    let mut diags = Vec::new();
+    for p in &registry {
+        diags.extend(p.check(&air, &lockfile, CheckMode::Human));
+    }
+    let ot002: Vec<_> = diags.iter().filter(|d| d.rule_id == "OT002").collect();
+    assert!(
+        ot002.is_empty(),
+        "lockfile-accepted symbols must not appear in OT002; got {ot002:?}"
+    );
+}
+
+#[test]
+fn no_ot002_for_accepted_canonical_or_boundary() {
+    // User (canonical) and UserDto (boundary) are both annotated, so they
+    // must not appear in OT002 diagnostics.
+    let air = locus_rust::scan(&fixture_path()).expect("scan succeeds");
+    let lockfile = Lockfile::empty();
+    let mut diags = Vec::new();
+    for paradigm in registry() {
+        diags.extend(paradigm.check(&air, &lockfile, CheckMode::Human));
+    }
+    for d in diags.iter().filter(|d| d.rule_id == "OT002") {
+        assert!(
+            !d.message.contains("crate::User\""),
+            "User must not be flagged: {}",
+            d.message
+        );
+        assert!(
+            !d.message.contains("UserDto"),
+            "UserDto is accepted boundary, must not be flagged: {}",
+            d.message
+        );
+    }
+}
