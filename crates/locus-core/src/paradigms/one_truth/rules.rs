@@ -875,6 +875,7 @@ mod tests {
                     line_count: 1,
                 }],
             }],
+            facts: Vec::new(),
         }
     }
 
@@ -1048,6 +1049,7 @@ mod tests {
                     })
                     .collect(),
             }],
+            facts: Vec::new(),
         }
     }
 
@@ -1525,6 +1527,7 @@ mod tests {
                     line_count: 1,
                 }],
             }],
+            facts: Vec::new(),
         };
         let section = section_with_two_boundaries(
             "crate::identity::User",

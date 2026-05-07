@@ -344,6 +344,7 @@ dependencies = [
  "indoc",
  "insta",
  "locus-air",
+ "locus-core",
  "proc-macro2",
  "quote",
  "serde_json",

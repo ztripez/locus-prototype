@@ -5,8 +5,9 @@
 
 use crate::type_render::{render_path, render_type};
 use locus_air::{
-    ActionKind, AirConversion, AirField, AirFunction, AirImpl, AirImport, AirItem, AirSpan,
-    AirTruthAction, AirType, AirVariant, ConversionMechanism, TypeKind, Visibility,
+    ActionKind, AirCallSite, AirConversion, AirField, AirFunction, AirImpl, AirImport, AirItem,
+    AirSpan, AirTruthAction, AirType, AirVariant, CallKind, ConversionMechanism, TypeKind,
+    Visibility,
 };
 use quote::ToTokens;
 use syn::{
@@ -520,18 +521,15 @@ fn scan_stmt(stmt: &Stmt, function: &str, file_path: &str, out: &mut Vec<AirItem
         }
         Stmt::Expr(e, _) => scan_expr(e, function, file_path, out),
         Stmt::Macro(m) => {
-            // `println!`, `dbg!`, etc. at statement position. Same detection
-            // as Expr::Macro further down.
-            if let Some(action) = log_action_for_macro_path(&m.mac.path) {
-                out.push(AirItem::TruthAction(AirTruthAction {
-                    action,
-                    target: render_path(&m.mac.path),
-                    function: Some(function.to_string()),
-                    span: span_of(file_path, m.mac.span()),
-                    confidence: 0.9,
-                    reasons: vec!["log macro invocation".into()],
-                }));
-            }
+            // `println!`, `dbg!`, etc. at statement position. Same shape as
+            // Expr::Macro: framework-neutral CallSite. Loaders translate the
+            // callee path into normalized facts (e.g. LogsRaw / LogsStructured).
+            out.push(AirItem::CallSite(AirCallSite {
+                callee: render_path(&m.mac.path),
+                kind: CallKind::Macro,
+                function: Some(function.to_string()),
+                span: span_of(file_path, m.mac.span()),
+            }));
         }
         Stmt::Item(_) => {}
     }
@@ -598,19 +596,21 @@ fn scan_expr(expr: &Expr, function: &str, file_path: &str, out: &mut Vec<AirItem
             }
         }
         Expr::Call(c) => {
-            // Detect runtime / config / observability call patterns from the
-            // callee's path. Method calls are skipped because resolving them
-            // requires knowing the receiver's type — out of scope here.
-            if let Expr::Path(p) = &*c.func
-                && let Some(action) = runtime_action_for_call_path(&p.path)
-            {
-                out.push(AirItem::TruthAction(AirTruthAction {
-                    action,
-                    target: render_path(&p.path),
+            // Framework-neutral CallSite: just the callee's path text and a
+            // CallKind tag. Loaders translate this into normalized facts
+            // (SpawnsWork / ReadsEnv / NetworkCall / ...) — the visitor stays
+            // out of framework-specific reasoning.
+            //
+            // Path-shaped callees (`foo::bar(x)`) emit a CallSite; other
+            // callee shapes (e.g. an expression returning a fn) don't yet —
+            // their callee text isn't a useful path for a loader to match
+            // against. We still recurse into args so nested calls are seen.
+            if let Expr::Path(p) = &*c.func {
+                out.push(AirItem::CallSite(AirCallSite {
+                    callee: render_path(&p.path),
+                    kind: CallKind::Function,
                     function: Some(function.to_string()),
                     span: span_of(file_path, c.span()),
-                    confidence: 0.9,
-                    reasons: vec![format!("`{}` call detected", render_path(&p.path))],
                 }));
             }
             scan_expr(&c.func, function, file_path, out);
@@ -619,18 +619,25 @@ fn scan_expr(expr: &Expr, function: &str, file_path: &str, out: &mut Vec<AirItem
             }
         }
         Expr::Macro(m) => {
-            if let Some(action) = log_action_for_macro_path(&m.mac.path) {
-                out.push(AirItem::TruthAction(AirTruthAction {
-                    action,
-                    target: render_path(&m.mac.path),
-                    function: Some(function.to_string()),
-                    span: span_of(file_path, m.mac.span()),
-                    confidence: 0.9,
-                    reasons: vec!["log macro invocation".into()],
-                }));
-            }
+            out.push(AirItem::CallSite(AirCallSite {
+                callee: render_path(&m.mac.path),
+                kind: CallKind::Macro,
+                function: Some(function.to_string()),
+                span: span_of(file_path, m.mac.span()),
+            }));
         }
         Expr::MethodCall(m) => {
+            // Method-call CallSites carry just the method name — receiver-
+            // type resolution is out of scope for this layer, so loaders
+            // that need to disambiguate (`x.lock()` on Mutex vs File) will
+            // need richer AIR. The CallSite is still useful: the bare name
+            // is enough for some loaders (e.g. `.execute(...)` for SQL).
+            out.push(AirItem::CallSite(AirCallSite {
+                callee: m.method.to_string(),
+                kind: CallKind::Method,
+                function: Some(function.to_string()),
+                span: span_of(file_path, m.span()),
+            }));
             scan_expr(&m.receiver, function, file_path, out);
             for a in &m.args {
                 scan_expr(a, function, file_path, out);
@@ -660,61 +667,4 @@ fn is_string_compare(side: &Expr, other: &Expr) -> bool {
         return false;
     }
     matches!(side, Expr::Field(_) | Expr::Path(_) | Expr::MethodCall(_))
-}
-
-/// Inspect a call expression's path and decide whether it represents a
-/// runtime / config primitive worth flagging as a truth-action. Path-based
-/// only — method calls (`x.spawn(...)`) need receiver-type resolution we
-/// don't have, so they're left to richer paradigms when AIR gets richer.
-///
-/// Patterns:
-/// - `*::spawn` — tokio, std::thread, rayon, smol, etc. → `Spawn`
-/// - `*::env::var` / `*::env::var_os` → `EnvRead`
-fn runtime_action_for_call_path(path: &syn::Path) -> Option<ActionKind> {
-    let segments: Vec<String> = path.segments.iter().map(|s| s.ident.to_string()).collect();
-    if segments.is_empty() {
-        return None;
-    }
-
-    // Detect `*::spawn`. Catches `tokio::spawn`, `std::thread::spawn`,
-    // `rayon::spawn`, plain `spawn` (when imported), etc.
-    if segments.last().map(|s| s.as_str()) == Some("spawn") {
-        return Some(ActionKind::Spawn);
-    }
-
-    // Detect `*::env::var` / `*::env::var_os` — environment-variable reads.
-    // The second-to-last segment must be `env` to avoid false positives on
-    // things like a user-defined `var` function.
-    let n = segments.len();
-    if n >= 2
-        && segments[n - 2] == "env"
-        && (segments[n - 1] == "var" || segments[n - 1] == "var_os")
-    {
-        return Some(ActionKind::EnvRead);
-    }
-
-    None
-}
-
-/// Macro-path → `Log` action when the macro is recognised as a logging
-/// primitive. Catches:
-/// - bare `println!`, `eprintln!`, `dbg!`, `print!`, `eprint!` (1-segment paths)
-/// - any path whose final segment is a recognised log level
-///   (`info`, `warn`, `error`, `debug`, `trace`) — covers `tracing::info!`,
-///   `log::warn!`, `slog::error!`, etc.
-fn log_action_for_macro_path(path: &syn::Path) -> Option<ActionKind> {
-    let last_segment = path.segments.last()?;
-    let last = last_segment.ident.to_string();
-    if path.segments.len() == 1
-        && matches!(
-            last.as_str(),
-            "println" | "eprintln" | "print" | "eprint" | "dbg"
-        )
-    {
-        return Some(ActionKind::Log);
-    }
-    if matches!(last.as_str(), "info" | "warn" | "error" | "debug" | "trace") {
-        return Some(ActionKind::Log);
-    }
-    None
 }

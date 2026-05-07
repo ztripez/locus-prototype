@@ -7,11 +7,13 @@ use thiserror::Error;
 use walkdir::WalkDir;
 
 mod hints;
+pub mod loaders;
 mod module_path;
 mod type_render;
 mod visitor;
 
 pub use hints::scan_hints;
+pub use loaders::StdRtLoader;
 pub use module_path::{derive_module_path, package_to_crate_name};
 pub use type_render::{render_path, render_type};
 pub use visitor::collect_items;
@@ -28,7 +30,25 @@ pub enum ScanError {
     },
 }
 
+/// Scan a Cargo workspace and return an enriched [`AirWorkspace`].
+///
+/// Runs the language-shaped visitor (producing types, functions,
+/// imports, call-sites, ...) and then applies all default loaders
+/// ([`default_loaders`]) which translate framework-shaped call patterns
+/// into normalized [`locus_air::AirFact`] entries on the workspace.
+///
+/// Use [`scan_raw`] when you want the visitor output without the
+/// loader tier (useful for snapshot tests / introspection).
 pub fn scan(workspace_root: &Path) -> Result<AirWorkspace, ScanError> {
+    let mut air = scan_raw(workspace_root)?;
+    apply_default_loaders(&mut air);
+    Ok(air)
+}
+
+/// Lower-level scan that runs the visitor only — no loaders, no facts.
+/// Useful for tests / tooling that want to inspect raw AIR without
+/// loader-derived noise.
+pub fn scan_raw(workspace_root: &Path) -> Result<AirWorkspace, ScanError> {
     let manifest = workspace_root.join("Cargo.toml");
     let metadata = cargo_metadata::MetadataCommand::new()
         .manifest_path(&manifest)
@@ -60,6 +80,18 @@ pub fn scan(workspace_root: &Path) -> Result<AirWorkspace, ScanError> {
     }
 
     Ok(AirWorkspace::new(packages))
+}
+
+/// The default loader stack applied by [`scan`]. Currently a single
+/// [`StdRtLoader`]; framework-specific loaders (reqwest, sqlx, ...) will
+/// be added here as they land.
+pub fn default_loaders() -> Vec<Box<dyn locus_core::Loader>> {
+    vec![Box::new(loaders::std_rt::StdRtLoader)]
+}
+
+fn apply_default_loaders(air: &mut AirWorkspace) {
+    let loaders = default_loaders();
+    locus_core::loaders::apply_loaders(air, &loaders);
 }
 
 /// Pick the crate name to use as the symbol prefix for `pkg`. Prefers an

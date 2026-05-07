@@ -182,9 +182,6 @@ fn format_kind(k: &ActionKind) -> String {
         ActionKind::StringCompare => "StringCompare".to_string(),
         ActionKind::Validate => "Validate".to_string(),
         ActionKind::Normalize => "Normalize".to_string(),
-        ActionKind::Spawn => "Spawn".to_string(),
-        ActionKind::EnvRead => "EnvRead".to_string(),
-        ActionKind::Log => "Log".to_string(),
     }
 }
 
@@ -239,6 +236,7 @@ mod tests {
                     })
                     .collect(),
             }],
+            facts: Vec::new(),
         }
     }
 

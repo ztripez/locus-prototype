@@ -165,6 +165,7 @@ mod tests {
                     })
                     .collect(),
             }],
+            facts: Vec::new(),
         }
     }
 

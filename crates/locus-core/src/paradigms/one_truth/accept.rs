@@ -180,6 +180,7 @@ mod tests {
                     line_count: 1,
                 }],
             }],
+            facts: Vec::new(),
         }
     }
 

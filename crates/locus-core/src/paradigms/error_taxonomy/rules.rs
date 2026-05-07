@@ -162,6 +162,7 @@ mod tests {
                     line_count: 1,
                 }],
             }],
+            facts: Vec::new(),
         }
     }
 
@@ -339,6 +340,7 @@ mod tests {
                     },
                 ],
             }],
+            facts: Vec::new(),
         };
         assert!(er001(&air, &ErSection::default(), CheckMode::Human).is_empty());
     }

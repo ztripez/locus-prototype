@@ -190,6 +190,7 @@ mod tests {
                     line_count: 50,
                 }],
             }],
+            facts: Vec::new(),
         }
     }
 
@@ -372,6 +373,7 @@ mod tests {
                     line_count: 5,
                 }],
             }],
+            facts: Vec::new(),
         };
         assert!(fl001(&air, &domain_section(), CheckMode::Human).is_empty());
     }

@@ -255,6 +255,7 @@ mod tests {
                     line_count: 100,
                 }],
             }],
+            facts: Vec::new(),
         }
     }
 

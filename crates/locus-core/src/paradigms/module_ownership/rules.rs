@@ -164,6 +164,7 @@ mod tests {
                     line_count: 1,
                 }],
             }],
+            facts: Vec::new(),
         }
     }
 
@@ -337,6 +338,7 @@ mod tests {
                     },
                 ],
             }],
+            facts: Vec::new(),
         };
         let section = configured(5);
         let diags = mo001(&air, &section, CheckMode::Human);

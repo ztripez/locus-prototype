@@ -1,22 +1,22 @@
 //! RW rule implementations.
 //!
 //! Implemented:
-//! - [`rw001`]: spawn-shaped action outside any declared runtime owner module.
+//! - [`rw001`]: spawn-shaped fact outside any declared runtime owner module.
 //!
 //! All RW rules are lockfile-driven: they stay silent until the user has
 //! populated `runtime_owner_paths` (otherwise we have no idea which modules
 //! are legitimately spawning runtime work).
 
-use locus_air::{ActionKind, AirItem, AirWorkspace};
+use locus_air::{AirFact, AirItem, AirSpan, AirWorkspace, FactKind, FactTarget};
 
 use super::lockfile_schema::{RwSection, matches_pattern};
 use crate::diagnostics::{CheckMode, Diagnostic, Severity};
 
 /// RW001 — spawn outside the runtime-ownership boundary.
 ///
-/// For every `AirItem::TruthAction` with `action == Spawn`, fires when the
-/// containing file's `module_path` does NOT match any pattern in
-/// `runtime_owner_paths`.
+/// For every `FactKind::SpawnsWork` fact produced by a loader, look up the
+/// targeted function's file and fire when the file's `module_path` does
+/// NOT match any pattern in `runtime_owner_paths`.
 ///
 /// Always Fatal: per the spec, runtime-ownership violations are structural —
 /// `tokio::spawn` (or any equivalent) dropped into a handler hides
@@ -24,106 +24,139 @@ use crate::diagnostics::{CheckMode, Diagnostic, Severity};
 /// that owns them.
 ///
 /// Silent when `runtime_owner_paths` is empty: we wait for the user to
-/// declare where their runtime owners live before flagging anything. Files
-/// without a `module_path` are skipped — we can't decide anything about them.
+/// declare where their runtime owners live before flagging anything.
+/// Functions whose file has no `module_path` are skipped — we can't decide
+/// anything about them.
 pub fn rw001(air: &AirWorkspace, section: &RwSection, mode: CheckMode) -> Vec<Diagnostic> {
     if section.runtime_owner_paths.is_empty() {
         return Vec::new();
     }
 
     let mut out = Vec::new();
+    for fact in &air.facts {
+        if fact.kind != FactKind::SpawnsWork {
+            continue;
+        }
+        let FactTarget::Function { symbol } = &fact.target else {
+            continue;
+        };
+        let Some((module_path, fn_span)) = lookup_function(air, symbol) else {
+            continue;
+        };
+        if section
+            .runtime_owner_paths
+            .iter()
+            .any(|pat| matches_pattern(pat, module_path))
+        {
+            continue; // file is itself a runtime owner
+        }
+        out.push(diagnostic_for(fact, symbol, module_path, fn_span, mode));
+    }
+    out
+}
+
+fn lookup_function<'a>(air: &'a AirWorkspace, symbol: &str) -> Option<(&'a str, AirSpan)> {
     for pkg in &air.packages {
         for file in &pkg.files {
-            let Some(module_path) = file.module_path.as_deref() else {
-                // Without a module path we can't classify the file as
-                // runtime-owner-or-not; skip rather than guess.
-                continue;
-            };
-            if section
-                .runtime_owner_paths
-                .iter()
-                .any(|pat| matches_pattern(pat, module_path))
-            {
-                continue; // file is itself a runtime owner
-            }
             for item in &file.items {
-                let AirItem::TruthAction(a) = item else {
-                    continue;
-                };
-                if a.action != ActionKind::Spawn {
-                    continue;
+                if let AirItem::Function(f) = item
+                    && f.symbol == symbol
+                {
+                    let module = file.module_path.as_deref()?;
+                    return Some((module, f.span.clone()));
                 }
-                let function_label = a
-                    .function
-                    .as_deref()
-                    .unwrap_or("(no enclosing function recorded)");
-                out.push(Diagnostic {
-                    rule_id: "RW001".to_string(),
-                    severity: mode.elevate(Severity::Fatal),
-                    span: a.span.clone(),
-                    concept: None,
-                    message: format!(
-                        "spawn-shaped call `{}` in module `{module_path}` \
-                         (function `{function_label}`) outside any declared \
-                         runtime owner",
-                        a.target
-                    ),
-                    why: vec![
-                        format!(
-                            "module `{module_path}` matches none of the \
-                             `runtime_owner_paths` patterns"
-                        ),
-                        format!("call target `{}` is a spawn-shaped path", a.target),
-                        format!("enclosing function: `{function_label}`"),
-                    ],
-                    suggested_fix: Some(format!(
-                        "move the spawn of `{}` into a runtime-owner module \
-                         (job queue, orchestrator, supervisor, or runtime entry \
-                         point) and have this code submit work to it through a \
-                         port; or, if `{module_path}` really is a legitimate \
-                         runtime owner, expand `paradigms.RW.runtime_owner_paths` \
-                         in `locus.lock` to include it",
-                        a.target
-                    )),
-                });
             }
         }
     }
-    out
+    None
+}
+
+fn diagnostic_for(
+    fact: &AirFact,
+    symbol: &str,
+    module_path: &str,
+    fn_span: AirSpan,
+    mode: CheckMode,
+) -> Diagnostic {
+    let span = match &fact.target {
+        FactTarget::Span(s) => s.clone(),
+        FactTarget::Function { .. } | FactTarget::File { .. } => fn_span,
+    };
+    let function_label = symbol;
+    let why_reasons = if fact.reasons.is_empty() {
+        vec!["loader detected spawn-shaped call".to_string()]
+    } else {
+        fact.reasons.clone()
+    };
+    Diagnostic {
+        rule_id: "RW001".to_string(),
+        severity: mode.elevate(Severity::Fatal),
+        span,
+        concept: None,
+        message: format!(
+            "spawn-shaped call in module `{module_path}` \
+             (function `{function_label}`) outside any declared \
+             runtime owner"
+        ),
+        why: {
+            let mut w = vec![format!(
+                "module `{module_path}` matches none of the \
+                 `runtime_owner_paths` patterns"
+            )];
+            for r in why_reasons {
+                w.push(r);
+            }
+            w.push(format!("enclosing function: `{function_label}`"));
+            w
+        },
+        suggested_fix: Some(format!(
+            "move the spawn into a runtime-owner module (job queue, \
+             orchestrator, supervisor, or runtime entry point) and have \
+             this code submit work to it through a port; or, if \
+             `{module_path}` really is a legitimate runtime owner, expand \
+             `paradigms.RW.runtime_owner_paths` in `locus.lock` to \
+             include it"
+        )),
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use locus_air::{
-        AIR_SCHEMA_VERSION, AirFile, AirPackage, AirSpan, AirTruthAction, AirWorkspace,
+        AIR_SCHEMA_VERSION, AirFile, AirFunction, AirPackage, AirSpan, AirWorkspace, Visibility,
     };
 
-    fn truth_action(
-        action: ActionKind,
-        target: &str,
-        function: Option<&str>,
-        file_path: &str,
-        line: u32,
-    ) -> AirItem {
-        AirItem::TruthAction(AirTruthAction {
-            action,
-            target: target.into(),
-            function: function.map(|s| s.into()),
-            span: AirSpan::new(file_path, line, line),
-            confidence: 0.95,
-            reasons: vec!["spawn-shaped path".into()],
+    fn func(symbol: &str, file: &str, line: u32) -> AirItem {
+        AirItem::Function(AirFunction {
+            name: symbol.rsplit("::").next().unwrap_or(symbol).into(),
+            symbol: symbol.into(),
+            visibility: Visibility::Public,
+            params: Vec::new(),
+            return_type: None,
+            span: AirSpan::new(file, line, line + 5),
+            line_count: 6,
+            doc: None,
         })
     }
 
-    fn spawn(target: &str, function: &str, file_path: &str, line: u32) -> AirItem {
-        truth_action(ActionKind::Spawn, target, Some(function), file_path, line)
+    fn spawn_fact(symbol: &str, reason: &str) -> AirFact {
+        AirFact {
+            kind: FactKind::SpawnsWork,
+            target: FactTarget::Function {
+                symbol: symbol.into(),
+            },
+            source: "test".into(),
+            confidence: 1.0,
+            reasons: vec![reason.into()],
+        }
     }
 
     fn air_with_file(
         module_path: Option<&str>,
         file_path: &str,
         items: Vec<AirItem>,
+        facts: Vec<AirFact>,
     ) -> AirWorkspace {
         AirWorkspace {
             schema_version: AIR_SCHEMA_VERSION,
@@ -140,6 +173,7 @@ mod tests {
                     line_count: 1,
                 }],
             }],
+            facts,
         }
     }
 
@@ -148,11 +182,10 @@ mod tests {
         let air = air_with_file(
             Some("crate::handler"),
             "src/handler.rs",
-            vec![spawn(
-                "tokio::spawn",
+            vec![func("crate::handler::create_user", "src/handler.rs", 17)],
+            vec![spawn_fact(
                 "crate::handler::create_user",
-                "src/handler.rs",
-                17,
+                "`tokio::spawn` is a spawn-shaped call",
             )],
         );
         let section = RwSection {
@@ -163,7 +196,6 @@ mod tests {
         assert_eq!(diags[0].rule_id, "RW001");
         assert_eq!(diags[0].severity, Severity::Fatal);
         assert_eq!(diags[0].span.line_start, 17);
-        assert!(diags[0].message.contains("tokio::spawn"));
         assert!(diags[0].message.contains("crate::handler"));
         assert!(diags[0].message.contains("crate::handler::create_user"));
         assert!(
@@ -191,12 +223,8 @@ mod tests {
         let air = air_with_file(
             Some("crate::runtime::pool"),
             "src/runtime/pool.rs",
-            vec![spawn(
-                "tokio::spawn",
-                "crate::runtime::pool::run",
-                "src/runtime/pool.rs",
-                4,
-            )],
+            vec![func("crate::runtime::pool::run", "src/runtime/pool.rs", 4)],
+            vec![spawn_fact("crate::runtime::pool::run", "spawn detected")],
         );
         let section = RwSection {
             runtime_owner_paths: vec!["crate::runtime::*".into()],
@@ -205,32 +233,30 @@ mod tests {
     }
 
     #[test]
-    fn rw001_quiet_on_non_spawn_truth_actions() {
+    fn rw001_quiet_on_non_spawnswork_facts() {
         let air = air_with_file(
             Some("crate::handler"),
             "src/handler.rs",
+            vec![func("crate::handler::cfg", "src/handler.rs", 5)],
             vec![
-                truth_action(
-                    ActionKind::Construct,
-                    "User",
-                    Some("crate::handler::make"),
-                    "src/handler.rs",
-                    3,
-                ),
-                truth_action(
-                    ActionKind::EnvRead,
-                    "std::env::var",
-                    Some("crate::handler::cfg"),
-                    "src/handler.rs",
-                    7,
-                ),
-                truth_action(
-                    ActionKind::Log,
-                    "tracing::info",
-                    Some("crate::handler::cfg"),
-                    "src/handler.rs",
-                    9,
-                ),
+                AirFact {
+                    kind: FactKind::ReadsEnv,
+                    target: FactTarget::Function {
+                        symbol: "crate::handler::cfg".into(),
+                    },
+                    source: "test".into(),
+                    confidence: 1.0,
+                    reasons: Vec::new(),
+                },
+                AirFact {
+                    kind: FactKind::LogsStructured,
+                    target: FactTarget::Function {
+                        symbol: "crate::handler::cfg".into(),
+                    },
+                    source: "test".into(),
+                    confidence: 1.0,
+                    reasons: Vec::new(),
+                },
             ],
         );
         let section = RwSection {
@@ -244,12 +270,8 @@ mod tests {
         let air = air_with_file(
             Some("crate::handler"),
             "src/handler.rs",
-            vec![spawn(
-                "tokio::spawn",
-                "crate::handler::create_user",
-                "src/handler.rs",
-                17,
-            )],
+            vec![func("crate::handler::create_user", "src/handler.rs", 17)],
+            vec![spawn_fact("crate::handler::create_user", "spawn detected")],
         );
         let section = RwSection::default();
         assert!(
@@ -263,12 +285,8 @@ mod tests {
         let air = air_with_file(
             None,
             "src/build.rs",
-            vec![spawn(
-                "std::thread::spawn",
-                "build::main",
-                "src/build.rs",
-                2,
-            )],
+            vec![func("build::main", "src/build.rs", 2)],
+            vec![spawn_fact("build::main", "spawn detected")],
         );
         let section = RwSection {
             runtime_owner_paths: vec!["crate::runtime::*".into()],
@@ -281,11 +299,10 @@ mod tests {
         let air = air_with_file(
             Some("crate::handler"),
             "src/handler.rs",
-            vec![spawn(
-                "rayon::spawn",
+            vec![func("crate::handler::process", "src/handler.rs", 12)],
+            vec![spawn_fact(
                 "crate::handler::process",
-                "src/handler.rs",
-                12,
+                "`rayon::spawn` is a spawn-shaped call",
             )],
         );
         let section = RwSection {

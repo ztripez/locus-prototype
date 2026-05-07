@@ -41,13 +41,29 @@ use serde::{Deserialize, Serialize};
 ///   `log::warn!`). These join the existing `Construct`/`EnvMatch`/
 ///   `StringCompare` action signals for paradigms that need to reason
 ///   about runtime/observability concerns.
-pub const AIR_SCHEMA_VERSION: u32 = 6;
+/// - **7**: introduces the loader tier. Adds `AirItem::CallSite` for every
+///   call/method/macro invocation the visitor sees (framework-neutral —
+///   path text and `CallKind` only) and `AirWorkspace.facts: Vec<AirFact>`
+///   populated by loaders post-scan. Removes `ActionKind::Spawn`,
+///   `ActionKind::EnvRead`, and `ActionKind::Log` — the visitor no longer
+///   interprets framework-specific patterns; loaders translate AIR
+///   call-sites into normalized `FactKind` (`SpawnsWork`, `ReadsEnv`,
+///   `LogsRaw`, `LogsStructured`, `NetworkCall`, `DbWrite`) facts that
+///   paradigms (CF, RW, OB) consume.
+pub const AIR_SCHEMA_VERSION: u32 = 7;
 
 // ot: canonical
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AirWorkspace {
     pub schema_version: u32,
     pub packages: Vec<AirPackage>,
+    /// Normalized facts produced by loaders after the visitor has finished.
+    /// Loaders inspect `packages` (specifically `AirItem::CallSite` and
+    /// `AirItem::Import`) and emit `AirFact` entries that paradigms consume
+    /// in place of framework-specific reasoning. Empty when scan is run
+    /// without loaders (e.g. via `scan_raw`).
+    #[serde(default)]
+    pub facts: Vec<AirFact>,
 }
 
 impl AirWorkspace {
@@ -55,6 +71,7 @@ impl AirWorkspace {
         Self {
             schema_version: AIR_SCHEMA_VERSION,
             packages,
+            facts: Vec::new(),
         }
     }
 }
@@ -93,6 +110,7 @@ pub enum AirItem {
     TruthAction(AirTruthAction),
     Import(AirImport),
     Impl(AirImpl),
+    CallSite(AirCallSite),
 }
 
 // ot: canonical
@@ -240,15 +258,70 @@ pub enum ActionKind {
     StringCompare,
     Validate,
     Normalize,
-    /// `tokio::spawn`, `std::thread::spawn`, `rayon::spawn`, etc. Used by RW.
-    Spawn,
-    /// `std::env::var(...)`, `env::var(...)` — environment-variable reads.
-    /// Used by CF to flag config reads outside the config layer.
-    EnvRead,
-    /// Logging macro invocation: `println!`, `dbg!`, `eprintln!`, or any
-    /// macro whose path ends in a recognised log level (`info`, `warn`,
-    /// `error`, `debug`, `trace`). Used by OB.
-    Log,
+}
+
+// ot: canonical
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AirCallSite {
+    /// Rendered path text of the callee. For `tokio::spawn(f)` this is
+    /// `"tokio::spawn"`; for `x.lock()` it's `"lock"` (just the method
+    /// name — receiver-type resolution is out of scope); for the macro
+    /// `tracing::info!(…)` it's `"tracing::info"`.
+    pub callee: String,
+    // Renamed in JSON to avoid colliding with the AirItem external tag (also `kind`).
+    #[serde(rename = "call_kind")]
+    pub kind: CallKind,
+    /// Enclosing function's symbol, if known.
+    pub function: Option<String>,
+    pub span: AirSpan,
+}
+
+// ot: canonical
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
+pub enum CallKind {
+    Function,
+    Method,
+    Macro,
+}
+
+// ot: canonical
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AirFact {
+    pub kind: FactKind,
+    pub target: FactTarget,
+    /// Loader name that produced this fact, e.g. `"std-rt"`, `"reqwest-http"`.
+    pub source: String,
+    pub confidence: f32,
+    pub reasons: Vec<String>,
+}
+
+// ot: canonical
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
+pub enum FactKind {
+    /// Function or call site that spawns concurrent work.
+    SpawnsWork,
+    /// Reads an environment variable.
+    ReadsEnv,
+    /// Raw print/dbg macro — bypasses structured logging.
+    LogsRaw,
+    /// Structured log macro (tracing/log/slog families).
+    LogsStructured,
+    /// Outbound network call (HTTP client, gRPC, etc.).
+    NetworkCall,
+    /// Database write or query.
+    DbWrite,
+}
+
+// ot: canonical
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "scope")]
+pub enum FactTarget {
+    /// Fact applies to a function symbol (most common case).
+    Function { symbol: String },
+    /// Fact applies to a whole file by path.
+    File { path: String },
+    /// Fact applies to a specific call site / span.
+    Span(AirSpan),
 }
 
 // ot: canonical

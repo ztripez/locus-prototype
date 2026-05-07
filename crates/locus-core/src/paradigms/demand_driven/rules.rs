@@ -214,6 +214,7 @@ mod tests {
                     line_count: 1,
                 }],
             }],
+            facts: Vec::new(),
         }
     }
 
@@ -410,6 +411,7 @@ mod tests {
                     }],
                 },
             ],
+            facts: Vec::new(),
         };
         let diags = da001(&air, &enabled(), CheckMode::Human);
         assert_eq!(diags.len(), 1, "cross-package impl should count");

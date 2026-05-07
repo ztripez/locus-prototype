@@ -34,11 +34,12 @@ pub struct ObSection {
     /// `"tests::*"`, `"examples::*"`, `"*::cli::*"`, `"*::main"`.
     #[serde(default)]
     pub observer_paths: Vec<String>,
-    /// Macro path patterns considered raw/inappropriate — anything matched is
-    /// flagged by OB001 when called from a non-observer file. Defaults to the
-    /// `println!`/`dbg!` family. Users can extend (e.g. ban a noisy custom
-    /// macro) or shrink (e.g. allow `dbg!` during a hot debug session) the
-    /// list.
+    /// Macro path patterns considered raw/inappropriate. Reserved for
+    /// future per-target customisation; currently unused — OB001 fires on
+    /// every `FactKind::LogsRaw` fact in non-observer files (loaders own
+    /// the raw-vs-structured distinction). Field kept (with a sensible
+    /// default) to avoid a lockfile-schema break the day per-target
+    /// customisation lands.
     #[serde(default = "default_forbidden_log_targets")]
     pub forbidden_log_targets: Vec<String>,
 }

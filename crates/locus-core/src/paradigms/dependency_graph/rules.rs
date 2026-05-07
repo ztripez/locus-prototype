@@ -486,6 +486,7 @@ mod tests {
                     line_count: 1,
                 }],
             }],
+            facts: Vec::new(),
         }
     }
 
@@ -586,6 +587,7 @@ mod tests {
                         .collect(),
                 })
                 .collect(),
+            facts: Vec::new(),
         }
     }
 
