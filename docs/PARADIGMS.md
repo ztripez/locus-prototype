@@ -139,6 +139,182 @@ They also create local mapping, validation, and enum/state logic rather than reu
 OT — One Truth / Canonical Domain Ownership
 ```
 
+### Rules
+
+#### OT001 — Duplicate Canonical Concept
+
+A concept may not have multiple canonical types within the same scope/runtime.
+
+Fail when two accepted or strongly inferred canonical types represent the same concept.
+
+#### OT002 — Undeclared Concept-Shaped Type
+
+A new type overlaps strongly with an existing concept but is neither canonical nor an accepted boundary adapter.
+
+Signals:
+
+- name overlap
+- field overlap
+- enum variant overlap
+- primitive equivalents of canonical fields
+- location in a boundary path
+- conversion-like usage
+- DTO/model/entity suffix
+
+#### OT003 — Boundary Adapter Leak
+
+Boundary adapters must not appear in domain or application service signatures, state, or core logic.
+
+Bad:
+
+```rust
+pub fn create_user(req: CreateUserRequest) -> Result<User, Error> { ... }
+```
+
+inside domain/application. Boundary types must be converted before crossing inward.
+
+#### OT004 — Direct Canonical Construction Outside Owner/Converter
+
+Canonical types may only be constructed in the owner module or accepted converters.
+
+Bad:
+
+```rust
+let user = User {
+    id: UserId::parse(dto.id)?,
+    email: EmailAddress::parse(dto.email)?,
+};
+```
+
+outside the owner or converter.
+
+#### OT005 — Missing Converter
+
+An accepted boundary adapter must have an accepted converter for each required direction.
+
+Direction may be inferred:
+
+- inbound request: adapter → canonical
+- outbound response: canonical → adapter
+- persistence row: usually bidirectional
+
+#### OT006 — Unregistered Conversion
+
+Any conversion between a boundary adapter and a canonical type must be accepted.
+
+Examples:
+
+- Rust `From` / `TryFrom`
+- TypeScript `toUser(dto): User`
+- C# `ToDomain()` / `FromDto()`
+- Go `UserFromDTO(dto)`
+
+#### OT007 — Adapter-to-Adapter Conversion
+
+Boundary-adapter to boundary-adapter conversion is forbidden by default. Preferred path:
+
+```text
+adapter → canonical → adapter
+```
+
+Direct protocol translation must be explicitly accepted with a reason.
+
+#### OT008 — Domain Logic on Boundary Adapter
+
+Boundary adapters must not contain domain behavior.
+
+Bad:
+
+```rust
+impl UserDto {
+    pub fn is_active(&self) -> bool {
+        self.status == "active"
+    }
+}
+```
+
+This belongs on the canonical domain concept.
+
+#### OT009 — Scattered Validation
+
+Validation or normalization of a known concept outside the concept owner or its converter is suspicious.
+
+Examples:
+
+- email format checks outside `EmailAddress`
+- status-string interpretation outside `UserStatus`
+- range checks for value objects outside the value object
+- duplicated regexes
+- repeated lowercase/trim normalization
+
+Warning by default; fatal in `--agent-strict` for high-confidence cases.
+
+#### OT010 — Shadow Enum
+
+An enum overlaps with a canonical enum concept but is not accepted as a boundary adapter.
+
+#### OT011 — Shadow Newtype / Value Object
+
+A newtype or primitive alias overlaps with an existing value-object concept.
+
+#### OT012 — Primitive Obsession Around Known Concept
+
+A primitive field appears where a canonical value object is expected, outside a boundary adapter.
+
+Example:
+
+```rust
+pub struct UserCommand {
+    pub user_id: String,
+}
+```
+
+inside application/domain when `UserId` is canonical.
+
+### Source hints
+
+OT-specific source hints, recognized by the Rust adapter (`// ot:` prefix). All forms are optional — the lockfile is the authoritative acceptance record. Hints are a convenience for first-time onboarding, promoted to lockfile entries by `locus init`.
+
+```rust
+// ot: canonical
+pub struct User { ... }
+
+// ot: boundary identity.user api.v1
+pub struct UserDto { ... }
+
+// ot: converter
+impl TryFrom<UserDto> for User { ... }
+
+// ot: protocol-translation reason="compatibility endpoint"
+fn translate_v1_to_v2(value: UserV1Dto) -> UserV2Dto { ... }
+
+// ot: generated-boundary
+pub struct ProtoUser { ... }
+
+// ot: allow OT002 reason="legacy import shim" expires="2026-07-01"
+pub struct LegacyUser { ... }
+```
+
+Allowed hint kinds: `canonical`, `boundary <concept> <boundary>`, `converter`, `protocol-translation reason="…"`, `generated-boundary`, `allow <RULE> reason="…" expires="YYYY-MM-DD"`.
+
+### Severity tiers
+
+**Human default mode:**
+
+- fatal: OT003 (boundary leak), OT004 (direct canonical construction), OT001 (duplicate accepted canonical), OT005 (missing converter for accepted adapter)
+- warning: OT002 (inferred shadow types), OT009 (scattered validation), OT010–OT012 (shadow enum/newtype/primitive obsession)
+
+**Agent strict mode** (`locus check --agent-strict`):
+
+Additional fatal checks for LLM-generated patches:
+
+- new public concept-shaped type without acceptance (OT002 fatal)
+- new mapper/converter without acceptance (OT006 fatal)
+- validation-like code around known concepts (OT009 fatal at high confidence)
+- primitive substitutes for known concepts (OT012 fatal)
+- adapter-to-adapter conversions (OT007 fatal)
+- new domain-ish methods on boundary types (OT008 fatal)
+
 ---
 
 ## Paradigm 2: Config/Data Ownership
