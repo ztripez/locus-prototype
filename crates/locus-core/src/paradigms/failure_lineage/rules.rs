@@ -12,14 +12,48 @@
 //! - [`fl003`]: a silent-discard method call (`.ok()` / `.err()` /
 //!   `.unwrap_or_else()`) outside `invariant_owner_paths`. Catches the
 //!   inverse of FL002 — failure swallowed instead of failure shouted.
+//! - [`fl004`]: a `let _ = expr;` discarded binding outside
+//!   `invariant_owner_paths`, where `expr` is a call (`Method` /
+//!   `Function` / `Macro`) and the callee isn't on the
+//!   `silent_discard_allowed_callees` allowlist. Reads
+//!   `AirItem::SilentDiscard` items the visitor emits since AIR v9.
+//! - [`fl005`]: an `if let Ok(...) = expr { ... }` or `if let Err(...) =
+//!   expr { ... }` with no `else` branch outside `invariant_owner_paths`.
+//!   The unmatched arm is implicitly silent. Reads `AirItem::PartialIfLet`
+//!   items the visitor emits since AIR v9.
 //!
-//! Future FL rules will tackle the silent-error patterns AIR can't see
-//! today: `let _ = result;`, `if let Ok(_) = ...`, and `match` arms with
-//! `Err(_) => ()`. Those need new visitor-emitted items.
+//! Future FL rules will tackle the patterns AIR still can't see: `match
+//! result { ..., Err(_) => () }` (arm-body inspection), spawned-task
+//! failures with no sink (richer fact production).
 
 use locus_air::{AirCallSite, AirItem, AirWorkspace, CallKind};
 
-use super::lockfile_schema::{FlSection, matches_pattern};
+use super::lockfile_schema::{FlSection, containing_module_of, matches_pattern};
+
+/// Shared helper: is the (file, function) considered an invariant-owner
+/// context for FL002–FL005 suppression?
+///
+/// File-level match: `module_path` matches any pattern.
+/// Function-level match: the symbol's containing module (everything
+/// before the last `::`) matches any pattern. This catches inline
+/// `mod tests { ... }` blocks whose enclosing file's `module_path`
+/// doesn't include `::tests::` but whose function symbols do.
+fn callsite_in_invariant_owner(
+    file_module: &str,
+    function_symbol: Option<&str>,
+    patterns: &[String],
+) -> bool {
+    if patterns.iter().any(|p| matches_pattern(p, file_module)) {
+        return true;
+    }
+    if let Some(sym) = function_symbol {
+        let containing = containing_module_of(sym);
+        if patterns.iter().any(|p| matches_pattern(p, containing)) {
+            return true;
+        }
+    }
+    false
+}
 use crate::diagnostics::{CheckMode, Diagnostic, Severity};
 
 /// FL001 — boundary error leaks into a domain function signature.
@@ -190,13 +224,6 @@ pub fn fl002(air: &AirWorkspace, section: &FlSection, mode: CheckMode) -> Vec<Di
             let Some(module_path) = file.module_path.as_deref() else {
                 continue;
             };
-            if section
-                .invariant_owner_paths
-                .iter()
-                .any(|pat| matches_pattern(pat, module_path))
-            {
-                continue; // file itself is an accepted invariant owner
-            }
             for item in &file.items {
                 let AirItem::CallSite(cs) = item else {
                     continue;
@@ -205,6 +232,13 @@ pub fn fl002(air: &AirWorkspace, section: &FlSection, mode: CheckMode) -> Vec<Di
                 // semantics we care about (and would false-positive on user
                 // free functions named `unwrap`). Method and Macro only.
                 if !matches!(cs.kind, CallKind::Method | CallKind::Macro) {
+                    continue;
+                }
+                if callsite_in_invariant_owner(
+                    module_path,
+                    cs.function.as_deref(),
+                    &section.invariant_owner_paths,
+                ) {
                     continue;
                 }
                 let last = cs.callee.rsplit("::").next().unwrap_or(&cs.callee);
@@ -316,13 +350,6 @@ pub fn fl003(air: &AirWorkspace, section: &FlSection, mode: CheckMode) -> Vec<Di
             let Some(module_path) = file.module_path.as_deref() else {
                 continue;
             };
-            if section
-                .invariant_owner_paths
-                .iter()
-                .any(|pat| matches_pattern(pat, module_path))
-            {
-                continue;
-            }
             for item in &file.items {
                 let AirItem::CallSite(cs) = item else {
                     continue;
@@ -330,6 +357,13 @@ pub fn fl003(air: &AirWorkspace, section: &FlSection, mode: CheckMode) -> Vec<Di
                 // Method-only — `.ok()` is the smoking gun, and we don't
                 // want to flag a free function happening to be named `ok`.
                 if !matches!(cs.kind, CallKind::Method) {
+                    continue;
+                }
+                if callsite_in_invariant_owner(
+                    module_path,
+                    cs.function.as_deref(),
+                    &section.invariant_owner_paths,
+                ) {
                     continue;
                 }
                 let last = cs.callee.rsplit("::").next().unwrap_or(&cs.callee);
@@ -389,6 +423,210 @@ fn diagnostic_for_fl003(
              discard, suppress with `// ot: allow FL003 reason=\"…\" \
              expires=\"YYYY-MM-DD\"`",
             cs.callee,
+        )),
+    }
+}
+
+/// FL004 — `let _ = expr;` silent-discard binding.
+///
+/// Closes the gap FL003 leaves open: FL003 sees `result.ok()` /
+/// `.err()` / `.unwrap_or_else()` (method-call shape), but it can't see
+/// the `let _ = result;` shape because it's a binding, not a method call.
+/// AIR v9 added [`AirItem::SilentDiscard`] for exactly this case — the
+/// visitor records `let _ = <call>` statements with the rendered callee.
+///
+/// Detection rules:
+/// - Only `DiscardKind::Method` / `Function` / `Macro` are considered.
+///   `Other` discards (`let _ = some_field;`) are skipped — the
+///   false-positive surface for arbitrary expression discards is too
+///   large to be useful.
+/// - The discarded callee must NOT match any pattern in
+///   `silent_discard_allowed_callees` (default covers the canonical
+///   fire-and-forget shapes: `lock`, `send`, `drop`, `set_logger`,
+///   `subscribe`, `try_init`).
+/// - The enclosing file's `module_path` must NOT match any
+///   `invariant_owner_paths` pattern.
+///
+/// Severity: `mode.elevate(Severity::Warning)` — Warning in human, Fatal
+/// under `--agent-strict`. Same posture as FL002 / FL003.
+///
+/// Lockfile-driven silence: stays quiet until `invariant_owner_paths`
+/// is populated, regardless of how the allowlist is configured.
+pub fn fl004(air: &AirWorkspace, section: &FlSection, mode: CheckMode) -> Vec<Diagnostic> {
+    if section.invariant_owner_paths.is_empty() {
+        return Vec::new();
+    }
+
+    let mut out = Vec::new();
+    for pkg in &air.packages {
+        for file in &pkg.files {
+            let Some(module_path) = file.module_path.as_deref() else {
+                continue;
+            };
+            for item in &file.items {
+                let AirItem::SilentDiscard(d) = item else {
+                    continue;
+                };
+                if matches!(d.kind, locus_air::DiscardKind::Other) {
+                    continue;
+                }
+                let Some(callee) = d.callee.as_deref() else {
+                    continue;
+                };
+                if section
+                    .silent_discard_allowed_callees
+                    .iter()
+                    .any(|pat| matches_pattern(pat, callee))
+                {
+                    continue;
+                }
+                if callsite_in_invariant_owner(
+                    module_path,
+                    d.function.as_deref(),
+                    &section.invariant_owner_paths,
+                ) {
+                    continue;
+                }
+                out.push(diagnostic_for_fl004(d, module_path, callee, mode));
+            }
+        }
+    }
+    out
+}
+
+fn diagnostic_for_fl004(
+    d: &locus_air::AirSilentDiscard,
+    module_path: &str,
+    callee: &str,
+    mode: CheckMode,
+) -> Diagnostic {
+    let function_label = d
+        .function
+        .as_deref()
+        .unwrap_or("<unknown enclosing function>");
+    let kind_label = match d.kind {
+        locus_air::DiscardKind::Method => "method",
+        locus_air::DiscardKind::Function => "function",
+        locus_air::DiscardKind::Macro => "macro",
+        locus_air::DiscardKind::Other => "expression",
+    };
+    Diagnostic {
+        rule_id: "FL004".to_string(),
+        severity: mode.elevate(Severity::Warning),
+        span: d.span.clone(),
+        concept: None,
+        message: format!(
+            "discarded binding `let _ = {callee}(...)` ({kind_label}) in `{module_path}` \
+             (fn `{function_label}`) — failure (if any) is silently dropped"
+        ),
+        why: vec![
+            format!("`let _ = ...` discards the binding without inspecting the value"),
+            format!("discarded callee: `{callee}` ({kind_label})"),
+            format!("enclosing function: `{function_label}`"),
+            format!(
+                "module `{module_path}` does not match any \
+                 `paradigms.FL.invariant_owner_paths` pattern"
+            ),
+            format!(
+                "callee does not match any \
+                 `paradigms.FL.silent_discard_allowed_callees` pattern"
+            ),
+        ],
+        suggested_fix: Some(format!(
+            "if `{callee}` returns a `Result`, propagate the error with \
+             `?` instead of dropping it; if the discard is intentional \
+             and the callee is a known fire-and-forget pattern (e.g. \
+             `lock`, `send`, `drop`), add it to \
+             `paradigms.FL.silent_discard_allowed_callees`. For a one-off \
+             accepted discard, suppress with `// ot: allow FL004 reason=\"…\" \
+             expires=\"YYYY-MM-DD\"`. If `{module_path}` is a legitimate \
+             invariant owner, add it to `paradigms.FL.invariant_owner_paths`"
+        )),
+    }
+}
+
+/// FL005 — partial `if let Ok/Err = ...` without `else`.
+///
+/// Catches the pattern `if let Ok(x) = result { ... }` (or its `Err`
+/// inverse) with no `else` branch — the unmatched arm is silent, and
+/// any failure (or success) on that path is dropped without
+/// acknowledgement. Reads [`AirItem::PartialIfLet`] items the visitor
+/// emits since AIR v9.
+///
+/// Severity: `mode.elevate(Severity::Warning)` — Warning in human, Fatal
+/// under `--agent-strict`. Symmetric with FL003 / FL004.
+///
+/// Lockfile-driven silence: stays quiet until `invariant_owner_paths`
+/// is populated.
+pub fn fl005(air: &AirWorkspace, section: &FlSection, mode: CheckMode) -> Vec<Diagnostic> {
+    if section.invariant_owner_paths.is_empty() {
+        return Vec::new();
+    }
+
+    let mut out = Vec::new();
+    for pkg in &air.packages {
+        for file in &pkg.files {
+            let Some(module_path) = file.module_path.as_deref() else {
+                continue;
+            };
+            for item in &file.items {
+                let AirItem::PartialIfLet(p) = item else {
+                    continue;
+                };
+                if callsite_in_invariant_owner(
+                    module_path,
+                    p.function.as_deref(),
+                    &section.invariant_owner_paths,
+                ) {
+                    continue;
+                }
+                out.push(diagnostic_for_fl005(p, module_path, mode));
+            }
+        }
+    }
+    out
+}
+
+fn diagnostic_for_fl005(
+    p: &locus_air::AirPartialIfLet,
+    module_path: &str,
+    mode: CheckMode,
+) -> Diagnostic {
+    let function_label = p
+        .function
+        .as_deref()
+        .unwrap_or("<unknown enclosing function>");
+    let unmatched = if p.variant == "Ok" { "Err" } else { "Ok" };
+    Diagnostic {
+        rule_id: "FL005".to_string(),
+        severity: mode.elevate(Severity::Warning),
+        span: p.span.clone(),
+        concept: None,
+        message: format!(
+            "partial `if let {}(...) = ...` (no `else` branch) in `{module_path}` \
+             (fn `{function_label}`) — the `{unmatched}` arm is implicitly silent",
+            p.variant
+        ),
+        why: vec![
+            format!(
+                "`if let {}(...) = ...` matches only the `{}` variant; the `{unmatched}` \
+                 arm has no body and falls through silently",
+                p.variant, p.variant,
+            ),
+            format!("enclosing function: `{function_label}`"),
+            format!(
+                "module `{module_path}` does not match any \
+                 `paradigms.FL.invariant_owner_paths` pattern"
+            ),
+        ],
+        suggested_fix: Some(format!(
+            "rewrite as a `match` with both arms, or add an `else` branch \
+             that handles the `{unmatched}` case (log, propagate, or \
+             explicitly accept). If `{module_path}` is a legitimate \
+             invariant owner (supervisor, test-support module), add it to \
+             `paradigms.FL.invariant_owner_paths`. For a one-off accepted \
+             partial match, suppress with `// ot: allow FL005 reason=\"…\" \
+             expires=\"YYYY-MM-DD\"`"
         )),
     }
 }
@@ -1018,6 +1256,208 @@ mod tests {
             )],
         );
         let diags = fl003(&air, &fl003_section(), CheckMode::AgentStrict);
+        assert_eq!(diags.len(), 1);
+        assert_eq!(diags[0].severity, Severity::Fatal);
+    }
+
+    // ---- fl004 + fl005 helpers ----
+
+    fn discard(
+        callee: Option<&str>,
+        kind: locus_air::DiscardKind,
+        function: Option<&str>,
+        line: u32,
+    ) -> AirItem {
+        AirItem::SilentDiscard(locus_air::AirSilentDiscard {
+            callee: callee.map(|s| s.to_string()),
+            kind,
+            function: function.map(|s| s.to_string()),
+            span: AirSpan::new("src/domain/user.rs", line, line),
+        })
+    }
+
+    fn partial_if_let(variant: &str, function: Option<&str>, line: u32) -> AirItem {
+        AirItem::PartialIfLet(locus_air::AirPartialIfLet {
+            variant: variant.to_string(),
+            function: function.map(|s| s.to_string()),
+            span: AirSpan::new("src/domain/user.rs", line, line),
+        })
+    }
+
+    /// Onboarded baseline for FL004 / FL005 — same shape as the FL003
+    /// baseline; both rules consult `invariant_owner_paths` only and
+    /// rely on the seeded `silent_discard_allowed_callees` defaults.
+    fn fl004_section() -> FlSection {
+        FlSection {
+            invariant_owner_paths: vec!["x::supervisor::*".into()],
+            ..Default::default()
+        }
+    }
+
+    // ---- fl004 behavioural tests ----
+
+    #[test]
+    fn fl004_fires_on_discarded_method_call_in_non_invariant_owner_module() {
+        let air = air_with_module(
+            "x::domain::user",
+            vec![discard(
+                Some("write"),
+                locus_air::DiscardKind::Method,
+                Some("x::domain::user::greet"),
+                17,
+            )],
+        );
+        let diags = fl004(&air, &fl004_section(), CheckMode::Human);
+        assert_eq!(diags.len(), 1);
+        assert_eq!(diags[0].rule_id, "FL004");
+        assert_eq!(diags[0].severity, Severity::Warning);
+        assert!(diags[0].message.contains("write"));
+        assert!(diags[0].message.contains("let _ ="));
+    }
+
+    #[test]
+    fn fl004_quiet_on_allowlist_callees() {
+        // `lock`, `send`, `drop`, `set_logger`, `subscribe`, `try_init`
+        // are seeded as legitimate fire-and-forget patterns.
+        let air = air_with_module(
+            "x::domain::user",
+            vec![
+                discard(
+                    Some("lock"),
+                    locus_air::DiscardKind::Method,
+                    Some("x::domain::user::greet"),
+                    1,
+                ),
+                discard(
+                    Some("send"),
+                    locus_air::DiscardKind::Method,
+                    Some("x::domain::user::greet"),
+                    2,
+                ),
+                discard(
+                    Some("drop"),
+                    locus_air::DiscardKind::Function,
+                    Some("x::domain::user::greet"),
+                    3,
+                ),
+            ],
+        );
+        assert!(fl004(&air, &fl004_section(), CheckMode::Human).is_empty());
+    }
+
+    #[test]
+    fn fl004_quiet_on_other_kind_discards() {
+        // `let _ = some_field;` is `DiscardKind::Other` — we don't flag
+        // arbitrary expression discards (false-positive surface too large).
+        let air = air_with_module(
+            "x::domain::user",
+            vec![discard(
+                None,
+                locus_air::DiscardKind::Other,
+                Some("x::domain::user::greet"),
+                4,
+            )],
+        );
+        assert!(fl004(&air, &fl004_section(), CheckMode::Human).is_empty());
+    }
+
+    #[test]
+    fn fl004_quiet_in_invariant_owner_module() {
+        let air = air_with_module(
+            "x::supervisor::root",
+            vec![discard(
+                Some("write"),
+                locus_air::DiscardKind::Method,
+                Some("x::supervisor::root::run"),
+                17,
+            )],
+        );
+        assert!(fl004(&air, &fl004_section(), CheckMode::Human).is_empty());
+    }
+
+    #[test]
+    fn fl004_silent_when_invariant_owner_paths_empty() {
+        let air = air_with_module(
+            "x::domain::user",
+            vec![discard(
+                Some("write"),
+                locus_air::DiscardKind::Method,
+                Some("x::domain::user::greet"),
+                17,
+            )],
+        );
+        assert!(fl004(&air, &FlSection::default(), CheckMode::Human).is_empty());
+    }
+
+    #[test]
+    fn fl004_agent_strict_elevates_warning_to_fatal() {
+        let air = air_with_module(
+            "x::domain::user",
+            vec![discard(
+                Some("write"),
+                locus_air::DiscardKind::Method,
+                Some("x::domain::user::greet"),
+                17,
+            )],
+        );
+        let diags = fl004(&air, &fl004_section(), CheckMode::AgentStrict);
+        assert_eq!(diags.len(), 1);
+        assert_eq!(diags[0].severity, Severity::Fatal);
+    }
+
+    // ---- fl005 behavioural tests ----
+
+    #[test]
+    fn fl005_fires_on_partial_if_let_ok_in_non_invariant_owner_module() {
+        let air = air_with_module(
+            "x::domain::user",
+            vec![partial_if_let("Ok", Some("x::domain::user::greet"), 22)],
+        );
+        let diags = fl005(&air, &fl004_section(), CheckMode::Human);
+        assert_eq!(diags.len(), 1);
+        assert_eq!(diags[0].rule_id, "FL005");
+        assert_eq!(diags[0].severity, Severity::Warning);
+        assert!(diags[0].message.contains("if let Ok"));
+        assert!(diags[0].message.contains("Err"));
+    }
+
+    #[test]
+    fn fl005_fires_on_partial_if_let_err() {
+        let air = air_with_module(
+            "x::domain::user",
+            vec![partial_if_let("Err", Some("x::domain::user::greet"), 22)],
+        );
+        let diags = fl005(&air, &fl004_section(), CheckMode::Human);
+        assert_eq!(diags.len(), 1);
+        assert!(diags[0].message.contains("if let Err"));
+        assert!(diags[0].message.contains("Ok"));
+    }
+
+    #[test]
+    fn fl005_quiet_in_invariant_owner_module() {
+        let air = air_with_module(
+            "x::supervisor::root",
+            vec![partial_if_let("Ok", Some("x::supervisor::root::run"), 22)],
+        );
+        assert!(fl005(&air, &fl004_section(), CheckMode::Human).is_empty());
+    }
+
+    #[test]
+    fn fl005_silent_when_invariant_owner_paths_empty() {
+        let air = air_with_module(
+            "x::domain::user",
+            vec![partial_if_let("Ok", Some("x::domain::user::greet"), 22)],
+        );
+        assert!(fl005(&air, &FlSection::default(), CheckMode::Human).is_empty());
+    }
+
+    #[test]
+    fn fl005_agent_strict_elevates_warning_to_fatal() {
+        let air = air_with_module(
+            "x::domain::user",
+            vec![partial_if_let("Ok", Some("x::domain::user::greet"), 22)],
+        );
+        let diags = fl005(&air, &fl004_section(), CheckMode::AgentStrict);
         assert_eq!(diags.len(), 1);
         assert_eq!(diags[0].severity, Severity::Fatal);
     }

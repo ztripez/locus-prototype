@@ -196,13 +196,18 @@ pub fn dc002(air: &AirWorkspace, section: &DcSection, mode: CheckMode) -> Vec<Di
                 };
                 let doc_lower = doc_text.to_lowercase();
                 for forbidden in &section.forbidden_doc_phrases {
-                    let phrase_lower = forbidden.phrase.to_lowercase();
-                    if !doc_lower.contains(&phrase_lower) {
+                    let Some(matched_alias) = matched_phrasing(&doc_lower, forbidden) else {
                         continue;
-                    }
+                    };
                     let Some(severity) = Severity::from_confidence(forbidden.confidence, mode)
                     else {
                         continue;
+                    };
+                    let primary = &forbidden.phrase;
+                    let alias_note = if matched_alias == *primary {
+                        String::new()
+                    } else {
+                        format!(" (alias of `{primary}`)")
                     };
                     out.push(Diagnostic {
                         rule_id: "DC002".to_string(),
@@ -211,12 +216,11 @@ pub fn dc002(air: &AirWorkspace, section: &DcSection, mode: CheckMode) -> Vec<Di
                         concept: None,
                         message: format!(
                             "public {kind_label} `{name}` in `{module_label}` has a doc \
-                             comment containing forbidden phrase `{}`",
-                            forbidden.phrase,
+                             comment containing forbidden phrase `{matched_alias}`{alias_note}"
                         ),
                         why: vec![
                             format!("{kind_label} `{name}` (`{symbol}`)"),
-                            format!("matched phrase `{}`", forbidden.phrase),
+                            format!("matched phrase `{matched_alias}`{alias_note}"),
                             format!("phrase confidence {:.2}", forbidden.confidence),
                             "doc text contains phrase suggesting LLM transcript residue \
                              or stale planning notes"
@@ -236,6 +240,30 @@ pub fn dc002(air: &AirWorkspace, section: &DcSection, mode: CheckMode) -> Vec<Di
         }
     }
     out
+}
+
+/// Try the primary `phrase` first, then each alias, against the
+/// already-lowercased doc text. Returns the matched phrasing (in its
+/// original casing) so the diagnostic can surface what the user wrote,
+/// not just the seeded primary. `None` when nothing matched.
+///
+/// The alias mechanism is the no-LLM, deterministic substitute for
+/// embedding-based paraphrase detection: every accepted variant is in
+/// the lockfile, every match is a literal substring, every diagnostic
+/// is reproducible from inputs alone.
+fn matched_phrasing(
+    doc_lower: &str,
+    forbidden: &super::lockfile_schema::ForbiddenPhrase,
+) -> Option<String> {
+    if doc_lower.contains(&forbidden.phrase.to_lowercase()) {
+        return Some(forbidden.phrase.clone());
+    }
+    for alias in &forbidden.aliases {
+        if doc_lower.contains(&alias.to_lowercase()) {
+            return Some(alias.clone());
+        }
+    }
+    None
 }
 
 #[cfg(test)]
@@ -549,6 +577,7 @@ mod tests {
             forbidden_doc_phrases: vec![ForbiddenPhrase {
                 phrase: "for now".into(),
                 confidence: 0.75,
+                aliases: Vec::new(),
             }],
             ..DcSection::default()
         };
@@ -588,5 +617,109 @@ mod tests {
         );
         let section = DcSection::default();
         assert!(dc002(&air, &section, CheckMode::Human).is_empty());
+    }
+
+    // ---- alias-matching tests ----
+
+    #[test]
+    fn dc002_matches_alias_and_surfaces_it_in_diagnostic() {
+        let air = air_with_module(
+            "x::api",
+            vec![ty_item(
+                "Widget",
+                Visibility::Public,
+                Some("This struct is what you wanted; we'll iterate next pass."),
+            )],
+        );
+        let section = DcSection {
+            forbidden_doc_phrases: vec![ForbiddenPhrase {
+                phrase: "the user wanted".into(),
+                confidence: 0.85,
+                aliases: vec!["you wanted".into(), "you requested".into()],
+            }],
+            ..DcSection::default()
+        };
+        let diags = dc002(&air, &section, CheckMode::Human);
+        assert_eq!(diags.len(), 1);
+        assert!(
+            diags[0].message.contains("you wanted"),
+            "diagnostic should surface the matched alias; got {}",
+            diags[0].message,
+        );
+        assert!(
+            diags[0].message.contains("(alias of `the user wanted`)"),
+            "diagnostic should note alias-of-primary; got {}",
+            diags[0].message,
+        );
+    }
+
+    #[test]
+    fn dc002_primary_phrase_match_does_not_show_alias_note() {
+        let air = air_with_module(
+            "x::api",
+            vec![ty_item(
+                "Widget",
+                Visibility::Public,
+                Some("As discussed, this needs more work."),
+            )],
+        );
+        let section = DcSection {
+            forbidden_doc_phrases: vec![ForbiddenPhrase {
+                phrase: "as discussed".into(),
+                confidence: 0.90,
+                aliases: vec!["as we discussed".into(), "we discussed".into()],
+            }],
+            ..DcSection::default()
+        };
+        let diags = dc002(&air, &section, CheckMode::Human);
+        assert_eq!(diags.len(), 1);
+        assert!(
+            !diags[0].message.contains("(alias of"),
+            "primary-match diagnostic shouldn't carry the alias-note; got {}",
+            diags[0].message,
+        );
+    }
+
+    #[test]
+    fn dc002_alias_match_is_case_insensitive() {
+        let air = air_with_module(
+            "x::api",
+            vec![ty_item(
+                "Widget",
+                Visibility::Public,
+                Some("AS WE DISCUSSED, this is fine."),
+            )],
+        );
+        let section = DcSection {
+            forbidden_doc_phrases: vec![ForbiddenPhrase {
+                phrase: "as discussed".into(),
+                confidence: 0.90,
+                aliases: vec!["as we discussed".into()],
+            }],
+            ..DcSection::default()
+        };
+        assert_eq!(dc002(&air, &section, CheckMode::Human).len(), 1);
+    }
+
+    #[test]
+    fn dc002_seed_aliases_cover_paraphrased_residue() {
+        // The motivating use case: the seed list ships with curated
+        // aliases so users don't need to enumerate them per-codebase.
+        // "we agreed" should match through the `as discussed` alias set.
+        let air = air_with_module(
+            "x::api",
+            vec![ty_item(
+                "Widget",
+                Visibility::Public,
+                Some("We agreed this was good enough."),
+            )],
+        );
+        let section = DcSection::default();
+        let diags = dc002(&air, &section, CheckMode::Human);
+        assert_eq!(
+            diags.len(),
+            1,
+            "expected default aliases to catch `we agreed`; got {diags:?}"
+        );
     }
 }

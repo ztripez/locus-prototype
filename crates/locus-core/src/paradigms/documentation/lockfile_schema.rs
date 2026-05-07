@@ -46,17 +46,35 @@ impl Default for DcSection {
     }
 }
 
+// ot: allow DC002 reason="documentation deliberately quotes residue phrases for the alias-matching example" expires="2099-01-01"
 /// One entry in the DC002 forbidden-phrase list. Matched case-insensitively
 /// as a substring of an item's doc text. `confidence` drives
 /// [`crate::diagnostics::Severity::from_confidence`] — values below `0.50`
 /// suppress the diagnostic entirely (intentional, so users can demote a
 /// phrase without removing it).
+///
+/// **Paraphrase coverage via `aliases`.** The same residue intent often
+/// surfaces under multiple phrasings (`as discussed` / `as we discussed`
+/// / `as I mentioned` / `we agreed`). Rather than introduce an embedding
+/// model — which would break the no-LLM determinism rule — DC002 takes a
+/// **deterministic alias list** approach: each `ForbiddenPhrase` carries
+/// hand-curated equivalent phrasings that all fire under the same
+/// confidence and concept. The matcher tries each alias the same way as
+/// the primary phrase (case-insensitive substring); when an alias hits,
+/// it's surfaced in the diagnostic message so the user sees exactly
+/// which text was matched. No stemming, no regex — just a curated list,
+/// auditable and reproducible.
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
 pub struct ForbiddenPhrase {
     pub phrase: String,
     /// 0.0–1.0; drives `Severity::from_confidence` mapping.
     #[serde(default = "default_phrase_confidence")]
     pub confidence: f32,
+    /// Equivalent phrasings — when any matches, the diagnostic surfaces
+    /// the matched alias. Empty by default; the seeded high-value
+    /// phrases ship with curated alias sets.
+    #[serde(default)]
+    pub aliases: Vec<String>,
 }
 
 fn default_phrase_confidence() -> f32 {
@@ -77,82 +95,195 @@ pub fn default_forbidden_doc_phrases() -> Vec<ForbiddenPhrase> {
         ForbiddenPhrase {
             phrase: "as discussed".into(),
             confidence: 0.90,
-        },
-        ForbiddenPhrase {
-            phrase: "as we discussed".into(),
-            confidence: 0.90,
+            aliases: vec![
+                "as we discussed".into(),
+                "as we've discussed".into(),
+                "as i discussed".into(),
+                "as we mentioned".into(),
+                "as i mentioned".into(),
+                "we discussed".into(),
+                "we've discussed".into(),
+                "we agreed".into(),
+                "as we agreed".into(),
+            ],
         },
         ForbiddenPhrase {
             phrase: "the prompt".into(),
             confidence: 0.95,
-        },
-        ForbiddenPhrase {
-            phrase: "per the prompt".into(),
-            confidence: 0.95,
+            aliases: vec![
+                "per the prompt".into(),
+                "in the prompt".into(),
+                "from the prompt".into(),
+                "the original prompt".into(),
+                "your prompt".into(),
+            ],
         },
         ForbiddenPhrase {
             phrase: "previously".into(),
             confidence: 0.85,
+            aliases: vec![
+                "previously discussed".into(),
+                "previously mentioned".into(),
+                "as previously".into(),
+            ],
         },
         ForbiddenPhrase {
             phrase: "mentioned earlier".into(),
             confidence: 0.85,
+            aliases: vec![
+                "mentioned above".into(),
+                "noted earlier".into(),
+                "noted above".into(),
+                "discussed earlier".into(),
+                "discussed above".into(),
+                "as mentioned".into(),
+                "as noted".into(),
+            ],
         },
         ForbiddenPhrase {
             phrase: "edge case above".into(),
             confidence: 0.80,
+            aliases: vec![
+                "edge case mentioned".into(),
+                "edge case noted earlier".into(),
+            ],
         },
         ForbiddenPhrase {
             phrase: "the user wanted".into(),
             confidence: 0.85,
+            aliases: vec![
+                "the user requested".into(),
+                "you wanted".into(),
+                "you requested".into(),
+                "you asked for".into(),
+                "as the user said".into(),
+            ],
         },
         ForbiddenPhrase {
             phrase: "this should fix".into(),
             confidence: 0.80,
+            aliases: vec![
+                "this should resolve".into(),
+                "this should address".into(),
+                "this should handle".into(),
+                "this fixes".into(),
+            ],
         },
         ForbiddenPhrase {
             phrase: "because of the issue".into(),
             confidence: 0.75,
+            aliases: vec![
+                "due to the issue".into(),
+                "to handle the issue".into(),
+                "to fix the issue".into(),
+                "to address the issue".into(),
+                "because of this issue".into(),
+            ],
         },
         ForbiddenPhrase {
             phrase: "new approach".into(),
             confidence: 0.70,
+            aliases: vec![
+                "my new approach".into(),
+                "the new approach".into(),
+                "the new way".into(),
+                "this new approach".into(),
+            ],
         },
         ForbiddenPhrase {
             phrase: "old approach".into(),
             confidence: 0.75,
+            aliases: vec![
+                "the old approach".into(),
+                "the old way".into(),
+                "the previous approach".into(),
+                "old code".into(),
+                "legacy approach".into(),
+            ],
         },
         ForbiddenPhrase {
             phrase: "from the previous version".into(),
             confidence: 0.85,
+            aliases: vec![
+                "from the prior version".into(),
+                "from before".into(),
+                "from the earlier version".into(),
+                "before the refactor".into(),
+            ],
         },
         ForbiddenPhrase {
             phrase: "for now".into(),
             confidence: 0.75,
+            aliases: vec![
+                "for the time being".into(),
+                "for the moment".into(),
+                "until later".into(),
+                "as a stopgap".into(),
+            ],
         },
         ForbiddenPhrase {
             phrase: "later".into(),
             confidence: 0.65,
+            aliases: vec!["in a later iteration".into(), "in a later pass".into()],
         },
         ForbiddenPhrase {
             phrase: "temporary".into(),
             confidence: 0.75,
+            aliases: vec![
+                "temp solution".into(),
+                "stopgap".into(),
+                "placeholder".into(),
+            ],
         },
         ForbiddenPhrase {
             phrase: "clean this up".into(),
             confidence: 0.75,
+            aliases: vec![
+                "clean up later".into(),
+                "cleanup needed".into(),
+                "needs cleanup".into(),
+                "needs a cleanup".into(),
+                "should be cleaned up".into(),
+            ],
         },
         ForbiddenPhrase {
             phrase: "TODO".into(),
             confidence: 0.70,
+            aliases: vec![],
         },
         ForbiddenPhrase {
             phrase: "FIXME".into(),
             confidence: 0.80,
+            aliases: vec![],
         },
         ForbiddenPhrase {
             phrase: "HACK".into(),
             confidence: 0.85,
+            aliases: vec![],
+        },
+        ForbiddenPhrase {
+            phrase: "XXX".into(),
+            confidence: 0.80,
+            aliases: vec![],
+        },
+        ForbiddenPhrase {
+            phrase: "let me know".into(),
+            confidence: 0.85,
+            aliases: vec![
+                "tell me if".into(),
+                "let me know if".into(),
+                "if you want".into(),
+            ],
+        },
+        ForbiddenPhrase {
+            phrase: "i think".into(),
+            confidence: 0.65,
+            aliases: vec![
+                "i believe".into(),
+                "i suspect".into(),
+                "in my opinion".into(),
+                "imho".into(),
+            ],
         },
     ]
 }

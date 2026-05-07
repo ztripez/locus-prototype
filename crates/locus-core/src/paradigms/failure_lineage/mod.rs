@@ -16,6 +16,11 @@
 //! - FL003: silent-discard method call (`.ok()` / `.err()` /
 //!   `.unwrap_or_else()`) fires from a module that isn't in
 //!   `invariant_owner_paths` — the inverse of FL002.
+//! - FL004: `let _ = expr;` discarded binding (where expr is a call) in
+//!   a module that isn't in `invariant_owner_paths` and whose callee
+//!   isn't on the `silent_discard_allowed_callees` allowlist.
+//! - FL005: `if let Ok/Err(...) = expr { ... }` with no `else` branch in
+//!   a module that isn't in `invariant_owner_paths`.
 
 // ot: canonical
 
@@ -51,6 +56,8 @@ impl Paradigm for FailureLineage {
         let mut out = rules::fl001(air, &section, mode);
         out.extend(rules::fl002(air, &section, mode));
         out.extend(rules::fl003(air, &section, mode));
+        out.extend(rules::fl004(air, &section, mode));
+        out.extend(rules::fl005(air, &section, mode));
         out
     }
 }

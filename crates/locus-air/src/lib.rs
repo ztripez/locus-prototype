@@ -63,7 +63,22 @@ use serde::{Deserialize, Serialize};
 ///   Option<String>` so consumers can match against the original callee
 ///   path (e.g. OB001 filtering `Logging` facts by their `println` /
 ///   `tracing::info` evidence).
-pub const AIR_SCHEMA_VERSION: u32 = 8;
+/// - **9**: silent-error coverage. Adds two new `AirItem` variants the
+///   visitor emits when scanning function bodies, both feeding the FL
+///   paradigm (Failure Lineage):
+///     - `AirItem::SilentDiscard` — captures `let _ = expr;` statements where
+///       the discarded expression is a call (`Method` / `Function` / `Macro`).
+///       Carries the rendered callee text and a `DiscardKind` so FL004 can
+///       decide whether the discard is legitimate (e.g. `lock` / `send` /
+///       `drop` patterns) or an agent-introduced silent failure swallow.
+///     - `AirItem::PartialIfLet` — captures `if let Ok(...) = expr { … }`
+///       and `if let Err(...) = expr { … }` patterns with **no** `else`
+///       branch. The unmatched arm is implicitly silent; FL005 flags this
+///       when the file is outside `invariant_owner_paths`.
+///
+///   Closes the silent-error coverage gap that FL003 (which only sees
+///   `.ok()` / `.err()` method-call shape) couldn't reach.
+pub const AIR_SCHEMA_VERSION: u32 = 9;
 
 // ot: canonical
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -124,6 +139,8 @@ pub enum AirItem {
     Import(AirImport),
     Impl(AirImpl),
     CallSite(AirCallSite),
+    SilentDiscard(AirSilentDiscard),
+    PartialIfLet(AirPartialIfLet),
 }
 
 // ot: canonical
@@ -295,6 +312,58 @@ pub enum CallKind {
     Function,
     Method,
     Macro,
+}
+
+/// `let _ = expr;` — a discarded binding. Captured only when `expr` is a
+/// call shape (`Method` / `Function` / `Macro`); arbitrary discarded
+/// expressions (`let _ = some_field;` / `let _ = Block { ... };`) are
+/// recorded with `kind = Other` and a `None` callee so FL004 can choose
+/// to ignore them by default.
+// ot: canonical
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AirSilentDiscard {
+    /// Rendered callee text — same convention as [`AirCallSite::callee`]
+    /// (last `::` segment for path-qualified macros; bare method name for
+    /// method calls). `None` when the discarded expression isn't a call.
+    pub callee: Option<String>,
+    // Renamed in JSON to avoid colliding with the AirItem external tag (also `kind`).
+    #[serde(rename = "discard_kind")]
+    pub kind: DiscardKind,
+    /// Enclosing function's symbol, if known.
+    pub function: Option<String>,
+    pub span: AirSpan,
+}
+
+// ot: canonical
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
+pub enum DiscardKind {
+    /// `let _ = receiver.method(...);`
+    Method,
+    /// `let _ = function(...);`
+    Function,
+    /// `let _ = macro!(...);`
+    Macro,
+    /// `let _ = some_other_expr;` — block, field access, literal, etc.
+    /// Recorded for completeness; FL004 defaults to ignoring this kind
+    /// because the false-positive surface is too large.
+    Other,
+}
+
+/// `if let Ok(...) = expr { ... }` or `if let Err(...) = expr { ... }`
+/// **without** an `else` branch. The unmatched arm is implicitly silent —
+/// the failure (or success) just falls through. FL005 fires on this
+/// shape outside `invariant_owner_paths`. Patterns matching anything
+/// other than the `Ok` / `Err` `Result` constructors are not recorded.
+// ot: canonical
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AirPartialIfLet {
+    /// `"Ok"` or `"Err"` — the variant the surface `if let` matches on.
+    /// We record this so FL005 can phrase the diagnostic precisely
+    /// (a missing `Err` branch reads differently from a missing `Ok` one).
+    pub variant: String,
+    /// Enclosing function's symbol, if known.
+    pub function: Option<String>,
+    pub span: AirSpan,
 }
 
 // ot: canonical

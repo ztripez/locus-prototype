@@ -6,8 +6,8 @@
 use crate::type_render::{render_path, render_type};
 use locus_air::{
     ActionKind, AirCallSite, AirConversion, AirField, AirFunction, AirImpl, AirImport, AirItem,
-    AirSpan, AirTruthAction, AirType, AirVariant, CallKind, ConversionMechanism, TypeKind,
-    Visibility,
+    AirPartialIfLet, AirSilentDiscard, AirSpan, AirTruthAction, AirType, AirVariant, CallKind,
+    ConversionMechanism, DiscardKind, TypeKind, Visibility,
 };
 use quote::ToTokens;
 use syn::{
@@ -515,6 +515,20 @@ fn scan_fn_body_for_truth_actions(
 fn scan_stmt(stmt: &Stmt, function: &str, file_path: &str, out: &mut Vec<AirItem>) {
     match stmt {
         Stmt::Local(l) => {
+            // `let _ = expr;` — silent-discard binding. Captured here so
+            // the FL paradigm can flag `let _ = result;` as a swallowed
+            // failure; FL004 decides which discards are legitimate.
+            if matches!(l.pat, Pat::Wild(_))
+                && let Some(init) = &l.init
+            {
+                let (callee, kind) = classify_discard_init(&init.expr);
+                out.push(AirItem::SilentDiscard(AirSilentDiscard {
+                    callee,
+                    kind,
+                    function: Some(function.to_string()),
+                    span: span_of(file_path, l.span()),
+                }));
+            }
             if let Some(init) = &l.init {
                 scan_expr(&init.expr, function, file_path, out);
             }
@@ -532,6 +546,30 @@ fn scan_stmt(stmt: &Stmt, function: &str, file_path: &str, out: &mut Vec<AirItem
             }));
         }
         Stmt::Item(_) => {}
+    }
+}
+
+/// Classify the right-hand side of a `let _ = <expr>;` for FL004.
+///
+/// Only call-shaped expressions get a meaningful callee — other shapes
+/// (`let _ = some_field;`, `let _ = literal;`, blocks, etc.) are recorded
+/// as `DiscardKind::Other` with no callee. FL004 ignores `Other` by
+/// default because the false-positive surface for general expression
+/// discards is too large to be useful.
+fn classify_discard_init(expr: &Expr) -> (Option<String>, DiscardKind) {
+    match expr {
+        Expr::MethodCall(m) => (Some(m.method.to_string()), DiscardKind::Method),
+        Expr::Call(c) => match &*c.func {
+            Expr::Path(p) => (Some(render_path(&p.path)), DiscardKind::Function),
+            _ => (None, DiscardKind::Function),
+        },
+        Expr::Macro(m) => (Some(render_path(&m.mac.path)), DiscardKind::Macro),
+        // Peel through transparent wrappers so `let _ = (x.send());` and
+        // `let _ = &mut x.lock();` still classify as the underlying call.
+        Expr::Paren(p) => classify_discard_init(&p.expr),
+        Expr::Reference(r) => classify_discard_init(&r.expr),
+        Expr::Try(t) => classify_discard_init(&t.expr),
+        _ => (None, DiscardKind::Other),
     }
 }
 
@@ -587,6 +625,20 @@ fn scan_expr(expr: &Expr, function: &str, file_path: &str, out: &mut Vec<AirItem
             }
         }
         Expr::If(i) => {
+            // `if let Ok(...) = expr { ... }` or `if let Err(...) = expr
+            // { ... }` *without* an `else` branch. The unmatched arm is
+            // silent — the failure (or success) just falls through. FL005
+            // consumes this signal.
+            if i.else_branch.is_none()
+                && let Expr::Let(let_expr) = &*i.cond
+                && let Some(variant) = result_variant_of_pat(&let_expr.pat)
+            {
+                out.push(AirItem::PartialIfLet(AirPartialIfLet {
+                    variant: variant.to_string(),
+                    function: Some(function.to_string()),
+                    span: span_of(file_path, i.span()),
+                }));
+            }
             scan_expr(&i.cond, function, file_path, out);
             for stmt in &i.then_branch.stmts {
                 scan_stmt(stmt, function, file_path, out);
@@ -661,10 +713,214 @@ fn scan_expr(expr: &Expr, function: &str, file_path: &str, out: &mut Vec<AirItem
     }
 }
 
+/// Returns `"Ok"` or `"Err"` if `pat` is a tuple-struct pattern whose path
+/// ends in either of those segments — i.e. `Ok(...)`, `Err(...)`,
+/// `Result::Ok(...)`, etc. Returns `None` otherwise (other patterns,
+/// custom enums, struct patterns, …).
+fn result_variant_of_pat(pat: &Pat) -> Option<&'static str> {
+    let Pat::TupleStruct(ts) = pat else {
+        return None;
+    };
+    let last = ts.path.segments.last()?.ident.to_string();
+    match last.as_str() {
+        "Ok" => Some("Ok"),
+        "Err" => Some("Err"),
+        _ => None,
+    }
+}
+
 fn is_string_compare(side: &Expr, other: &Expr) -> bool {
     let Expr::Lit(l) = other else { return false };
     if !matches!(l.lit, syn::Lit::Str(_)) {
         return false;
     }
     matches!(side, Expr::Field(_) | Expr::Path(_) | Expr::MethodCall(_))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use indoc::indoc;
+
+    fn items_for(src: &str) -> Vec<AirItem> {
+        let file = syn::parse_str::<File>(src).expect("test source must parse");
+        collect_items(&file, "t.rs", Some("x"))
+    }
+
+    fn silent_discards(items: &[AirItem]) -> Vec<&AirSilentDiscard> {
+        items
+            .iter()
+            .filter_map(|i| match i {
+                AirItem::SilentDiscard(d) => Some(d),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn partial_if_lets(items: &[AirItem]) -> Vec<&AirPartialIfLet> {
+        items
+            .iter()
+            .filter_map(|i| match i {
+                AirItem::PartialIfLet(p) => Some(p),
+                _ => None,
+            })
+            .collect()
+    }
+
+    // ---- SilentDiscard emission ----
+
+    #[test]
+    fn silent_discard_method_call_records_method_kind_and_name() {
+        let items = items_for(indoc! {r#"
+            fn run() {
+                let _ = thing.send(payload);
+            }
+        "#});
+        let discards = silent_discards(&items);
+        assert_eq!(discards.len(), 1);
+        assert_eq!(discards[0].callee.as_deref(), Some("send"));
+        assert_eq!(discards[0].kind, DiscardKind::Method);
+        assert_eq!(discards[0].function.as_deref(), Some("x::run"));
+    }
+
+    #[test]
+    fn silent_discard_function_call_records_function_kind_and_path() {
+        let items = items_for(indoc! {r#"
+            fn run() {
+                let _ = std::fs::write(p, b);
+            }
+        "#});
+        let discards = silent_discards(&items);
+        assert_eq!(discards.len(), 1);
+        assert_eq!(discards[0].callee.as_deref(), Some("std::fs::write"));
+        assert_eq!(discards[0].kind, DiscardKind::Function);
+    }
+
+    #[test]
+    fn silent_discard_macro_call_records_macro_kind_and_path() {
+        let items = items_for(indoc! {r#"
+            fn run() {
+                let _ = vec![1, 2, 3];
+            }
+        "#});
+        let discards = silent_discards(&items);
+        assert_eq!(discards.len(), 1);
+        assert_eq!(discards[0].callee.as_deref(), Some("vec"));
+        assert_eq!(discards[0].kind, DiscardKind::Macro);
+    }
+
+    #[test]
+    fn silent_discard_arbitrary_expression_records_other_kind_with_no_callee() {
+        let items = items_for(indoc! {r#"
+            fn run() {
+                let _ = self.field;
+            }
+        "#});
+        let discards = silent_discards(&items);
+        assert_eq!(discards.len(), 1);
+        assert!(discards[0].callee.is_none());
+        assert_eq!(discards[0].kind, DiscardKind::Other);
+    }
+
+    #[test]
+    fn silent_discard_peels_through_paren_ref_and_try() {
+        let items = items_for(indoc! {r#"
+            fn run() {
+                let _ = (thing.send(payload));
+                let _ = &thing.lock();
+                let _ = thing.send(payload)?;
+            }
+        "#});
+        let discards = silent_discards(&items);
+        assert_eq!(discards.len(), 3);
+        for d in &discards {
+            assert_eq!(d.kind, DiscardKind::Method);
+        }
+    }
+
+    #[test]
+    fn non_wildcard_let_does_not_emit_silent_discard() {
+        let items = items_for(indoc! {r#"
+            fn run() {
+                let x = thing.send(payload);
+                let _y = thing.send(payload);
+            }
+        "#});
+        assert!(silent_discards(&items).is_empty());
+    }
+
+    // ---- PartialIfLet emission ----
+
+    #[test]
+    fn partial_if_let_ok_without_else_records_ok_variant() {
+        let items = items_for(indoc! {r#"
+            fn run() {
+                if let Ok(x) = parse_thing() {
+                    use_value(x);
+                }
+            }
+        "#});
+        let parts = partial_if_lets(&items);
+        assert_eq!(parts.len(), 1);
+        assert_eq!(parts[0].variant, "Ok");
+        assert_eq!(parts[0].function.as_deref(), Some("x::run"));
+    }
+
+    #[test]
+    fn partial_if_let_err_without_else_records_err_variant() {
+        let items = items_for(indoc! {r#"
+            fn run() {
+                if let Err(e) = parse_thing() {
+                    log_error(e);
+                }
+            }
+        "#});
+        let parts = partial_if_lets(&items);
+        assert_eq!(parts.len(), 1);
+        assert_eq!(parts[0].variant, "Err");
+    }
+
+    #[test]
+    fn if_let_with_else_does_not_emit_partial_if_let() {
+        let items = items_for(indoc! {r#"
+            fn run() {
+                if let Ok(x) = parse_thing() {
+                    use_value(x);
+                } else {
+                    handle_error();
+                }
+            }
+        "#});
+        assert!(partial_if_lets(&items).is_empty());
+    }
+
+    #[test]
+    fn if_let_on_non_result_pattern_does_not_emit() {
+        let items = items_for(indoc! {r#"
+            fn run() {
+                if let Some(x) = optional() {
+                    use_value(x);
+                }
+                if let MyEnum::Variant(x) = thing {
+                    use_value(x);
+                }
+            }
+        "#});
+        assert!(partial_if_lets(&items).is_empty());
+    }
+
+    #[test]
+    fn if_let_with_path_qualified_ok_still_emits() {
+        // `Result::Ok(x)` should still be recognised — last path segment wins.
+        let items = items_for(indoc! {r#"
+            fn run() {
+                if let Result::Ok(x) = parse_thing() {
+                    use_value(x);
+                }
+            }
+        "#});
+        let parts = partial_if_lets(&items);
+        assert_eq!(parts.len(), 1);
+        assert_eq!(parts[0].variant, "Ok");
+    }
 }

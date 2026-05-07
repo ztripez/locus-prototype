@@ -82,6 +82,19 @@ pub struct FlSection {
     /// out of AIR's scope today, so the rule is intentionally conservative.
     #[serde(default = "default_silent_discard_callees")]
     pub silent_discard_callees: Vec<String>,
+
+    /// Callees recorded on `AirItem::SilentDiscard` (`let _ = ...`) that are
+    /// **legitimate** silent discards — FL004 skips a discard when its
+    /// callee matches any pattern here. Default covers the canonical
+    /// fire-and-forget patterns: `lock` (intentional drop guard), `send`
+    /// (closed-channel error is recoverable), `drop` (explicit value
+    /// drop), `set_logger` / `subscribe` (idempotent registrations that
+    /// fail when called twice).
+    ///
+    /// Pattern syntax mirrors the other lists — exact match or trailing
+    /// `::*` wildcard.
+    #[serde(default = "default_silent_discard_allowed_callees")]
+    pub silent_discard_allowed_callees: Vec<String>,
 }
 
 impl Default for FlSection {
@@ -92,6 +105,7 @@ impl Default for FlSection {
             forbidden_callees: default_forbidden_callees(),
             invariant_owner_paths: Vec::new(),
             silent_discard_callees: default_silent_discard_callees(),
+            silent_discard_allowed_callees: default_silent_discard_allowed_callees(),
         }
     }
 }
@@ -124,23 +138,97 @@ pub fn default_silent_discard_callees() -> Vec<String> {
     ]
 }
 
-/// Pattern syntax: simple suffix wildcard, mirroring DG / UT.
+/// Default callee allowlist for FL004 (`let _ = expr;` silent-discard
+/// bindings). These are the canonical idiomatic fire-and-forget patterns
+/// where `let _ = …` is the *correct* shape:
+///
+/// - `lock` — `let _ = mutex.lock();` keeps the guard alive for the
+///   surrounding block.
+/// - `send` — closed-channel errors are recoverable on senders.
+/// - `drop` — explicit value drop.
+/// - `set_logger` / `subscribe` / `try_init` — idempotent registrations
+///   whose "already initialised" error is benign.
+///
+/// FL004 matches the discarded callee against this list and skips the
+/// diagnostic. Users who want a tighter posture can clear the list in
+/// their lockfile.
+pub fn default_silent_discard_allowed_callees() -> Vec<String> {
+    vec![
+        "lock".to_string(),
+        "send".to_string(),
+        "drop".to_string(),
+        "set_logger".to_string(),
+        "subscribe".to_string(),
+        "try_init".to_string(),
+    ]
+}
+
+/// Pattern syntax: segment-aligned wildcards.
 /// - `foo::bar` — exact match
 /// - `foo::*` — `foo` itself or any descendant (`foo::bar`, `foo::bar::baz`)
+/// - `*::foo` — `foo` itself or anywhere ending with `::foo` (`a::foo`,
+///   `a::b::foo`)
+/// - `*::foo::*` — `foo` appearing as any whole segment in the path
+///   (`foo`, `a::foo`, `a::foo::b`, `a::b::foo::c`)
 /// - `*` — anything
 ///
-/// Duplicated locally (rather than imported from UT) so the FL paradigm slice
-/// has no implicit dependency on a sibling paradigm. If the matcher ever
-/// needs to grow (e.g. mid-segment wildcards), each paradigm can evolve
-/// independently.
+/// FL's matcher is intentionally richer than the rest of the paradigm
+/// matchers (which only handle the trailing `::*` shape) because FL's
+/// `invariant_owner_paths` are typically test-module patterns
+/// (`*::tests::*`) and inline `mod tests {}` blocks land on a wide
+/// variety of module paths across a workspace. Other paradigms can lift
+/// this implementation when they hit the same need.
+///
+/// Duplicated locally rather than imported from a sibling paradigm so
+/// each paradigm's matcher can evolve independently.
 pub fn matches_pattern(pattern: &str, path: &str) -> bool {
     if pattern == "*" {
         return true;
     }
-    if let Some(prefix) = pattern.strip_suffix("::*") {
-        return path == prefix || path.starts_with(&format!("{prefix}::"));
+    let leading_wild = pattern.starts_with("*::");
+    let trailing_wild = pattern.ends_with("::*");
+    let stripped = match (leading_wild, trailing_wild) {
+        (true, true) => &pattern[3..pattern.len() - 3],
+        (true, false) => &pattern[3..],
+        (false, true) => &pattern[..pattern.len() - 3],
+        (false, false) => pattern,
+    };
+    if stripped.is_empty() {
+        // Pattern was just `*::` or `::*` — treat as a malformed
+        // wildcard rather than matching anything; callers configuring
+        // these would have meant `*`.
+        return false;
     }
-    pattern == path
+    match (leading_wild, trailing_wild) {
+        (true, true) => {
+            let mid = format!("::{stripped}::");
+            let starts = format!("{stripped}::");
+            let ends = format!("::{stripped}");
+            path == stripped
+                || path.contains(&mid)
+                || path.starts_with(&starts)
+                || path.ends_with(&ends)
+        }
+        (true, false) => path == stripped || path.ends_with(&format!("::{stripped}")),
+        (false, true) => path == stripped || path.starts_with(&format!("{stripped}::")),
+        (false, false) => pattern == path,
+    }
+}
+
+/// Return the containing-module path for a function symbol — i.e. the
+/// symbol with its last `::`-segment dropped. `a::b::tests::f` →
+/// `a::b::tests`. Bare names with no `::` return the original string.
+///
+/// Used by FL002–FL005 alongside the file's `module_path` to evaluate
+/// the function's enclosing context: a function inside an inline
+/// `mod tests {}` block has a file `module_path` that doesn't include
+/// `::tests::`, but its symbol does. Without this, `*::tests::*`
+/// patterns silently miss inline test modules.
+pub fn containing_module_of(function_symbol: &str) -> &str {
+    function_symbol
+        .rsplit_once("::")
+        .map(|(prefix, _)| prefix)
+        .unwrap_or(function_symbol)
 }
 
 #[cfg(test)]
@@ -171,6 +259,50 @@ mod tests {
     }
 
     #[test]
+    fn leading_wildcard_matches_any_ending() {
+        assert!(matches_pattern("*::tests", "a::b::tests"));
+        assert!(matches_pattern("*::tests", "tests"));
+        assert!(matches_pattern("*::tests", "a::tests"));
+        assert!(!matches_pattern("*::tests", "a::tests::b"));
+        assert!(!matches_pattern("*::tests", "tester")); // not segment-aligned
+    }
+
+    #[test]
+    fn segment_anywhere_wildcard_matches_inline_test_modules() {
+        // The headline use case: `*::tests::*` should fire on any
+        // function symbol or containing-module path that has `tests`
+        // as a segment somewhere in the middle.
+        assert!(matches_pattern("*::tests::*", "tests"));
+        assert!(matches_pattern("*::tests::*", "a::tests"));
+        assert!(matches_pattern("*::tests::*", "tests::nested"));
+        assert!(matches_pattern("*::tests::*", "a::b::tests"));
+        assert!(matches_pattern("*::tests::*", "a::b::tests::f"));
+        assert!(matches_pattern("*::tests::*", "a::tests::b::c"));
+        assert!(!matches_pattern("*::tests::*", "tester::hat"));
+        assert!(!matches_pattern("*::tests::*", "a::testimony"));
+    }
+
+    #[test]
+    fn malformed_bare_wildcard_does_not_match_anything() {
+        // `*::` and `::*` alone with no body shouldn't quietly match
+        // every path — that's what `*` is for.
+        assert!(!matches_pattern("*::", "anything"));
+        assert!(!matches_pattern("::*", "anything"));
+    }
+
+    #[test]
+    fn containing_module_drops_last_segment() {
+        assert_eq!(
+            containing_module_of("a::b::tests::sigmoid_extreme"),
+            "a::b::tests"
+        );
+        assert_eq!(containing_module_of("crate::User"), "crate");
+        // Bare name without `::` is its own containing module — the
+        // caller should still match it against patterns directly.
+        assert_eq!(containing_module_of("standalone"), "standalone");
+    }
+
+    #[test]
     fn default_section_seeds_forbidden_callees_and_keeps_owner_paths_empty() {
         let s = FlSection::default();
         assert!(s.domain_paths.is_empty());
@@ -195,6 +327,22 @@ mod tests {
                 s.silent_discard_callees.iter().any(|c| c == expected),
                 "default silent-discard callees missing `{expected}`: {:?}",
                 s.silent_discard_callees,
+            );
+        }
+        for expected in [
+            "lock",
+            "send",
+            "drop",
+            "set_logger",
+            "subscribe",
+            "try_init",
+        ] {
+            assert!(
+                s.silent_discard_allowed_callees
+                    .iter()
+                    .any(|c| c == expected),
+                "default allowed-discard callees missing `{expected}`: {:?}",
+                s.silent_discard_allowed_callees,
             );
         }
     }

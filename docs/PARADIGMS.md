@@ -98,16 +98,15 @@ This keeps Locus deterministic, extensible, and architecture-focused.
 
 This document is the *target* spec — the full set of paradigms Locus is designed to guard. Not everything below is implemented yet. This section is the live snapshot so contributors can see what's shipped, what's partial, and what's still aspirational.
 
-**AIR coverage today** (schema v8): symbols, types (struct / enum / alias / union / trait), fields, variants, derives, doc text, functions (signature + line count + doc), inherent and trait `impl` blocks (with method names), imports (flattened, `crate::` normalized), call sites (Function / Method / Macro with rendered callee text and enclosing function), conversions (From / TryFrom / inherent / free), truth actions (`Construct` / `EnumMatch` / `StringCompare` / `Validate` / `Normalize`), source hints (`// ot: …`), normalized loader facts (`spawned_work`, `config_read`, `logging` produced by the `std-rt` loader; `external_io`, `persistence_write`, `blocking_call`, `hot_path`, `request_context`, `boundary_entry`, `runtime_state_owner`, `background_worker` reserved for future loaders).
+**AIR coverage today** (schema v9): symbols, types (struct / enum / alias / union / trait), fields, variants, derives, doc text, functions (signature + line count + doc), inherent and trait `impl` blocks (with method names), imports (flattened, `crate::` normalized), call sites (Function / Method / Macro with rendered callee text and enclosing function), discarded bindings (`AirItem::SilentDiscard` for `let _ = expr;` where `expr` is a call), partial `if let` matches (`AirItem::PartialIfLet` for `if let Ok/Err = ...` without `else`), conversions (From / TryFrom / inherent / free), truth actions (`Construct` / `EnumMatch` / `StringCompare` / `Validate` / `Normalize`), source hints (`// ot: …`), normalized loader facts (`spawned_work`, `config_read`, `logging` produced by the `std-rt` loader; `external_io`, `persistence_write`, `blocking_call`, `hot_path`, `request_context`, `boundary_entry`, `runtime_state_owner`, `background_worker` reserved for future loaders).
 
 **Not yet in AIR** (rules that need these will be partial or absent until the visitor lands them):
 
 - general literal capture beyond truth actions
-- discarded bindings (`let _ = result;`)
-- `if let Ok(x) = ...` arm coverage
 - `match` arm bodies (we record the match target but not what each arm does)
+- `unwrap_or(default)` chains where the default arg is a literal
 - retry-loop shapes
-- attribute presence on functions (no `#[cfg(test)]` detection)
+- attribute presence on functions (no `#[cfg(test)]` detection — FL works around this with explicit `*::tests::*` patterns)
 
 **Rules implemented per paradigm:**
 
@@ -124,7 +123,7 @@ This document is the *target* spec — the full set of paradigms Locus is design
 | MO (9) | MO001 | many | too many public types per file. |
 | CX (10) | CX001 | several | function exceeds line budget. |
 | UT (11) | UT001, UT002 | many | UT002: utility module imports a forbidden feature/domain path. |
-| FL (12) | FL001, FL002, **FL003** | many | **FL003 (NEW)**: silent error discard via `.ok()` / `.err()` / `.unwrap_or_else()`. See FL chapter for the silent-error coverage gap. |
+| FL (12) | FL001, FL002, FL003, **FL004**, **FL005** | many | **FL004/FL005 (NEW, AIR v9)**: silent `let _ = call(...)` discards (FL004) and partial `if let Ok/Err = ...` without `else` (FL005). See FL chapter for the residual coverage gap (`match` arm bodies, `unwrap_or` chains, spawned-task no-sink). |
 | ER (13) | ER001, ER002 | several | ER002: string-shaped error in `Result<_, E>` return type. |
 | RW (14) | RW001 | many | spawn outside runtime owner module. |
 | FO (15) | FO001 | many | same type name across two features. |
@@ -883,16 +882,18 @@ FL — Failure Lineage Ownership
 | FL001 | `Result<_, E>` return in a `domain_paths` file where `E` matches `boundary_error_patterns` | `AirItem::Function.return_type` | Fatal / Fatal |
 | FL002 | Panic-shaped callee (`unwrap` / `expect` / `unwrap_or_default` / `panic!` / `todo!` / `unimplemented!`) outside `invariant_owner_paths` | `AirItem::CallSite` (Method, Macro) | Warning / Fatal |
 | FL003 | Silent-discard method call (`.ok()` / `.err()` / `.unwrap_or_else()`) outside `invariant_owner_paths` | `AirItem::CallSite` (Method) | Warning / Fatal |
+| FL004 | `let _ = expr;` discarded binding outside `invariant_owner_paths`, when `expr` is a call and the callee isn't on `silent_discard_allowed_callees` | `AirItem::SilentDiscard` (since AIR v9) | Warning / Fatal |
+| FL005 | `if let Ok(...) = expr { ... }` or `if let Err(...) = expr { ... }` with no `else` branch outside `invariant_owner_paths` | `AirItem::PartialIfLet` (since AIR v9) | Warning / Fatal |
 
-**Coverage gaps** — silent-error patterns the visitor can't currently see (no AIR item emitted for them, so no rule can check them):
+All five share `invariant_owner_paths`. FL's matcher accepts a richer pattern shape than other paradigms — `*::tests::*` / `*::test::*` patterns match any `tests` segment in either the file's `module_path` or the enclosing function's containing module (so inline `mod tests {}` blocks are correctly carved out without enumerating per-crate paths).
 
-- `let _ = result;` — discarded binding
-- `if let Ok(x) = result { ... }` (no `else`) — implicit silent `Err` branch
-- `match result { Ok(x) => x, Err(_) => default }` — explicit silent swallow inside an arm body
-- `result.unwrap_or(default)` followed by no error path — fallback-as-discard
-- Spawned-task failures with no sink (needs `RuntimeStateOwner` fact production)
+**Coverage gaps** — silent-error patterns AIR still can't see today (no item emitted, so no rule can check them):
 
-These land when AIR adds the corresponding source-fact items. Until then, FL003 catches the `.ok()`/`.err()` shape and CLAUDE.md's roadmap tracks the visitor work.
+- `match result { Ok(x) => x, Err(_) => default }` — explicit silent swallow inside an arm body. The visitor records the `match` target via `AirTruthAction::EnumMatch` but not the arm bodies.
+- `result.unwrap_or(default)` followed by no error path — fallback-as-discard. We see the call but not whether the surrounding context propagates anywhere.
+- Spawned-task failures with no sink — needs richer fact production (`RuntimeStateOwner` / `BackgroundWorker` loader output).
+
+These land when AIR adds the corresponding source-fact items. CLAUDE.md's roadmap tracks the remaining visitor work.
 
 ---
 
