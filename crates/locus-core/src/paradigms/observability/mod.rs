@@ -1,11 +1,12 @@
 //! OB — Observability Ownership.
 //!
-//! Spec: `docs/PARADIGMS.md` §"Paradigm 18: Observability Ownership".
+//! Spec: `docs/PARADIGMS.md` §"Paradigm 18: Observability Ownership". Reads
+//! the observer-module / forbidden-log-target split from `paradigms.OB` in
+//! `locus.lock` and flags raw `println!` / `dbg!` (and equivalents) called
+//! from outside the declared observer modules.
 //!
-//! Stub for parallel implementation. Fill in `lockfile_schema.rs` with the
-//! section type, `rules.rs` with rule functions, and (optionally) an
-//! `edit.rs` for CLI mutators. Wire rule dispatch into `check` when the
-//! first rule lands.
+//! Phase scope so far:
+//! - OB001: raw print/dbg in non-test, non-observer code.
 
 // ot: canonical
 
@@ -29,14 +30,16 @@ impl Paradigm for Observability {
         OB_PREFIX
     }
     fn init(&self, _air: &AirWorkspace) -> serde_json::Value {
+        // Observer-module assertions and the forbidden-target list are user
+        // policy, not inferences. `init` returns an empty section; the user
+        // populates the lockfile fields directly (or via a future
+        // `locus ob` mutator) and ObSection's serde defaults fill in the
+        // print/dbg baseline on first deserialize.
         serde_json::Value::Null
     }
-    fn check(
-        &self,
-        _air: &AirWorkspace,
-        _lockfile: &Lockfile,
-        _mode: CheckMode,
-    ) -> Vec<Diagnostic> {
-        Vec::new()
+    fn check(&self, air: &AirWorkspace, lockfile: &Lockfile, mode: CheckMode) -> Vec<Diagnostic> {
+        let section: lockfile_schema::ObSection =
+            lockfile.paradigm_section(OB_PREFIX).unwrap_or_default();
+        rules::ob001(air, &section, mode)
     }
 }

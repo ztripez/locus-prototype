@@ -2,10 +2,13 @@
 //!
 //! Spec: `docs/PARADIGMS.md` §"Paradigm 14: Runtime Work Ownership".
 //!
-//! Stub for parallel implementation. Fill in `lockfile_schema.rs` with the
-//! section type, `rules.rs` with rule functions, and (optionally) an
-//! `edit.rs` for CLI mutators. Wire rule dispatch into `check` when the
-//! first rule lands.
+//! Phase scope:
+//! - RW001: spawn-shaped action (tokio/std::thread/rayon/etc.) outside any
+//!   declared runtime owner module.
+//!
+//! `init` returns an empty section: runtime-owner locations are a user
+//! declaration, not an inference. The rule stays silent until the user
+//! populates `runtime_owner_paths`.
 
 // ot: canonical
 
@@ -31,12 +34,9 @@ impl Paradigm for RuntimeWork {
     fn init(&self, _air: &AirWorkspace) -> serde_json::Value {
         serde_json::Value::Null
     }
-    fn check(
-        &self,
-        _air: &AirWorkspace,
-        _lockfile: &Lockfile,
-        _mode: CheckMode,
-    ) -> Vec<Diagnostic> {
-        Vec::new()
+    fn check(&self, air: &AirWorkspace, lockfile: &Lockfile, mode: CheckMode) -> Vec<Diagnostic> {
+        let section: lockfile_schema::RwSection =
+            lockfile.paradigm_section(RW_PREFIX).unwrap_or_default();
+        rules::rw001(air, &section, mode)
     }
 }

@@ -33,7 +33,15 @@ use serde::{Deserialize, Serialize};
 ///   variant carrying every `impl` block — inherent or trait-implementing —
 ///   with its method names (AB, PA). All additions append to the end of
 ///   their owning structs so existing AIR JSON stays mostly stable.
-pub const AIR_SCHEMA_VERSION: u32 = 5;
+/// - **6**: loader-tier `ActionKind` variants for CF, RW, OB. Adds `Spawn`
+///   (detected from `*::spawn` calls — tokio, std::thread, rayon),
+///   `EnvRead` (detected from `*::env::var` calls), and `Log` (detected
+///   from logging macros: `println!`, `dbg!`, `eprintln!`, and any macro
+///   path ending in a recognised log level like `tracing::info!`,
+///   `log::warn!`). These join the existing `Construct`/`EnvMatch`/
+///   `StringCompare` action signals for paradigms that need to reason
+///   about runtime/observability concerns.
+pub const AIR_SCHEMA_VERSION: u32 = 6;
 
 // ot: canonical
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -225,13 +233,22 @@ pub struct AirTruthAction {
 }
 
 // ot: canonical
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum ActionKind {
     Construct,
     EnumMatch,
     StringCompare,
     Validate,
     Normalize,
+    /// `tokio::spawn`, `std::thread::spawn`, `rayon::spawn`, etc. Used by RW.
+    Spawn,
+    /// `std::env::var(...)`, `env::var(...)` — environment-variable reads.
+    /// Used by CF to flag config reads outside the config layer.
+    EnvRead,
+    /// Logging macro invocation: `println!`, `dbg!`, `eprintln!`, or any
+    /// macro whose path ends in a recognised log level (`info`, `warn`,
+    /// `error`, `debug`, `trace`). Used by OB.
+    Log,
 }
 
 // ot: canonical
