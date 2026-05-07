@@ -2,10 +2,13 @@
 //!
 //! Spec: `docs/PARADIGMS.md` §"Paradigm 13: Error Taxonomy Ownership".
 //!
-//! Stub for parallel implementation. Fill in `lockfile_schema.rs` with the
-//! section type, `rules.rs` with rule functions, and (optionally) an
-//! `edit.rs` for CLI mutators. Wire rule dispatch into `check` when the
-//! first rule lands.
+//! Phase scope:
+//! - ER001: multiple public error types in the same module (heuristic
+//!   warning that flags taxonomy forks like `UserError` + `CreateUserError`
+//!   sitting next to each other in one file).
+//!
+//! ER001 is lockfile-free; the rule fires from AIR alone. Future rules will
+//! consume the (currently empty) [`lockfile_schema::ErSection`].
 
 // ot: canonical
 
@@ -29,14 +32,13 @@ impl Paradigm for ErrorTaxonomy {
         ER_PREFIX
     }
     fn init(&self, _air: &AirWorkspace) -> serde_json::Value {
+        // No automatic inference yet — ER001 is heuristic and lockfile-free.
+        // ER002+ may populate accepted-error entries here.
         serde_json::Value::Null
     }
-    fn check(
-        &self,
-        _air: &AirWorkspace,
-        _lockfile: &Lockfile,
-        _mode: CheckMode,
-    ) -> Vec<Diagnostic> {
-        Vec::new()
+    fn check(&self, air: &AirWorkspace, lockfile: &Lockfile, mode: CheckMode) -> Vec<Diagnostic> {
+        let section: lockfile_schema::ErSection =
+            lockfile.paradigm_section(ER_PREFIX).unwrap_or_default();
+        rules::er001(air, &section, mode)
     }
 }

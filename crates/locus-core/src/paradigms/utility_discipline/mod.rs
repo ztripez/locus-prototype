@@ -1,11 +1,14 @@
 //! UT — Utility / Shared Module Discipline.
 //!
-//! Spec: `docs/PARADIGMS.md` §"Paradigm 11: Utility / Shared Module Discipline".
+//! Spec: `docs/PARADIGMS.md` §"Paradigm 11: Utility / Shared Module
+//! Discipline". Reads declared utility module patterns from
+//! `paradigms.UT.utility_paths` in `locus.lock` and flags public types
+//! defined inside any matching module — utility modules are by definition
+//! domain-free, and a public type carries semantics that should live in a
+//! domain/feature module instead.
 //!
-//! Stub for parallel implementation. Fill in `lockfile_schema.rs` with the
-//! section type, `rules.rs` with rule functions, and (optionally) an
-//! `edit.rs` for CLI mutators. Wire rule dispatch into `check` when the
-//! first rule lands.
+//! Phase scope so far:
+//! - UT001: utility module defines a public type.
 
 // ot: canonical
 
@@ -14,6 +17,7 @@ use crate::diagnostics::{CheckMode, Diagnostic};
 use crate::lockfile::Lockfile;
 use locus_air::AirWorkspace;
 
+pub mod edit;
 pub mod lockfile_schema;
 pub mod rules;
 
@@ -29,14 +33,13 @@ impl Paradigm for UtilityDiscipline {
         UT_PREFIX
     }
     fn init(&self, _air: &AirWorkspace) -> serde_json::Value {
+        // Utility status is a user assertion, not an inference. `init` returns
+        // an empty section; the user adds patterns via `locus ut add-utility-path`.
         serde_json::Value::Null
     }
-    fn check(
-        &self,
-        _air: &AirWorkspace,
-        _lockfile: &Lockfile,
-        _mode: CheckMode,
-    ) -> Vec<Diagnostic> {
-        Vec::new()
+    fn check(&self, air: &AirWorkspace, lockfile: &Lockfile, mode: CheckMode) -> Vec<Diagnostic> {
+        let section: lockfile_schema::UtSection =
+            lockfile.paradigm_section(UT_PREFIX).unwrap_or_default();
+        rules::ut001(air, &section, mode)
     }
 }

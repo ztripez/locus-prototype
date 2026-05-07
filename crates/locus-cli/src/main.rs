@@ -14,6 +14,9 @@ use locus_core::paradigms::one_truth::{
     accept::{accept_boundary, accept_canonical},
     lockfile_schema::OtSection,
 };
+use locus_core::paradigms::utility_discipline::{
+    UT_PREFIX, edit::add_utility_path, lockfile_schema::UtSection,
+};
 use locus_core::{CheckMode, Diagnostic, Lockfile, Severity, registry};
 
 // ot: boundary cli.invocation cli
@@ -39,6 +42,25 @@ enum Command {
     /// Manage DG (Dependency Graph) declarations in `locus.lock`.
     #[command(subcommand)]
     Dg(DgCommand),
+    /// Manage UT (Utility / Shared Module Discipline) declarations in `locus.lock`.
+    #[command(subcommand)]
+    Ut(UtCommand),
+}
+
+// ot: boundary cli.ut cli
+#[derive(Subcommand, Debug)]
+enum UtCommand {
+    /// Mark a module pattern as a utility module (UT001).
+    AddUtilityPath(UtAddUtilityPathArgs),
+}
+
+// ot: boundary cli.ut-add-utility-path cli
+#[derive(clap::Args, Debug)]
+struct UtAddUtilityPathArgs {
+    /// Module pattern matching utility modules.
+    pattern: String,
+    #[arg(long, default_value = ".")]
+    workspace: PathBuf,
 }
 
 // ot: boundary cli.dg cli
@@ -185,7 +207,35 @@ fn main() -> Result<()> {
         Command::Check(args) => check(args),
         Command::Accept(cmd) => accept(cmd),
         Command::Dg(cmd) => dg(cmd),
+        Command::Ut(cmd) => ut(cmd),
     }
+}
+
+fn ut(cmd: UtCommand) -> Result<()> {
+    match cmd {
+        UtCommand::AddUtilityPath(args) => ut_add_utility_path(args),
+    }
+}
+
+fn ut_add_utility_path(args: UtAddUtilityPathArgs) -> Result<()> {
+    let mut lockfile = Lockfile::load_or_empty(&args.workspace)
+        .with_context(|| format!("load lockfile from {}", args.workspace.display()))?;
+    let mut section: UtSection = lockfile
+        .paradigm_section(UT_PREFIX)
+        .context("UT lockfile section is malformed")?;
+
+    add_utility_path(&mut section, &args.pattern)
+        .with_context(|| format!("add utility path `{}`", args.pattern))?;
+
+    let value = serde_json::to_value(&section).context("serialize UT section")?;
+    lockfile.paradigms.insert(UT_PREFIX.to_string(), value);
+    let written = lockfile
+        .save(&args.workspace)
+        .with_context(|| format!("write lockfile to {}", args.workspace.display()))?;
+
+    println!("added utility path pattern `{}`", args.pattern);
+    println!("updated {}", written.display());
+    Ok(())
 }
 
 fn dg(cmd: DgCommand) -> Result<()> {
