@@ -179,3 +179,81 @@ fn no_ot002_for_accepted_canonical_or_boundary() {
         );
     }
 }
+
+#[test]
+fn baseline_fixture_has_no_ot001() {
+    // The fixture has exactly one `// ot: canonical` annotation. OT001 must
+    // not fire on it; OT001 firing here would mean the cluster has accidentally
+    // promoted a second canonical, which is a regression in inference.
+    let air = locus_rust::scan(&fixture_path()).expect("scan succeeds");
+    let lockfile = Lockfile::empty();
+    let mut diags = Vec::new();
+    for paradigm in registry() {
+        diags.extend(paradigm.check(&air, &lockfile, CheckMode::Human));
+    }
+    let ot001: Vec<_> = diags.iter().filter(|d| d.rule_id == "OT001").collect();
+    assert!(
+        ot001.is_empty(),
+        "OT001 must not fire on the baseline fixture; got {ot001:?}"
+    );
+}
+
+#[test]
+fn ot006_fires_on_unaccepted_conversion_after_partial_lockfile() {
+    // Build a lockfile that has User + UserDto accepted but NO converters.
+    // The fixture's `impl TryFrom<UserDto> for User` and `map_user` both go
+    // between accepted endpoints, so OT006 should fire on each.
+    let air = locus_rust::scan(&fixture_path()).expect("scan succeeds");
+    let mut lockfile = Lockfile::empty();
+    let section = serde_json::json!({
+        "concepts": {
+            "user": {
+                "canonical": { "symbol": "sample_crate::identity::User", "source": "accepted" },
+                "boundaries": [
+                    { "symbol": "sample_crate::dto::UserDto", "boundary": "api.v1", "source": "accepted" }
+                ],
+                "converters": []
+            }
+        }
+    });
+    lockfile.paradigms.insert(OT_PREFIX.to_string(), section);
+
+    let mut diags = Vec::new();
+    for p in registry() {
+        diags.extend(p.check(&air, &lockfile, CheckMode::Human));
+    }
+    let ot006: Vec<_> = diags.iter().filter(|d| d.rule_id == "OT006").collect();
+    assert_eq!(
+        ot006.len(),
+        2,
+        "expected OT006 on both fixture conversions when the lockfile has no converters; got {ot006:?}"
+    );
+    assert!(ot006.iter().any(|d| d.message.contains("TryFrom")));
+    assert!(ot006.iter().any(|d| d.message.contains("map_user")));
+    assert!(ot006.iter().all(|d| d.severity == Severity::Warning));
+}
+
+#[test]
+fn ot006_quiet_after_init_promotes_converters() {
+    // When init is run, both fixture converters get promoted into the
+    // lockfile, so OT006 must NOT fire on the fixture.
+    let air = locus_rust::scan(&fixture_path()).expect("scan succeeds");
+    let registry = registry();
+    let mut lockfile = Lockfile::empty();
+    for p in &registry {
+        let section = p.init(&air);
+        lockfile
+            .paradigms
+            .insert(p.rule_prefix().to_string(), section);
+    }
+
+    let mut diags = Vec::new();
+    for p in &registry {
+        diags.extend(p.check(&air, &lockfile, CheckMode::Human));
+    }
+    let ot006: Vec<_> = diags.iter().filter(|d| d.rule_id == "OT006").collect();
+    assert!(
+        ot006.is_empty(),
+        "init should auto-accept the fixture converters; got {ot006:?}"
+    );
+}

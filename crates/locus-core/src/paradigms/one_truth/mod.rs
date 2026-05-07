@@ -48,6 +48,9 @@ impl Paradigm for OneTruth {
             .paradigm_section(OT_PREFIX)
             .unwrap_or_else(|_| lockfile_schema::OtSection::default());
         let clusters = infer::cluster_concepts_with_lockfile(air, &section);
-        rules::ot002(&clusters, mode)
+        let mut out = rules::ot001(&clusters, mode);
+        out.extend(rules::ot002(&clusters, mode));
+        out.extend(rules::ot006(air, &section, mode));
+        out
     }
 }
