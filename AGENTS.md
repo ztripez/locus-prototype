@@ -14,7 +14,7 @@ This file is the per-repo dev-handoff for Claude Code (and other agents — `CLA
 Two paradigms shipping:
 
 - **OT** (Canonical Domain Ownership) — OT001, OT002, OT003, OT004, OT005, OT006, OT007 all implemented. End-to-end wiring: AIR emission, paradigm host, lockfile, `locus init / accept canonical|boundary / check` CLI.
-- **DG** (Dependency Graph / Direction) — DG001 (forbidden import) implemented. Lockfile carries `forbidden_edges` with `from`/`to` glob patterns; the user declares which directional crossings are forbidden, DG001 catches them.
+- **DG** (Dependency Graph / Direction) — DG001 (forbidden import) and DG002 (cross-crate 2-cycle) implemented. Lockfile carries `forbidden_edges` with `from`/`to` glob patterns; CLI mutator: `locus dg forbid-edge --from <pat> --to <pat> [--reason …]`.
 
 Locus's own source is annotated; `locus check --workspace .` is clean.
 
@@ -100,6 +100,9 @@ locus init --workspace .
 # Onboard a codebase that has no `// ot:` annotations yet.
 locus accept canonical pkg::module::Type [--concept <id>]
 locus accept boundary  pkg::module::Dto  --concept <id> [--boundary <name>]
+
+# Declare DG forbidden edges (architectural direction).
+locus dg forbid-edge --from "pkg::domain::*" --to "pkg::api::*" [--reason "..."]
 
 # Run all enabled paradigms; exit non-zero on Fatal.
 locus check --workspace .                # human mode (warnings)

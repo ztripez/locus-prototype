@@ -4,6 +4,9 @@ use std::path::PathBuf;
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
+use locus_core::paradigms::dependency_graph::{
+    DG_PREFIX, edit::forbid_edge, lockfile_schema::DgSection,
+};
 use locus_core::paradigms::one_truth::{
     OT_PREFIX,
     accept::{accept_boundary, accept_canonical},
@@ -31,6 +34,35 @@ enum Command {
     /// Record a symbol's accepted ownership in `locus.lock` (OT paradigm).
     #[command(subcommand)]
     Accept(AcceptCommand),
+    /// Manage DG (Dependency Graph) declarations in `locus.lock`.
+    #[command(subcommand)]
+    Dg(DgCommand),
+}
+
+// ot: boundary cli.dg cli
+#[derive(Subcommand, Debug)]
+enum DgCommand {
+    /// Forbid imports matching `from` -> `to` patterns.
+    ForbidEdge(DgForbidEdgeArgs),
+}
+
+// ot: boundary cli.dg-forbid-edge cli
+#[derive(clap::Args, Debug)]
+struct DgForbidEdgeArgs {
+    /// Module pattern of the importer, e.g. `lore::domain::*`.
+    #[arg(long)]
+    from: String,
+    /// Pattern of the import path the importer must not reach.
+    #[arg(long)]
+    to: String,
+    /// Optional reason — surfaced in DG001 diagnostics.
+    #[arg(long)]
+    reason: Option<String>,
+    /// Update the reason on an existing edge instead of erroring.
+    #[arg(long)]
+    force: bool,
+    #[arg(long, default_value = ".")]
+    workspace: PathBuf,
 }
 
 // ot: boundary cli.accept cli
@@ -118,7 +150,49 @@ fn main() -> Result<()> {
         Command::Init(args) => init(args),
         Command::Check(args) => check(args),
         Command::Accept(cmd) => accept(cmd),
+        Command::Dg(cmd) => dg(cmd),
     }
+}
+
+fn dg(cmd: DgCommand) -> Result<()> {
+    match cmd {
+        DgCommand::ForbidEdge(args) => dg_forbid_edge(args),
+    }
+}
+
+fn dg_forbid_edge(args: DgForbidEdgeArgs) -> Result<()> {
+    let mut lockfile = Lockfile::load_or_empty(&args.workspace)
+        .with_context(|| format!("load lockfile from {}", args.workspace.display()))?;
+    let mut section: DgSection = lockfile
+        .paradigm_section(DG_PREFIX)
+        .context("DG lockfile section is malformed")?;
+
+    forbid_edge(
+        &mut section,
+        &args.from,
+        &args.to,
+        args.reason.as_deref(),
+        args.force,
+    )
+    .with_context(|| format!("forbid edge {} -> {}", args.from, args.to))?;
+
+    let value = serde_json::to_value(&section).context("serialize DG section")?;
+    lockfile.paradigms.insert(DG_PREFIX.to_string(), value);
+    let written = lockfile
+        .save(&args.workspace)
+        .with_context(|| format!("write lockfile to {}", args.workspace.display()))?;
+
+    println!(
+        "forbade edge `{}` -> `{}`{}",
+        args.from,
+        args.to,
+        args.reason
+            .as_deref()
+            .map(|r| format!(" (reason: `{r}`)"))
+            .unwrap_or_default()
+    );
+    println!("updated {}", written.display());
+    Ok(())
 }
 
 fn accept(cmd: AcceptCommand) -> Result<()> {

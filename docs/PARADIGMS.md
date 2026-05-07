@@ -472,6 +472,14 @@ For every `AirItem::Import` in every file, walk the lockfile's `forbidden_edges`
 
 Always Fatal: a forbidden edge is a directional violation declared by the user themselves.
 
+#### DG002 — Dependency cycle (2-cycle)
+
+Build a crate-level edge set from every `AirImport`. If both `(A, B)` and `(B, A)` edges exist (i.e. a file in crate A imports from crate B and a file in crate B imports from crate A), DG002 fires once per direction.
+
+Phase-2 scope is 2-cycles only; longer cycles (A → B → C → A) are detected by running an SCC algorithm over the edge set, which is a polish item once the simpler form proves useful in practice.
+
+Always Fatal: a cycle is structural and breaks layered ownership.
+
 ### Lockfile shape
 
 ```json
@@ -496,7 +504,20 @@ Pattern syntax (intentionally minimal in this phase):
 - `foo::*` — `foo` itself or any descendant
 - `*` — anything
 
-`init` for DG is a no-op — there's no inference that can decide "domain shouldn't reach api" for a project; the user has to declare that intent. A future report-only `locus dg snapshot` could enumerate the current import graph as a starting point, but populating `forbidden_edges` is a human decision.
+`init` for DG is a no-op — there's no inference that can decide "domain shouldn't reach api" for a project; the user has to declare that intent.
+
+The CLI ergonomic for adding edges is:
+
+```bash
+locus dg forbid-edge \
+  --from "lore::domain::*" \
+  --to "lore::api::*" \
+  --reason "domain must not depend on transport"
+```
+
+This loads the lockfile, validates the patterns, and writes a new entry under `paradigms.DG.forbidden_edges`. Duplicate edges are rejected unless `--force` is passed (which updates the reason).
+
+A future report-only `locus dg snapshot` could enumerate the current import graph as a starting point, but populating `forbidden_edges` is a human decision.
 
 ---
 

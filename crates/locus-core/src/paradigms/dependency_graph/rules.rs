@@ -3,11 +3,14 @@
 //! Implemented:
 //! - [`dg001`]: forbidden import (importer matches a forbidden edge's `from`
 //!   pattern AND the imported path matches the `to` pattern)
+//! - [`dg002`]: cross-crate 2-cycle (A imports B and B imports A)
 //!
-//! Future: DG002 (cyclic dependency between modules), DG003 (cross-feature
+//! Future: DG002 generalised to N-cycles via Tarjan SCCs, DG003 (cross-feature
 //! internals reach), DG004 (shared module reaching feature-specific symbol).
 
-use locus_air::{AirItem, AirWorkspace};
+use std::collections::{BTreeMap, BTreeSet};
+
+use locus_air::{AirItem, AirSpan, AirWorkspace};
 
 use super::lockfile_schema::{DgSection, matches_pattern};
 use crate::diagnostics::{CheckMode, Diagnostic, Severity};
@@ -72,6 +75,115 @@ pub fn dg001(air: &AirWorkspace, section: &DgSection, mode: CheckMode) -> Vec<Di
         }
     }
     out
+}
+
+/// DG002 — dependency cycle across crates (2-cycle).
+///
+/// Builds a crate-level edge set from every `AirImport`: each edge is
+/// `(importer_crate, imported_crate)` plus a representative span. If both
+/// `(A, B)` and `(B, A)` exist, the pair forms a cycle and DG002 fires.
+///
+/// Phase-2 scope: 2-cycles only. Longer cycles (A→B→C→A) require running
+/// Tarjan's SCC on the edge set; that's a polish item once the simpler form
+/// proves useful. The diagnostic is emitted twice per cycle — one for each
+/// direction — so the user sees the violating import in each crate.
+///
+/// Always Fatal: a cycle is structural and breaks layered ownership.
+pub fn dg002(air: &AirWorkspace, mode: CheckMode) -> Vec<Diagnostic> {
+    let edges = collect_crate_edges(air);
+    if edges.is_empty() {
+        return Vec::new();
+    }
+    let mut out = Vec::new();
+    let mut seen: BTreeSet<(String, String)> = BTreeSet::new();
+    for ((a, b), evidence) in &edges {
+        if seen.contains(&(a.clone(), b.clone())) {
+            continue;
+        }
+        let Some(reverse) = edges.get(&(b.clone(), a.clone())) else {
+            continue;
+        };
+        // Mark both directions reported so we don't process the (b, a) entry again.
+        seen.insert((a.clone(), b.clone()));
+        seen.insert((b.clone(), a.clone()));
+        out.push(cycle_diagnostic(a, b, evidence, mode));
+        out.push(cycle_diagnostic(b, a, reverse, mode));
+    }
+    out
+}
+
+#[derive(Debug, Clone)]
+struct EdgeEvidence {
+    file_path: String,
+    span: AirSpan,
+    import_path: String,
+}
+
+fn collect_crate_edges(air: &AirWorkspace) -> BTreeMap<(String, String), EdgeEvidence> {
+    let mut edges: BTreeMap<(String, String), EdgeEvidence> = BTreeMap::new();
+    for pkg in &air.packages {
+        for file in &pkg.files {
+            let Some(module_path) = file.module_path.as_deref() else {
+                continue;
+            };
+            let importer = first_segment(module_path);
+            if importer.is_empty() {
+                continue;
+            }
+            for item in &file.items {
+                let AirItem::Import(imp) = item else {
+                    continue;
+                };
+                let imported = first_segment(&imp.path);
+                if imported.is_empty() || imported == importer {
+                    continue;
+                }
+                edges
+                    .entry((importer.to_string(), imported.to_string()))
+                    .or_insert_with(|| EdgeEvidence {
+                        file_path: file.path.clone(),
+                        span: imp.span.clone(),
+                        import_path: imp.path.clone(),
+                    });
+            }
+        }
+    }
+    edges
+}
+
+fn first_segment(path: &str) -> &str {
+    path.split("::").next().unwrap_or("").trim()
+}
+
+fn cycle_diagnostic(
+    importer: &str,
+    imported: &str,
+    evidence: &EdgeEvidence,
+    mode: CheckMode,
+) -> Diagnostic {
+    Diagnostic {
+        rule_id: "DG002".to_string(),
+        severity: mode.elevate(Severity::Fatal),
+        span: evidence.span.clone(),
+        concept: None,
+        message: format!(
+            "dependency cycle: `{importer}` imports `{}` while `{imported}` imports back",
+            evidence.import_path
+        ),
+        why: vec![
+            format!(
+                "`{importer}` -> `{imported}` (via `{}`)",
+                evidence.import_path
+            ),
+            format!("`{imported}` -> `{importer}` is also present"),
+            format!("evidence import in `{}`", evidence.file_path),
+        ],
+        suggested_fix: Some(
+            "break the cycle by extracting a shared trait/port crate, or restructure ownership \
+             so one direction is implementation-side only and goes through a port"
+                .into(),
+        ),
+    }
 }
 
 #[cfg(test)]
@@ -169,6 +281,111 @@ mod tests {
             1,
             "overlapping forbidden edges should not double-report; got {diags:?}"
         );
+    }
+
+    // ---- DG002 ----
+
+    type FileSpec<'a> = (&'a str, &'a str, Vec<&'a str>);
+    type PkgSpec<'a> = (&'a str, Vec<FileSpec<'a>>);
+
+    fn air_with_pkgs(pkgs: Vec<PkgSpec<'_>>) -> AirWorkspace {
+        // Each pkg is (name, [(file_path, module_path, imports)]).
+        AirWorkspace {
+            schema_version: AIR_SCHEMA_VERSION,
+            packages: pkgs
+                .into_iter()
+                .map(|(name, files)| AirPackage {
+                    name: name.into(),
+                    version: "0".into(),
+                    root_dir: "/".into(),
+                    files: files
+                        .into_iter()
+                        .map(|(path, module, imports)| AirFile {
+                            path: path.into(),
+                            module_path: Some(module.into()),
+                            items: imports.into_iter().map(import).collect(),
+                            hints: Vec::new(),
+                            parse_error: None,
+                        })
+                        .collect(),
+                })
+                .collect(),
+        }
+    }
+
+    #[test]
+    fn dg002_fires_on_two_crate_cycle() {
+        // a's file imports something in b; b's file imports something in a.
+        let air = air_with_pkgs(vec![
+            ("a", vec![("a/src/lib.rs", "a", vec!["b::Type1"])]),
+            ("b", vec![("b/src/lib.rs", "b", vec!["a::Type2"])]),
+        ]);
+        let diags = dg002(&air, CheckMode::Human);
+        assert_eq!(
+            diags.len(),
+            2,
+            "one diagnostic per cycle direction; got {diags:?}"
+        );
+        for d in &diags {
+            assert_eq!(d.rule_id, "DG002");
+            assert_eq!(d.severity, Severity::Fatal);
+        }
+        let messages: Vec<&str> = diags.iter().map(|d| d.message.as_str()).collect();
+        assert!(
+            messages
+                .iter()
+                .any(|m| m.contains("`a` imports `b::Type1`"))
+        );
+        assert!(
+            messages
+                .iter()
+                .any(|m| m.contains("`b` imports `a::Type2`"))
+        );
+    }
+
+    #[test]
+    fn dg002_silent_when_only_one_direction() {
+        let air = air_with_pkgs(vec![
+            ("a", vec![("a/src/lib.rs", "a", vec!["b::Type"])]),
+            ("b", vec![("b/src/lib.rs", "b", vec![])]),
+        ]);
+        assert!(dg002(&air, CheckMode::Human).is_empty());
+    }
+
+    #[test]
+    fn dg002_ignores_intra_crate_self_loops() {
+        // a's file imports a::other — same crate, not a cycle.
+        let air = air_with_pkgs(vec![(
+            "a",
+            vec![("a/src/lib.rs", "a", vec!["a::other::Thing"])],
+        )]);
+        assert!(dg002(&air, CheckMode::Human).is_empty());
+    }
+
+    #[test]
+    fn dg002_finds_multiple_cycles_independently() {
+        let air = air_with_pkgs(vec![
+            ("a", vec![("a/src/lib.rs", "a", vec!["b::T", "c::T"])]),
+            ("b", vec![("b/src/lib.rs", "b", vec!["a::T"])]),
+            ("c", vec![("c/src/lib.rs", "c", vec!["a::T"])]),
+        ]);
+        let diags = dg002(&air, CheckMode::Human);
+        // Two separate 2-cycles (a<->b, a<->c) → 4 diagnostics total.
+        assert_eq!(diags.len(), 4, "got {diags:?}");
+    }
+
+    #[test]
+    fn dg002_does_not_double_report_same_cycle() {
+        // Multiple imports in each direction shouldn't multiply diagnostics.
+        let air = air_with_pkgs(vec![
+            (
+                "a",
+                vec![("a/src/lib.rs", "a", vec!["b::T1", "b::T2", "b::T3"])],
+            ),
+            ("b", vec![("b/src/lib.rs", "b", vec!["a::U1", "a::U2"])]),
+        ]);
+        let diags = dg002(&air, CheckMode::Human);
+        assert_eq!(diags.len(), 2, "one diag per direction; got {diags:?}");
     }
 
     #[test]

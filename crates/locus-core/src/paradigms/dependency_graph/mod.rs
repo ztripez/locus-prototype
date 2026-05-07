@@ -21,6 +21,7 @@ use crate::diagnostics::{CheckMode, Diagnostic};
 use crate::lockfile::Lockfile;
 use locus_air::AirWorkspace;
 
+pub mod edit;
 pub mod lockfile_schema;
 pub mod rules;
 
@@ -44,6 +45,8 @@ impl Paradigm for DependencyGraph {
     fn check(&self, air: &AirWorkspace, lockfile: &Lockfile, mode: CheckMode) -> Vec<Diagnostic> {
         let section: lockfile_schema::DgSection =
             lockfile.paradigm_section(DG_PREFIX).unwrap_or_default();
-        rules::dg001(air, &section, mode)
+        let mut out = rules::dg001(air, &section, mode);
+        out.extend(rules::dg002(air, mode));
+        out
     }
 }
