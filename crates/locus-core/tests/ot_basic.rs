@@ -234,6 +234,79 @@ fn ot006_fires_on_unaccepted_conversion_after_partial_lockfile() {
 }
 
 #[test]
+fn ot003_fires_on_handler_after_init() {
+    // After `locus init`, the lockfile knows User canonical + UserDto boundary.
+    // The fixture's `handler::create_user` lives in a non-boundary file,
+    // isn't an accepted converter, and takes UserDto in its signature.
+    let air = locus_rust::scan(&fixture_path()).expect("scan succeeds");
+    let registry = registry();
+    let mut lockfile = Lockfile::empty();
+    for p in &registry {
+        lockfile
+            .paradigms
+            .insert(p.rule_prefix().to_string(), p.init(&air));
+    }
+
+    let mut diags = Vec::new();
+    for p in &registry {
+        diags.extend(p.check(&air, &lockfile, CheckMode::Human));
+    }
+    let ot003: Vec<_> = diags.iter().filter(|d| d.rule_id == "OT003").collect();
+    assert!(
+        ot003
+            .iter()
+            .any(|d| d.message.contains("create_user") && d.message.contains("UserDto")),
+        "expected OT003 on handler::create_user for UserDto; got {ot003:?}"
+    );
+    assert!(ot003.iter().all(|d| d.severity == Severity::Fatal));
+}
+
+#[test]
+fn ot004_fires_on_handler_after_init() {
+    // Same setup as OT003: the User { ... } literal inside `handler::create_user`
+    // is not in the owner module (identity.rs) and the function isn't an
+    // accepted converter — Fatal OT004.
+    let air = locus_rust::scan(&fixture_path()).expect("scan succeeds");
+    let registry = registry();
+    let mut lockfile = Lockfile::empty();
+    for p in &registry {
+        lockfile
+            .paradigms
+            .insert(p.rule_prefix().to_string(), p.init(&air));
+    }
+
+    let mut diags = Vec::new();
+    for p in &registry {
+        diags.extend(p.check(&air, &lockfile, CheckMode::Human));
+    }
+    let ot004: Vec<_> = diags.iter().filter(|d| d.rule_id == "OT004").collect();
+    assert!(
+        ot004.iter().any(|d| d.span.file.ends_with("handler.rs")
+            && d.message.contains("sample_crate::identity::User")),
+        "expected OT004 on handler::create_user constructing User; got {ot004:?}"
+    );
+}
+
+#[test]
+fn baseline_fixture_no_ot003_or_ot004_pre_init() {
+    // Without a populated lockfile, OT003/OT004 are silent regardless of how
+    // bad the source looks. This is the deliberate "stay out of the user's way
+    // until they've onboarded" behavior.
+    let air = locus_rust::scan(&fixture_path()).expect("scan succeeds");
+    let lockfile = Lockfile::empty();
+    let mut diags = Vec::new();
+    for p in registry() {
+        diags.extend(p.check(&air, &lockfile, CheckMode::Human));
+    }
+    assert!(
+        diags
+            .iter()
+            .all(|d| d.rule_id != "OT003" && d.rule_id != "OT004"),
+        "OT003/OT004 must stay silent without a populated lockfile; got {diags:?}"
+    );
+}
+
+#[test]
 fn ot006_quiet_after_init_promotes_converters() {
     // When init is run, both fixture converters get promoted into the
     // lockfile, so OT006 must NOT fire on the fixture.
