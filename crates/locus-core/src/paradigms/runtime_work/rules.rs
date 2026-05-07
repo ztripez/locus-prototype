@@ -14,7 +14,7 @@ use crate::diagnostics::{CheckMode, Diagnostic, Severity};
 
 /// RW001 — spawn outside the runtime-ownership boundary.
 ///
-/// For every `FactKind::SpawnsWork` fact produced by a loader, look up the
+/// For every `FactKind::SpawnedWork` fact produced by a loader, look up the
 /// targeted function's file and fire when the file's `module_path` does
 /// NOT match any pattern in `runtime_owner_paths`.
 ///
@@ -34,7 +34,7 @@ pub fn rw001(air: &AirWorkspace, section: &RwSection, mode: CheckMode) -> Vec<Di
 
     let mut out = Vec::new();
     for fact in &air.facts {
-        if fact.kind != FactKind::SpawnsWork {
+        if fact.kind != FactKind::SpawnedWork {
             continue;
         }
         let FactTarget::Function { symbol } = &fact.target else {
@@ -142,13 +142,14 @@ mod tests {
 
     fn spawn_fact(symbol: &str, reason: &str) -> AirFact {
         AirFact {
-            kind: FactKind::SpawnsWork,
+            kind: FactKind::SpawnedWork,
             target: FactTarget::Function {
                 symbol: symbol.into(),
             },
             source: "test".into(),
             confidence: 1.0,
             reasons: vec![reason.into()],
+            evidence: Some("tokio::spawn".into()),
         }
     }
 
@@ -240,22 +241,24 @@ mod tests {
             vec![func("crate::handler::cfg", "src/handler.rs", 5)],
             vec![
                 AirFact {
-                    kind: FactKind::ReadsEnv,
+                    kind: FactKind::ConfigRead,
                     target: FactTarget::Function {
                         symbol: "crate::handler::cfg".into(),
                     },
                     source: "test".into(),
                     confidence: 1.0,
                     reasons: Vec::new(),
+                    evidence: None,
                 },
                 AirFact {
-                    kind: FactKind::LogsStructured,
+                    kind: FactKind::Logging,
                     target: FactTarget::Function {
                         symbol: "crate::handler::cfg".into(),
                     },
                     source: "test".into(),
                     confidence: 1.0,
                     reasons: Vec::new(),
+                    evidence: None,
                 },
             ],
         );

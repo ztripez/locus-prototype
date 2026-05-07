@@ -50,7 +50,20 @@ use serde::{Deserialize, Serialize};
 ///   call-sites into normalized `FactKind` (`SpawnsWork`, `ReadsEnv`,
 ///   `LogsRaw`, `LogsStructured`, `NetworkCall`, `DbWrite`) facts that
 ///   paradigms (CF, RW, OB) consume.
-pub const AIR_SCHEMA_VERSION: u32 = 7;
+/// - **8**: realigns `FactKind` with the spec's normalized-fact vocabulary
+///   (`docs/PARADIGMS.md` §"Framework Knowledge and Sub-Paradigm Loaders").
+///   Renames: `SpawnsWork` → `SpawnedWork`, `ReadsEnv` → `ConfigRead`,
+///   `NetworkCall` → `ExternalIo`, `DbWrite` → `PersistenceWrite`.
+///   Collapses the `LogsRaw` / `LogsStructured` distinction into a single
+///   `Logging` kind — raw-vs-structured is policy (OB's lockfile
+///   `forbidden_log_targets` patterns), not a fact taxonomy.
+///   Adds spec-mandated future-fact variants the loader tier will produce
+///   over time: `BlockingCall`, `HotPath`, `RequestContext`, `BoundaryEntry`,
+///   `RuntimeStateOwner`, `BackgroundWorker`. Adds `AirFact.evidence:
+///   Option<String>` so consumers can match against the original callee
+///   path (e.g. OB001 filtering `Logging` facts by their `println` /
+///   `tracing::info` evidence).
+pub const AIR_SCHEMA_VERSION: u32 = 8;
 
 // ot: canonical
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -289,27 +302,68 @@ pub enum CallKind {
 pub struct AirFact {
     pub kind: FactKind,
     pub target: FactTarget,
-    /// Loader name that produced this fact, e.g. `"std-rt"`, `"reqwest-http"`.
+    /// Loader name that produced this fact, e.g. `"std-rt"`.
     pub source: String,
     pub confidence: f32,
     pub reasons: Vec<String>,
+    /// Original callee / matched-identifier text, when the fact derived
+    /// from a single call site. Lets paradigms filter facts by evidence
+    /// without re-walking AIR (e.g. OB001 keeping its `forbidden_log_targets`
+    /// pattern list against `Logging`-fact evidence). `None` for facts
+    /// derived by aggregation or whole-file inference.
+    #[serde(default)]
+    pub evidence: Option<String>,
 }
 
+/// Normalized architectural facts loaders produce.
+///
+/// Vocabulary aligned with `docs/PARADIGMS.md` §"Framework Knowledge
+/// and Sub-Paradigm Loaders" — these names are *architectural concepts*,
+/// not framework categories. A persistence write is a persistence write
+/// whether it came from `sqlx` or `redis` or filesystem code; an
+/// external-io call is the same fact whether it's `reqwest`, `tonic`,
+/// or `surf`. Loaders bridge specific frameworks → these normalized
+/// kinds; paradigms only ever see the normalized kinds.
 // ot: canonical
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub enum FactKind {
-    /// Function or call site that spawns concurrent work.
-    SpawnsWork,
-    /// Reads an environment variable.
-    ReadsEnv,
-    /// Raw print/dbg macro — bypasses structured logging.
-    LogsRaw,
-    /// Structured log macro (tracing/log/slog families).
-    LogsStructured,
-    /// Outbound network call (HTTP client, gRPC, etc.).
-    NetworkCall,
-    /// Database write or query.
-    DbWrite,
+    /// A function or call site that spawns concurrent work
+    /// (`spawned_work` in the spec). RW001's signal.
+    SpawnedWork,
+    /// A function reads behavior-shaping configuration data
+    /// (`config_read` in the spec). CF001's signal. Today this is just
+    /// env-var reads; future loaders will widen the source set.
+    ConfigRead,
+    /// Any logging primitive (`println!`, `dbg!`, `tracing::info!`,
+    /// `log::warn!`, …). The raw-vs-structured policy decision belongs
+    /// to OB001's `forbidden_log_targets` lockfile patterns, matched
+    /// against [`AirFact::evidence`].
+    Logging,
+    /// Outbound external IO — HTTP/gRPC/queue calls reaching outside
+    /// the process (`external_io` in the spec).
+    ExternalIo,
+    /// Persistence write — DB query, filesystem write, cache mutation
+    /// (`persistence_write` in the spec).
+    PersistenceWrite,
+    /// A blocking call inside a non-blocking / async context
+    /// (`blocking_call` in the spec). Reserved for a future loader; no
+    /// loader produces this yet.
+    BlockingCall,
+    /// A hot-path function — registered in a hot loop, frame system,
+    /// or per-request handler (`hot_path` in the spec). Reserved.
+    HotPath,
+    /// Function executing inside a request context (`request_context`).
+    /// Reserved for future framework loaders (axum/actix/rocket).
+    RequestContext,
+    /// Function or impl marked as a boundary entry — the public surface
+    /// where data crosses into the system (`boundary_entry`). Reserved.
+    BoundaryEntry,
+    /// Function/state owns a runtime resource (lock, channel, task
+    /// supervisor) (`runtime_state_owner`). Reserved.
+    RuntimeStateOwner,
+    /// Function declared as a background worker / job processor
+    /// (`background_worker`). Reserved.
+    BackgroundWorker,
 }
 
 // ot: canonical

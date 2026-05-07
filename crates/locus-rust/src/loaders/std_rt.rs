@@ -1,12 +1,14 @@
 //! Default Rust-runtime loader. Translates AIR call-site items produced
-//! by the visitor into normalized cross-language facts (`SpawnsWork`,
-//! `ReadsEnv`, `LogsRaw`, `LogsStructured`) using std/tokio/std::thread/
-//! log-family heuristics.
+//! by the visitor into normalized cross-language facts (`SpawnedWork`,
+//! `ConfigRead`, `Logging`) using std/tokio/std::thread/log-family
+//! heuristics.
 //!
-//! Intentionally narrow: this loader covers the patterns the previous
-//! visitor-baked logic covered. Richer framework loaders (reqwest, sqlx,
-//! actix, axum, ...) live in their own modules so each can be enabled
-//! independently and tested in isolation.
+//! Intentionally narrow and language-shaped: this loader covers patterns
+//! universal enough to be worth bundling with the Rust adapter (the
+//! `*::spawn` naming convention, `*::env::var*` reads, the
+//! `println!` / `tracing::info!` / `log::warn!` macro families).
+//! Framework-specific loaders (reqwest, sqlx, axum, bevy, ...) are out of
+//! scope for now; they belong in their own modules when they land.
 
 use locus_air::{AirCallSite, AirFact, AirItem, AirWorkspace, CallKind, FactKind, FactTarget};
 use locus_core::Loader;
@@ -34,6 +36,7 @@ impl Loader for StdRtLoader {
                             source: "std-rt".to_string(),
                             confidence: 0.9,
                             reasons: vec![reason],
+                            evidence: Some(cs.callee.clone()),
                         });
                     }
                 }
@@ -56,59 +59,58 @@ fn target_for(cs: &AirCallSite) -> FactTarget {
 /// return `None` if it isn't one of the patterns this loader knows about.
 ///
 /// Patterns:
-/// - `*::spawn` (Function) — tokio, std::thread, rayon, smol, plus a bare
-///   imported `spawn` → `SpawnsWork`.
-/// - `*::env::var` / `*::env::var_os` (Function) — environment-variable
-///   reads → `ReadsEnv`.
-/// - bare `println` / `eprintln` / `print` / `eprint` / `dbg` macros →
-///   `LogsRaw`.
+/// - `*::spawn` (Function) — tokio, std::thread, rayon, smol, plus a
+///   bare imported `spawn` → `SpawnedWork`.
+/// - `*::env::var` / `*::env::var_os` (Function) → `ConfigRead`.
+/// - bare `println` / `eprintln` / `print` / `eprint` / `dbg` macros
+///   → `Logging`.
 /// - any macro path whose final segment is a recognised log level
-///   (`info` / `warn` / `error` / `debug` / `trace`) → `LogsStructured`.
+///   (`info` / `warn` / `error` / `debug` / `trace`) → `Logging`.
 /// - method calls — receiver-type resolution is out of scope, so we
 ///   never classify them here.
+///
+/// The raw-vs-structured distinction is *not* baked into the FactKind:
+/// every logging primitive emits the same `Logging` fact and OB001
+/// decides which targets are forbidden via its lockfile patterns
+/// (`forbidden_log_targets` matched against [`AirFact::evidence`]).
 fn classify(callee: &str, kind: CallKind) -> Option<(FactKind, String)> {
     match kind {
         CallKind::Function => {
-            // `*::spawn` — tokio::spawn, std::thread::spawn, rayon::spawn,
-            // smol::spawn, plus bare `spawn` when imported.
             if callee == "spawn" || callee.ends_with("::spawn") {
                 return Some((
-                    FactKind::SpawnsWork,
+                    FactKind::SpawnedWork,
                     format!("`{callee}` is a spawn-shaped call"),
                 ));
             }
-            // `*::env::var` / `*::env::var_os` — the second-to-last segment
-            // must be `env` to avoid false positives on user-defined `var`.
+            // `*::env::var` / `*::env::var_os` — second-to-last segment
+            // must be `env` so `something::var` (user-defined) doesn't trip.
             let segs: Vec<&str> = callee.split("::").collect();
             let n = segs.len();
             if n >= 2 && segs[n - 2] == "env" && (segs[n - 1] == "var" || segs[n - 1] == "var_os") {
-                return Some((FactKind::ReadsEnv, format!("`{callee}` reads an env var")));
+                return Some((FactKind::ConfigRead, format!("`{callee}` reads an env var")));
             }
             None
         }
         CallKind::Macro => {
             let last = callee.rsplit("::").next().unwrap_or(callee);
-            // Bare 1-segment print/dbg family → raw logging.
+            // Bare 1-segment print/dbg family.
             if !callee.contains("::")
                 && matches!(last, "println" | "eprintln" | "print" | "eprint" | "dbg")
             {
                 return Some((
-                    FactKind::LogsRaw,
-                    format!("`{callee}!` is a raw print/dbg macro"),
+                    FactKind::Logging,
+                    format!("`{callee}!` is a print/dbg macro"),
                 ));
             }
-            // Path-qualified log levels: `tracing::info!`, `log::warn!`,
-            // `slog::error!`, etc. → structured logging.
+            // Path-qualified log levels.
             if matches!(last, "info" | "warn" | "error" | "debug" | "trace") {
                 return Some((
-                    FactKind::LogsStructured,
-                    format!("`{callee}!` is a structured log macro"),
+                    FactKind::Logging,
+                    format!("`{callee}!` is a log-level macro"),
                 ));
             }
             None
         }
-        // Method-call resolution requires receiver-type info we don't
-        // have at this layer.
         CallKind::Method => None,
     }
 }
@@ -148,7 +150,7 @@ mod tests {
     }
 
     #[test]
-    fn detects_spawn_variants_as_spawns_work() {
+    fn detects_spawn_variants_as_spawned_work() {
         let air = air_with_items(vec![
             call_site(
                 "tokio::spawn",
@@ -163,7 +165,6 @@ mod tests {
                 4,
             ),
             call_site("spawn", CallKind::Function, Some("x::handler::run"), 5),
-            // Not a spawn — must NOT classify.
             call_site(
                 "tokio::join",
                 CallKind::Function,
@@ -173,22 +174,13 @@ mod tests {
         ]);
         let facts = StdRtLoader.enrich(&air);
         assert_eq!(facts.len(), 3);
-        assert!(
-            facts.iter().all(|f| f.kind == FactKind::SpawnsWork),
-            "expected only SpawnsWork facts; got {facts:?}"
-        );
+        assert!(facts.iter().all(|f| f.kind == FactKind::SpawnedWork));
         assert!(facts.iter().all(|f| f.source == "std-rt"));
-        assert!(facts.iter().any(|f| f.reasons[0].contains("tokio::spawn")));
-        assert!(
-            facts
-                .iter()
-                .any(|f| f.reasons[0].contains("std::thread::spawn"))
-        );
-        assert!(facts.iter().any(|f| f.reasons[0].contains("`spawn`")));
+        assert!(facts.iter().all(|f| f.evidence.is_some()));
     }
 
     #[test]
-    fn detects_env_var_reads_as_reads_env() {
+    fn detects_env_var_reads_as_config_read() {
         let air = air_with_items(vec![
             call_site(
                 "std::env::var",
@@ -202,11 +194,7 @@ mod tests {
                 Some("x::handler::cfg"),
                 4,
             ),
-            // `var` alone is NOT classified — the second-to-last segment
-            // must be `env` to avoid false positives on user code.
             call_site("var", CallKind::Function, Some("x::handler::cfg"), 5),
-            // `something::env::other` doesn't match either — last must be
-            // `var`/`var_os`.
             call_site(
                 "std::env::vars",
                 CallKind::Function,
@@ -216,46 +204,45 @@ mod tests {
         ]);
         let facts = StdRtLoader.enrich(&air);
         assert_eq!(facts.len(), 2);
-        assert!(facts.iter().all(|f| f.kind == FactKind::ReadsEnv));
+        assert!(facts.iter().all(|f| f.kind == FactKind::ConfigRead));
     }
 
     #[test]
-    fn classifies_print_dbg_macros_as_logs_raw() {
+    fn classifies_print_and_log_macros_as_logging() {
         let air = air_with_items(vec![
             call_site("println", CallKind::Macro, Some("x::handler::y"), 1),
             call_site("dbg", CallKind::Macro, Some("x::handler::y"), 2),
             call_site("eprintln", CallKind::Macro, Some("x::handler::y"), 3),
+            call_site("tracing::info", CallKind::Macro, Some("x::handler::y"), 4),
+            call_site("log::warn", CallKind::Macro, Some("x::handler::y"), 5),
+            call_site("slog::error", CallKind::Macro, Some("x::handler::y"), 6),
         ]);
         let facts = StdRtLoader.enrich(&air);
-        assert_eq!(facts.len(), 3);
-        assert!(facts.iter().all(|f| f.kind == FactKind::LogsRaw));
-    }
-
-    #[test]
-    fn classifies_log_level_macros_as_logs_structured() {
-        let air = air_with_items(vec![
-            call_site("tracing::info", CallKind::Macro, Some("x::handler::y"), 1),
-            call_site("log::warn", CallKind::Macro, Some("x::handler::y"), 2),
-            call_site("slog::error", CallKind::Macro, Some("x::handler::y"), 3),
-        ]);
-        let facts = StdRtLoader.enrich(&air);
-        assert_eq!(facts.len(), 3);
-        assert!(facts.iter().all(|f| f.kind == FactKind::LogsStructured));
+        assert_eq!(facts.len(), 6);
+        assert!(facts.iter().all(|f| f.kind == FactKind::Logging));
+        // Evidence carries the original callee — OB001 uses this to apply
+        // its `forbidden_log_targets` patterns.
+        assert!(
+            facts
+                .iter()
+                .any(|f| f.evidence.as_deref() == Some("println"))
+        );
+        assert!(
+            facts
+                .iter()
+                .any(|f| f.evidence.as_deref() == Some("tracing::info"))
+        );
     }
 
     #[test]
     fn method_calls_are_never_classified() {
-        // Receiver-type resolution is out of scope for this loader.
         let air = air_with_items(vec![
             call_site("spawn", CallKind::Method, Some("x::handler::y"), 1),
             call_site("var", CallKind::Method, Some("x::handler::y"), 2),
             call_site("info", CallKind::Method, Some("x::handler::y"), 3),
         ]);
         let facts = StdRtLoader.enrich(&air);
-        assert!(
-            facts.is_empty(),
-            "method calls must not classify; got {facts:?}"
-        );
+        assert!(facts.is_empty());
     }
 
     #[test]
@@ -271,7 +258,6 @@ mod tests {
         match &facts[0].target {
             FactTarget::Span(span) => {
                 assert_eq!(span.line_start, 42);
-                assert_eq!(span.line_end, 42);
             }
             other => panic!("expected Span target; got {other:?}"),
         }

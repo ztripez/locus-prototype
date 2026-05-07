@@ -56,6 +56,7 @@ mod tests {
             source: source.to_string(),
             confidence: 0.9,
             reasons: Vec::new(),
+            evidence: None,
         }
     }
 
@@ -65,11 +66,11 @@ mod tests {
         let loaders: Vec<Box<dyn Loader>> = vec![
             Box::new(StaticLoader {
                 name: "first",
-                facts: vec![fact(FactKind::SpawnsWork, "first", "x::a")],
+                facts: vec![fact(FactKind::SpawnedWork, "first", "x::a")],
             }),
             Box::new(StaticLoader {
                 name: "second",
-                facts: vec![fact(FactKind::ReadsEnv, "second", "x::b")],
+                facts: vec![fact(FactKind::ConfigRead, "second", "x::b")],
             }),
         ];
         apply_loaders(&mut air, &loaders);
@@ -82,15 +83,16 @@ mod tests {
     fn apply_loaders_preserves_existing_facts() {
         let mut air = AirWorkspace::new(Vec::new());
         air.facts.push(AirFact {
-            kind: FactKind::LogsRaw,
+            kind: FactKind::Logging,
             target: FactTarget::Span(AirSpan::new("t.rs", 1, 1)),
             source: "preloaded".into(),
             confidence: 1.0,
             reasons: Vec::new(),
+            evidence: None,
         });
         let loaders: Vec<Box<dyn Loader>> = vec![Box::new(StaticLoader {
             name: "extra",
-            facts: vec![fact(FactKind::DbWrite, "extra", "x::c")],
+            facts: vec![fact(FactKind::PersistenceWrite, "extra", "x::c")],
         })];
         apply_loaders(&mut air, &loaders);
         assert_eq!(air.facts.len(), 2);

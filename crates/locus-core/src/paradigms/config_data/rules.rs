@@ -2,7 +2,7 @@
 //!
 //! Implemented:
 //! - [`cf001`]: environment-variable read outside the config layer. Reads
-//!   the workspace-level `AirFact` list — specifically `FactKind::ReadsEnv`
+//!   the workspace-level `AirFact` list — specifically `FactKind::ConfigRead`
 //!   facts produced by the std-rt loader (or any other loader that knows
 //!   about env-read patterns) — and pairs each with the file the targeted
 //!   function lives in.
@@ -14,7 +14,7 @@ use crate::diagnostics::{CheckMode, Diagnostic, Severity};
 
 /// CF001 — environment-variable read outside the config layer.
 ///
-/// For every `FactKind::ReadsEnv` fact produced by a loader, look up the
+/// For every `FactKind::ConfigRead` fact produced by a loader, look up the
 /// targeted function's file and fire when the file's `module_path` does
 /// *not* match any pattern in `config_paths`.
 ///
@@ -32,7 +32,7 @@ pub fn cf001(air: &AirWorkspace, section: &CfSection, mode: CheckMode) -> Vec<Di
     }
     let mut out = Vec::new();
     for fact in &air.facts {
-        if fact.kind != FactKind::ReadsEnv {
+        if fact.kind != FactKind::ConfigRead {
             continue;
         }
         let FactTarget::Function { symbol } = &fact.target else {
@@ -152,13 +152,14 @@ mod tests {
 
     fn env_fact(symbol: &str, reason: &str) -> AirFact {
         AirFact {
-            kind: FactKind::ReadsEnv,
+            kind: FactKind::ConfigRead,
             target: FactTarget::Function {
                 symbol: symbol.into(),
             },
             source: "test".into(),
             confidence: 1.0,
             reasons: vec![reason.into()],
+            evidence: Some("std::env::var".into()),
         }
     }
 
@@ -244,22 +245,24 @@ mod tests {
             vec![func("crate::handler::user::create", 20)],
             vec![
                 AirFact {
-                    kind: FactKind::SpawnsWork,
+                    kind: FactKind::SpawnedWork,
                     target: FactTarget::Function {
                         symbol: "crate::handler::user::create".into(),
                     },
                     source: "test".into(),
                     confidence: 1.0,
                     reasons: Vec::new(),
+                    evidence: None,
                 },
                 AirFact {
-                    kind: FactKind::LogsRaw,
+                    kind: FactKind::Logging,
                     target: FactTarget::Function {
                         symbol: "crate::handler::user::create".into(),
                     },
                     source: "test".into(),
                     confidence: 1.0,
                     reasons: Vec::new(),
+                    evidence: None,
                 },
             ],
         );

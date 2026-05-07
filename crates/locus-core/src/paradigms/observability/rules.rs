@@ -1,46 +1,59 @@
 //! OB rules.
 //!
 //! Implemented:
-//! - [`ob001`]: raw `println!` / `dbg!` (and equivalents) outside test,
-//!   example, or other observer-declared modules. The "agent stitched in
-//!   ad-hoc logs while patching" anti-pattern: raw print/debug macros bypass
-//!   any structured logging facility, leak to stdout/stderr in production,
-//!   and signal that observability isn't owned. Structured facilities like
-//!   `tracing::info!` / `log::warn!` are intentionally NOT flagged.
+//! - [`ob001`]: a `Logging` fact whose evidence (the callee path) matches
+//!   `forbidden_log_targets`, fired in a non-observer file. Default
+//!   forbidden set is the bare print/dbg macro family — `println!`,
+//!   `eprintln!`, `print!`, `eprint!`, `dbg!` — but the lockfile decides.
+//!   The raw-vs-structured distinction is a *user policy* (encoded as
+//!   patterns), not a fact taxonomy.
 
 use locus_air::{AirFact, AirItem, AirSpan, AirWorkspace, FactKind, FactTarget};
 
 use super::lockfile_schema::{ObSection, matches_pattern};
 use crate::diagnostics::{CheckMode, Diagnostic, Severity};
 
-/// OB001 — raw print/dbg in non-test, non-observer code.
+/// OB001 — forbidden logging primitive in a non-observer file.
 ///
-/// For every `FactKind::LogsRaw` fact produced by a loader, look up the
-/// targeted function's file and fire when the file's `module_path` does
-/// NOT match any pattern in `observer_paths`. `LogsStructured` is NEVER
-/// flagged — structured logging is the canonical path.
+/// For every `FactKind::Logging` fact, check whether the fact's
+/// [`AirFact::evidence`] matches any pattern in `forbidden_log_targets`.
+/// If yes, look up the targeted function's file and fire when the file's
+/// `module_path` does NOT match any pattern in `observer_paths`.
 ///
-/// Severity: Warning by default; Fatal under `--agent-strict`. The spec is
-/// explicit that observability-ownership violations are heuristic — a stray
-/// `println!` in scratch code shouldn't take CI down by default, but
-/// agent-introduced raw prints in domain code should be caught aggressively.
+/// Severity: Warning by default; Fatal under `--agent-strict`. The spec
+/// frames observability-ownership as heuristic — `println!` in scratch
+/// code shouldn't break CI by default, but agent-introduced raw prints
+/// in domain code should be caught aggressively.
 ///
 /// Silent until the user populates `observer_paths`. Same lockfile-driven
-/// posture as DG/MO/UT/CR/CX/... — the user declares which modules are
-/// observers before OB001 starts firing. The (currently vestigial)
-/// `forbidden_log_targets` field stays in the lockfile schema for future
-/// per-target customisation but is unused by OB001; the rule fires on
-/// every `LogsRaw` fact in non-observer files.
+/// posture as DG/MO/UT/CR/CX/... — the user declares observer modules
+/// before OB001 starts firing. The default `forbidden_log_targets` (the
+/// print/dbg family) is non-empty, so once `observer_paths` gets a single
+/// entry the rule starts working without further configuration.
 pub fn ob001(air: &AirWorkspace, section: &ObSection, mode: CheckMode) -> Vec<Diagnostic> {
     if section.observer_paths.is_empty() {
+        return Vec::new();
+    }
+    let forbidden = section.effective_forbidden_log_targets();
+    if forbidden.is_empty() {
         return Vec::new();
     }
 
     let mut out = Vec::new();
     for fact in &air.facts {
-        if fact.kind != FactKind::LogsRaw {
+        if fact.kind != FactKind::Logging {
             continue;
         }
+        // OB001 only flags loggers whose evidence (the callee path) matches
+        // a forbidden pattern. Loaders with no evidence (aggregate facts)
+        // are skipped — there's nothing to match against.
+        let Some(evidence) = fact.evidence.as_deref() else {
+            continue;
+        };
+        let Some(forbidden_pattern) = forbidden.iter().find(|pat| matches_pattern(pat, evidence))
+        else {
+            continue;
+        };
         let FactTarget::Function { symbol } = &fact.target else {
             continue;
         };
@@ -54,7 +67,15 @@ pub fn ob001(air: &AirWorkspace, section: &ObSection, mode: CheckMode) -> Vec<Di
         {
             continue;
         }
-        out.push(diagnostic_for(fact, symbol, module_path, fn_span, mode));
+        out.push(diagnostic_for(
+            fact,
+            symbol,
+            module_path,
+            fn_span,
+            evidence,
+            forbidden_pattern,
+            mode,
+        ));
     }
     out
 }
@@ -75,11 +96,14 @@ fn lookup_function<'a>(air: &'a AirWorkspace, symbol: &str) -> Option<(&'a str, 
     None
 }
 
+#[allow(clippy::too_many_arguments)]
 fn diagnostic_for(
     fact: &AirFact,
     symbol: &str,
     module_path: &str,
     fn_span: AirSpan,
+    evidence: &str,
+    forbidden_pattern: &str,
     mode: CheckMode,
 ) -> Diagnostic {
     let span = match &fact.target {
@@ -88,7 +112,7 @@ fn diagnostic_for(
     };
     let function_label = symbol;
     let why_reasons = if fact.reasons.is_empty() {
-        vec!["loader detected raw log macro".to_string()]
+        vec!["loader detected logging primitive".to_string()]
     } else {
         fact.reasons.clone()
     };
@@ -98,14 +122,17 @@ fn diagnostic_for(
         span,
         concept: None,
         message: format!(
-            "raw log call in `{module_path}` (fn `{function_label}`) — \
-             bypasses structured logging"
+            "logging call `{evidence}` in `{module_path}` (fn `{function_label}`) — \
+             matches `paradigms.OB.forbidden_log_targets` pattern `{forbidden_pattern}`"
         ),
         why: {
-            let mut w = vec![format!(
-                "module `{module_path}` does not match any \
-                 `paradigms.OB.observer_paths` pattern"
-            )];
+            let mut w = vec![
+                format!(
+                    "module `{module_path}` does not match any \
+                     `paradigms.OB.observer_paths` pattern"
+                ),
+                format!("evidence `{evidence}` matches forbidden pattern `{forbidden_pattern}`"),
+            ];
             for r in why_reasons {
                 w.push(r);
             }
@@ -114,10 +141,11 @@ fn diagnostic_for(
         },
         suggested_fix: Some(format!(
             "route this through the project's structured logging facility \
-             (e.g. `tracing::info!` / `log::warn!` with the accepted spans \
-             and fields), or, if `{module_path}` legitimately owns user-facing \
-             or test output, accept it via `paradigms.OB.observer_paths` in \
-             `locus.lock`"
+             (e.g. `tracing::info!` / `log::warn!` with accepted spans and \
+             fields), or, if `{module_path}` legitimately owns user-facing \
+             or test output, accept it via `paradigms.OB.observer_paths`. \
+             To allow this specific target everywhere, remove `{forbidden_pattern}` \
+             from `paradigms.OB.forbidden_log_targets`."
         )),
     }
 }
@@ -143,27 +171,16 @@ mod tests {
         })
     }
 
-    fn raw_log_fact(symbol: &str, reason: &str) -> AirFact {
+    fn log_fact(symbol: &str, evidence: &str, reason: &str) -> AirFact {
         AirFact {
-            kind: FactKind::LogsRaw,
+            kind: FactKind::Logging,
             target: FactTarget::Function {
                 symbol: symbol.into(),
             },
             source: "test".into(),
             confidence: 1.0,
             reasons: vec![reason.into()],
-        }
-    }
-
-    fn structured_log_fact(symbol: &str, reason: &str) -> AirFact {
-        AirFact {
-            kind: FactKind::LogsStructured,
-            target: FactTarget::Function {
-                symbol: symbol.into(),
-            },
-            source: "test".into(),
-            confidence: 1.0,
-            reasons: vec![reason.into()],
+            evidence: Some(evidence.into()),
         }
     }
 
@@ -203,8 +220,9 @@ mod tests {
         let air = air_with(
             Some("x::domain::user"),
             vec![func("x::domain::user::greet", "t.rs", 5)],
-            vec![raw_log_fact(
+            vec![log_fact(
                 "x::domain::user::greet",
+                "println",
                 "`println!` is a raw print/dbg macro",
             )],
         );
@@ -235,13 +253,15 @@ mod tests {
     }
 
     #[test]
-    fn ob001_quiet_on_logs_structured_facts() {
-        // `LogsStructured` is the canonical facility — never flagged.
+    fn ob001_quiet_on_non_forbidden_log_targets() {
+        // `tracing::info` doesn't match any forbidden_log_targets pattern,
+        // so OB001 stays silent — the canonical structured facility.
         let air = air_with(
             Some("x::domain::user"),
             vec![func("x::domain::user::greet", "t.rs", 5)],
-            vec![structured_log_fact(
+            vec![log_fact(
                 "x::domain::user::greet",
+                "tracing::info",
                 "`tracing::info!` is a structured log macro",
             )],
         );
@@ -253,7 +273,7 @@ mod tests {
         let air = air_with(
             Some("x::cli::main"),
             vec![func("x::cli::main::run", "t.rs", 5)],
-            vec![raw_log_fact("x::cli::main::run", "println")],
+            vec![log_fact("x::cli::main::run", "println", "println")],
         );
         let section = ObSection {
             observer_paths: vec!["x::cli::*".into()],
@@ -269,7 +289,7 @@ mod tests {
         let air = air_with(
             None,
             vec![func("anon::fn", "t.rs", 5)],
-            vec![raw_log_fact("anon::fn", "println")],
+            vec![log_fact("anon::fn", "println", "println")],
         );
         assert!(ob001(&air, &default_section(), CheckMode::Human).is_empty());
     }
@@ -279,7 +299,7 @@ mod tests {
         let air = air_with(
             Some("x::domain::user"),
             vec![func("x::domain::user::greet", "t.rs", 5)],
-            vec![raw_log_fact("x::domain::user::greet", "println")],
+            vec![log_fact("x::domain::user::greet", "println", "println")],
         );
         let diags = ob001(&air, &default_section(), CheckMode::AgentStrict);
         assert_eq!(diags.len(), 1);
@@ -296,11 +316,12 @@ mod tests {
                 func("x::domain::user::ok", "t.rs", 14),
             ],
             vec![
-                raw_log_fact("x::domain::user::greet", "println"),
-                raw_log_fact("x::domain::user::greet", "dbg"),
-                raw_log_fact("x::domain::user::oops", "eprintln"),
-                // LogsStructured is the canonical facility — never flagged.
-                structured_log_fact("x::domain::user::ok", "tracing::info"),
+                log_fact("x::domain::user::greet", "println", "println"),
+                log_fact("x::domain::user::greet", "dbg", "dbg"),
+                log_fact("x::domain::user::oops", "eprintln", "eprintln"),
+                // `tracing::info` is the canonical facility — never flagged
+                // because it doesn't match any forbidden_log_targets pattern.
+                log_fact("x::domain::user::ok", "tracing::info", "tracing::info"),
             ],
         );
         let diags = ob001(&air, &default_section(), CheckMode::Human);
@@ -312,7 +333,7 @@ mod tests {
         let air = air_with(
             Some("x::domain::user"),
             vec![func("x::domain::user::greet", "t.rs", 5)],
-            vec![raw_log_fact("x::domain::user::greet", "println")],
+            vec![log_fact("x::domain::user::greet", "println", "println")],
         );
         let section = ObSection {
             observer_paths: Vec::new(),
