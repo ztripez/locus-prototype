@@ -4,8 +4,25 @@
 //! trait. Paradigms share `Diagnostic` / `Lockfile` infrastructure but never
 //! depend on each other.
 
+pub mod abstraction_discipline;
+pub mod boundary_ownership;
+pub mod complexity_budget;
+pub mod composition_root;
+pub mod config_data;
+pub mod demand_driven;
 pub mod dependency_graph;
+pub mod documentation;
+pub mod error_taxonomy;
+pub mod failure_lineage;
+pub mod feature_ownership;
+pub mod module_ownership;
+pub mod observability;
 pub mod one_truth;
+pub mod port_adapter;
+pub mod responsibility;
+pub mod runtime_work;
+pub mod test_architecture;
+pub mod utility_discipline;
 
 use crate::diagnostics::{CheckMode, Diagnostic};
 use crate::lockfile::Lockfile;
@@ -28,12 +45,31 @@ pub trait Paradigm {
     fn check(&self, air: &AirWorkspace, lockfile: &Lockfile, mode: CheckMode) -> Vec<Diagnostic>;
 }
 
-/// All paradigms wired into this build of Locus. Phase 2 ships OT only; later
-/// phases extend the slice as `dependency_graph::DependencyGraph`,
-/// `boundary_ownership::BoundaryOwnership`, etc. land.
+/// All paradigms wired into this build of Locus. OT and DG are fully
+/// implemented; the remaining 17 are stubs awaiting per-paradigm
+/// implementation slices. Order: OT, DG, then alphabetical-by-prefix
+/// (AB, BO, CF, CR, CX, DA, DC, ER, FL, FO, MO, OB, PA, RM, RW, TA, UT)
+/// — preserves existing test expectations that key off OT/DG.
 pub fn registry() -> Vec<Box<dyn Paradigm>> {
     vec![
         Box::new(one_truth::OneTruth),
         Box::new(dependency_graph::DependencyGraph),
+        Box::new(abstraction_discipline::AbstractionDiscipline),
+        Box::new(boundary_ownership::BoundaryOwnership),
+        Box::new(config_data::ConfigData),
+        Box::new(composition_root::CompositionRoot),
+        Box::new(complexity_budget::ComplexityBudget),
+        Box::new(demand_driven::DemandDriven),
+        Box::new(documentation::Documentation),
+        Box::new(error_taxonomy::ErrorTaxonomy),
+        Box::new(failure_lineage::FailureLineage),
+        Box::new(feature_ownership::FeatureOwnership),
+        Box::new(module_ownership::ModuleOwnership),
+        Box::new(observability::Observability),
+        Box::new(port_adapter::PortAdapter),
+        Box::new(responsibility::Responsibility),
+        Box::new(runtime_work::RuntimeWork),
+        Box::new(test_architecture::TestArchitecture),
+        Box::new(utility_discipline::UtilityDiscipline),
     ]
 }
