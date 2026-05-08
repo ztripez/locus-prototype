@@ -21,6 +21,93 @@ pub fn cross_paradigm_suggestions(_air: &AirWorkspace, _lockfile: &Lockfile) -> 
     Vec::new()
 }
 
+/// A set of module-path globs grouped by detected architectural layer. The
+/// globs are returned in `<module>::*` form so paradigm setters can use
+/// them verbatim.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct DetectedLayers {
+    pub domain: Vec<String>,
+    pub api_or_boundary: Vec<String>,
+    pub application: Vec<String>,
+    pub composition: Vec<String>,
+    pub tests: Vec<String>,
+    pub utilities: Vec<String>,
+    pub config: Vec<String>,
+}
+
+pub fn detect_layers(air: &AirWorkspace) -> DetectedLayers {
+    use std::collections::BTreeSet;
+
+    let mut domain: BTreeSet<String> = BTreeSet::new();
+    let mut api: BTreeSet<String> = BTreeSet::new();
+    let mut application: BTreeSet<String> = BTreeSet::new();
+    let mut composition: BTreeSet<String> = BTreeSet::new();
+    let mut tests: BTreeSet<String> = BTreeSet::new();
+    let mut utilities: BTreeSet<String> = BTreeSet::new();
+    let mut config: BTreeSet<String> = BTreeSet::new();
+
+    for pkg in &air.packages {
+        for file in &pkg.files {
+            let Some(module) = file.module_path.as_deref() else {
+                continue;
+            };
+            for seg in module.split("::") {
+                match seg {
+                    "domain" | "core" | "model" | "models" => {
+                        domain.insert(layer_glob(module, seg));
+                    }
+                    "api" | "dto" | "dtos" | "transport" => {
+                        api.insert(layer_glob(module, seg));
+                    }
+                    "application" | "usecases" | "handlers" | "service" | "services" => {
+                        application.insert(layer_glob(module, seg));
+                    }
+                    "composition" | "wiring" | "bin" | "main" => {
+                        composition.insert(layer_glob(module, seg));
+                    }
+                    "tests" | "test_support" | "fixtures" => {
+                        tests.insert(layer_glob(module, seg));
+                    }
+                    "util" | "utils" | "common" | "helpers" => {
+                        utilities.insert(layer_glob(module, seg));
+                    }
+                    "config" | "settings" => {
+                        config.insert(layer_glob(module, seg));
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+
+    DetectedLayers {
+        domain: domain.into_iter().collect(),
+        api_or_boundary: api.into_iter().collect(),
+        application: application.into_iter().collect(),
+        composition: composition.into_iter().collect(),
+        tests: tests.into_iter().collect(),
+        utilities: utilities.into_iter().collect(),
+        config: config.into_iter().collect(),
+    }
+}
+
+/// Produce the `<prefix>::<seg>::*` glob from a module path that contains
+/// `<seg>` as one of its segments.
+fn layer_glob(module: &str, seg: &str) -> String {
+    let mut out = String::new();
+    for (i, s) in module.split("::").enumerate() {
+        if i > 0 {
+            out.push_str("::");
+        }
+        out.push_str(s);
+        if s == seg {
+            out.push_str("::*");
+            return out;
+        }
+    }
+    format!("{module}::*")
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Suggestion {
     pub category: SuggestionCategory,
@@ -225,5 +312,62 @@ mod aggregate_tests {
         assert_eq!(out[0].category, SuggestionCategory::Concept);
         assert_eq!(out[1].category, SuggestionCategory::Layer);
         assert_eq!(out[2].category, SuggestionCategory::ParadigmVacant);
+    }
+}
+
+#[cfg(test)]
+mod layer_detection_tests {
+    use super::*;
+    use locus_air::{AirFile, AirPackage, AirWorkspace};
+
+    fn pkg(name: &str, files: &[(&str, Option<&str>)]) -> AirPackage {
+        AirPackage {
+            name: name.into(),
+            version: "0.0.1".into(),
+            root_dir: format!("/tmp/{name}"),
+            files: files
+                .iter()
+                .map(|(p, m)| AirFile {
+                    path: (*p).into(),
+                    module_path: m.map(|s| s.to_string()),
+                    items: Vec::new(),
+                    hints: Vec::new(),
+                    parse_error: None,
+                    line_count: 1,
+                })
+                .collect(),
+        }
+    }
+
+    #[test]
+    fn detects_domain_modules_by_segment() {
+        let air = AirWorkspace::new(vec![pkg(
+            "x",
+            &[
+                ("src/user/domain.rs", Some("x::user::domain")),
+                ("src/user/api.rs", Some("x::user::api")),
+            ],
+        )]);
+        let layers = detect_layers(&air);
+        assert!(layers.domain.iter().any(|p| p == "x::user::domain::*"));
+        assert!(
+            layers
+                .api_or_boundary
+                .iter()
+                .any(|p| p == "x::user::api::*")
+        );
+    }
+
+    #[test]
+    fn returns_empty_when_no_conventions_match() {
+        let air = AirWorkspace::new(vec![pkg("x", &[("src/lib.rs", Some("x"))])]);
+        let layers = detect_layers(&air);
+        assert!(layers.domain.is_empty());
+        assert!(layers.api_or_boundary.is_empty());
+        assert!(layers.application.is_empty());
+        assert!(layers.tests.is_empty());
+        assert!(layers.utilities.is_empty());
+        assert!(layers.config.is_empty());
+        assert!(layers.composition.is_empty());
     }
 }
