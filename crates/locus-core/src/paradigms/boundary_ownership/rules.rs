@@ -10,8 +10,11 @@
 //! - [`bo004`]: canonical type carries a forbidden derive (e.g.
 //!   `Serialize`/`Deserialize`) — domain types should not be coupled to
 //!   serialization/schema frameworks.
+//! - [`bo005`]: domain function performs a persistence write
+//!   (`FactKind::PersistenceWrite`) — domain code must not write to storage
+//!   directly; invert the dependency through a port.
 
-use locus_air::{AirItem, AirWorkspace};
+use locus_air::{AirItem, AirSpan, AirWorkspace, FactKind, FactTarget};
 
 use super::lockfile_schema::{BoSection, matches_pattern};
 use crate::diagnostics::{CheckMode, Diagnostic, Severity};
@@ -313,10 +316,125 @@ pub fn bo004(air: &AirWorkspace, section: &BoSection, mode: CheckMode) -> Vec<Di
     out
 }
 
+/// BO005 — persistence write inside a domain function.
+///
+/// For every `FactKind::PersistenceWrite` fact whose target is a function
+/// symbol, look up the function's enclosing file and fire when **either**
+/// the file's `module_path` **or** the function symbol matches any pattern
+/// in `domain_paths`. The function-symbol check catches inline
+/// `mod tests {}` blocks: their symbols sit at a deeper path than the file
+/// (`pkg::mod::tests::case`), so a `*::tests::*` carve-out wouldn't reach
+/// them via the file-only check.
+///
+/// Severity: Fatal — same posture as BO001/BO002. This is a structural
+/// domain leak: the std-rt loader emits these for `std::fs::write`,
+/// `std::fs::create_dir*`, `std::fs::remove_*`, etc., and any of them
+/// inside a domain function couples the domain to the storage substrate.
+///
+/// Silent when `domain_paths` is empty (BO is opt-in by lockfile, like
+/// the rest of the paradigm). Non-`PersistenceWrite` facts and facts
+/// targeting files/spans (rather than function symbols) are skipped.
+pub fn bo005(air: &AirWorkspace, section: &BoSection, mode: CheckMode) -> Vec<Diagnostic> {
+    if section.domain_paths.is_empty() {
+        return Vec::new();
+    }
+    let mut out = Vec::new();
+    for fact in &air.facts {
+        if fact.kind != FactKind::PersistenceWrite {
+            continue;
+        }
+        let FactTarget::Function { symbol } = &fact.target else {
+            continue;
+        };
+        let Some((module_path, fn_span)) = lookup_function(air, symbol) else {
+            continue;
+        };
+        let Some(domain_pattern) = section
+            .domain_paths
+            .iter()
+            .find(|pat| matches_pattern(pat, module_path) || matches_pattern(pat, symbol))
+        else {
+            continue;
+        };
+        let evidence = fact.evidence.as_deref().unwrap_or("persistence write");
+        let span = match &fact.target {
+            FactTarget::Span(s) => s.clone(),
+            FactTarget::Function { .. } | FactTarget::File { .. } => fn_span,
+        };
+        let mut why = vec![format!(
+            "module `{module_path}` (or function `{symbol}`) matches \
+             domain_paths pattern `{domain_pattern}`"
+        )];
+        if fact.reasons.is_empty() {
+            why.push("loader detected persistence-write-shaped call".to_string());
+        } else {
+            for r in &fact.reasons {
+                why.push(r.clone());
+            }
+        }
+        if let Some(ev) = fact.evidence.as_deref() {
+            why.push(format!("evidence: `{ev}`"));
+        }
+        why.push(
+            "domain code must not write to storage directly; persistence \
+             belongs at the boundary, behind a port (Repository/Storage \
+             trait) implemented by an adapter"
+                .to_string(),
+        );
+        out.push(Diagnostic {
+            rule_id: "BO005".to_string(),
+            severity: mode.elevate(Severity::Fatal),
+            span,
+            concept: None,
+            message: format!(
+                "domain function `{symbol}` performs persistence write \
+                 `{evidence}` — domain code must not write to storage \
+                 directly"
+            ),
+            why,
+            suggested_fix: Some(
+                "invert the dependency: define a port (e.g. a `Repository` \
+                 or `Storage` trait) in the domain layer, implement it in \
+                 an adapter, and inject the adapter from the composition \
+                 root. The domain function then calls `repo.save(...)` \
+                 instead of touching storage directly. If this module is \
+                 actually outside the domain, narrow \
+                 `paradigms.BO.domain_paths` in `locus.lock`."
+                    .to_string(),
+            ),
+        });
+    }
+    out
+}
+
+/// Walk every package/file/item, returning the enclosing file's
+/// `module_path` and the function's span for the first `AirFunction`
+/// whose `symbol` matches. Mirrors the helper in
+/// `runtime_work/rules.rs::lookup_function`; duplicated here so paradigms
+/// don't import each other.
+fn lookup_function<'a>(air: &'a AirWorkspace, symbol: &str) -> Option<(&'a str, AirSpan)> {
+    for pkg in &air.packages {
+        for file in &pkg.files {
+            for item in &file.items {
+                if let AirItem::Function(f) = item
+                    && f.symbol == symbol
+                {
+                    let module = file.module_path.as_deref()?;
+                    return Some((module, f.span.clone()));
+                }
+            }
+        }
+    }
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use locus_air::{AIR_SCHEMA_VERSION, AirFile, AirImport, AirPackage, AirSpan, Visibility};
+    use locus_air::{
+        AIR_SCHEMA_VERSION, AirFact, AirFile, AirImport, AirPackage, AirSpan, FactKind, FactTarget,
+        Visibility,
+    };
 
     fn import(path: &str) -> AirItem {
         AirItem::Import(AirImport {
@@ -723,5 +841,246 @@ mod tests {
         let diags = bo004(&air, &section, CheckMode::AgentStrict);
         assert_eq!(diags.len(), 1);
         assert_eq!(diags[0].severity, Severity::Fatal);
+    }
+
+    // ----- BO005 -----
+
+    fn func(symbol: &str, file: &str, line: u32) -> AirItem {
+        use locus_air::AirFunction;
+        AirItem::Function(AirFunction {
+            name: symbol.rsplit("::").next().unwrap_or(symbol).into(),
+            symbol: symbol.into(),
+            visibility: Visibility::Public,
+            params: Vec::new(),
+            return_type: None,
+            span: AirSpan::new(file, line, line + 5),
+            line_count: 6,
+            doc: None,
+        })
+    }
+
+    fn persistence_write_fact(symbol: &str, evidence: &str, reason: &str) -> AirFact {
+        AirFact {
+            kind: FactKind::PersistenceWrite,
+            target: FactTarget::Function {
+                symbol: symbol.into(),
+            },
+            source: "std-rt".into(),
+            confidence: 1.0,
+            reasons: vec![reason.into()],
+            evidence: Some(evidence.into()),
+        }
+    }
+
+    fn air_with_module_facts(
+        module_path: Option<&str>,
+        file_path: &str,
+        items: Vec<AirItem>,
+        facts: Vec<AirFact>,
+    ) -> AirWorkspace {
+        AirWorkspace {
+            schema_version: AIR_SCHEMA_VERSION,
+            packages: vec![AirPackage {
+                name: "x".into(),
+                version: "0".into(),
+                root_dir: "/".into(),
+                files: vec![AirFile {
+                    path: file_path.into(),
+                    module_path: module_path.map(|s| s.into()),
+                    items,
+                    hints: Vec::new(),
+                    parse_error: None,
+                    line_count: 1,
+                }],
+            }],
+            facts,
+        }
+    }
+
+    #[test]
+    fn bo005_fires_on_persistence_write_in_domain_function() {
+        let air = air_with_module_facts(
+            Some("crate::domain::user"),
+            "src/domain/user.rs",
+            vec![func("crate::domain::user::save", "src/domain/user.rs", 8)],
+            vec![persistence_write_fact(
+                "crate::domain::user::save",
+                "std::fs::write",
+                "`std::fs::write` is a persistence-write call",
+            )],
+        );
+        let section = BoSection {
+            domain_paths: vec!["crate::domain::*".into()],
+            ..Default::default()
+        };
+        let diags = bo005(&air, &section, CheckMode::Human);
+        assert_eq!(diags.len(), 1);
+        let d = &diags[0];
+        assert_eq!(d.rule_id, "BO005");
+        assert_eq!(d.severity, Severity::Fatal);
+        assert!(d.message.contains("crate::domain::user::save"));
+        assert!(d.message.contains("std::fs::write"));
+        assert!(d.message.contains("persistence write"));
+        assert!(
+            d.why.iter().any(|w| w.contains("crate::domain::*")),
+            "expected domain pattern in why; got {:?}",
+            d.why
+        );
+        assert!(
+            d.why.iter().any(|w| w.contains("persistence-write")),
+            "expected loader reason in why; got {:?}",
+            d.why
+        );
+    }
+
+    #[test]
+    fn bo005_quiet_when_target_function_outside_domain_paths() {
+        // Adapter/infra layer is allowed to write to storage — that's the
+        // whole point of BO putting persistence at the boundary.
+        let air = air_with_module_facts(
+            Some("crate::infra::user_repo"),
+            "src/infra/user_repo.rs",
+            vec![func(
+                "crate::infra::user_repo::save",
+                "src/infra/user_repo.rs",
+                8,
+            )],
+            vec![persistence_write_fact(
+                "crate::infra::user_repo::save",
+                "std::fs::write",
+                "persistence-write call",
+            )],
+        );
+        let section = BoSection {
+            domain_paths: vec!["crate::domain::*".into()],
+            ..Default::default()
+        };
+        assert!(bo005(&air, &section, CheckMode::Human).is_empty());
+    }
+
+    #[test]
+    fn bo005_quiet_on_non_persistence_write_facts() {
+        let air = air_with_module_facts(
+            Some("crate::domain::user"),
+            "src/domain/user.rs",
+            vec![func("crate::domain::user::save", "src/domain/user.rs", 8)],
+            vec![
+                AirFact {
+                    kind: FactKind::Logging,
+                    target: FactTarget::Function {
+                        symbol: "crate::domain::user::save".into(),
+                    },
+                    source: "std-rt".into(),
+                    confidence: 1.0,
+                    reasons: Vec::new(),
+                    evidence: None,
+                },
+                AirFact {
+                    kind: FactKind::ConfigRead,
+                    target: FactTarget::Function {
+                        symbol: "crate::domain::user::save".into(),
+                    },
+                    source: "std-rt".into(),
+                    confidence: 1.0,
+                    reasons: Vec::new(),
+                    evidence: None,
+                },
+                AirFact {
+                    kind: FactKind::ExternalIo,
+                    target: FactTarget::Function {
+                        symbol: "crate::domain::user::save".into(),
+                    },
+                    source: "std-rt".into(),
+                    confidence: 1.0,
+                    reasons: Vec::new(),
+                    evidence: None,
+                },
+            ],
+        );
+        let section = BoSection {
+            domain_paths: vec!["crate::domain::*".into()],
+            ..Default::default()
+        };
+        assert!(bo005(&air, &section, CheckMode::Human).is_empty());
+    }
+
+    #[test]
+    fn bo005_silent_when_domain_paths_empty() {
+        let air = air_with_module_facts(
+            Some("crate::domain::user"),
+            "src/domain/user.rs",
+            vec![func("crate::domain::user::save", "src/domain/user.rs", 8)],
+            vec![persistence_write_fact(
+                "crate::domain::user::save",
+                "std::fs::write",
+                "persistence-write call",
+            )],
+        );
+        let section = BoSection::default(); // domain_paths empty
+        assert!(
+            bo005(&air, &section, CheckMode::Human).is_empty(),
+            "rule should wait for explicit domain_paths declaration"
+        );
+    }
+
+    #[test]
+    fn bo005_agent_strict_keeps_severity_fatal() {
+        // BO005 is already Fatal in human mode; --agent-strict elevates but
+        // can't go higher than Fatal — verify it stays Fatal, not panicked.
+        let air = air_with_module_facts(
+            Some("crate::domain::user"),
+            "src/domain/user.rs",
+            vec![func("crate::domain::user::save", "src/domain/user.rs", 8)],
+            vec![persistence_write_fact(
+                "crate::domain::user::save",
+                "std::fs::create_dir_all",
+                "persistence-write call",
+            )],
+        );
+        let section = BoSection {
+            domain_paths: vec!["crate::domain::*".into()],
+            ..Default::default()
+        };
+        let diags = bo005(&air, &section, CheckMode::AgentStrict);
+        assert_eq!(diags.len(), 1);
+        assert_eq!(diags[0].severity, Severity::Fatal);
+    }
+
+    #[test]
+    fn bo005_segment_anywhere_pattern_fires_on_inline_test_module_symbol() {
+        // The headline use case for the function-symbol fallback: the
+        // file's `module_path` is `crate::infra::user_repo` (boundary
+        // code, not domain), but the user has carved `*::tests::*` into
+        // `domain_paths` to forbid persistence writes in any inline
+        // `mod tests {}` block (test fixtures should mock storage, not
+        // touch the disk). The function symbol contains `::tests::`,
+        // the file's module does not — so only the symbol-side match
+        // catches it.
+        let air = air_with_module_facts(
+            Some("crate::infra::user_repo"),
+            "src/infra/user_repo.rs",
+            vec![func(
+                "crate::infra::user_repo::tests::roundtrip",
+                "src/infra/user_repo.rs",
+                42,
+            )],
+            vec![persistence_write_fact(
+                "crate::infra::user_repo::tests::roundtrip",
+                "std::fs::write",
+                "persistence-write call",
+            )],
+        );
+        let section = BoSection {
+            domain_paths: vec!["*::tests::*".into()],
+            ..Default::default()
+        };
+        let diags = bo005(&air, &section, CheckMode::Human);
+        assert_eq!(
+            diags.len(),
+            1,
+            "function-symbol match should catch inline test modules; got {:?}",
+            diags
+        );
+        assert!(diags[0].message.contains("tests::roundtrip"));
     }
 }

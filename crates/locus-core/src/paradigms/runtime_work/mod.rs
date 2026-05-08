@@ -5,6 +5,8 @@
 //! Phase scope:
 //! - RW001: spawn-shaped action (tokio/std::thread/rayon/etc.) outside any
 //!   declared runtime owner module.
+//! - RW002: blocking call (filesystem read, `thread::sleep`, blocking
+//!   socket op, …) outside any declared runtime owner module.
 //! - RW003: `Mutex` / `RwLock` (or similar runtime-state-shaped) field on a
 //!   type outside any declared runtime-owner module.
 //! - RW004: `OnceCell` / `Lazy` / named-singleton type outside any declared
@@ -42,6 +44,7 @@ impl Paradigm for RuntimeWork {
         let section: lockfile_schema::RwSection =
             lockfile.paradigm_section(RW_PREFIX).unwrap_or_default();
         let mut diags = rules::rw001(air, &section, mode);
+        diags.extend(rules::rw002(air, &section, mode));
         diags.extend(rules::rw003(air, &section, mode));
         diags.extend(rules::rw004(air, &section, mode));
         diags

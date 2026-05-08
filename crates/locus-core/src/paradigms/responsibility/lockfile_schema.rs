@@ -76,6 +76,21 @@ pub struct RmSection {
     /// [`DEFAULT_MAX_REPOSITORY_DECISIONS`].
     #[serde(default)]
     pub max_repository_decisions: Option<u32>,
+    /// Module patterns for files whose functions are *validators* — pure
+    /// decision functions that should never themselves perform IO. RM005
+    /// fires when an `ExternalIo` or `PersistenceWrite` fact targets a
+    /// function in one of these modules. Same suffix-wildcard syntax as
+    /// the rest of RM. Empty default keeps RM005 silent.
+    #[serde(default)]
+    pub validator_paths: Vec<String>,
+    /// Module patterns for files whose types are *domain types* (in the
+    /// RM sense — kept separate from BO's `domain_paths` to keep paradigms
+    /// independent). RM006 fires when a `PersistenceWrite` fact targets a
+    /// method (a function symbol containing `::TypeName::`) defined in
+    /// one of these modules. Same suffix-wildcard syntax as the rest of
+    /// RM. Empty default keeps RM006 silent.
+    #[serde(default)]
+    pub domain_paths_rm: Vec<String>,
 }
 
 impl RmSection {

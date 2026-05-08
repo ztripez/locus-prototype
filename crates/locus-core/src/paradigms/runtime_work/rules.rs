@@ -2,6 +2,7 @@
 //!
 //! Implemented:
 //! - [`rw001`]: spawn-shaped fact outside any declared runtime owner module.
+//! - [`rw002`]: blocking-call fact outside any declared runtime owner module.
 //! - [`rw003`]: `Mutex` / `RwLock` field outside the runtime-ownership
 //!   boundary.
 //! - [`rw004`]: `static` / `OnceCell` / `Lazy`-shaped global outside the
@@ -62,6 +63,110 @@ pub fn rw001(air: &AirWorkspace, section: &RwSection, mode: CheckMode) -> Vec<Di
         out.push(diagnostic_for(fact, symbol, module_path, fn_span, mode));
     }
     out
+}
+
+/// RW002 — blocking call outside the runtime-ownership boundary.
+///
+/// For every `FactKind::BlockingCall` fact produced by a loader (e.g. the
+/// std-rt loader recognising `std::fs::read`, `std::thread::sleep`,
+/// `Command::output`, `TcpStream::connect`, …), look up the targeted
+/// function and fire when neither the file's `module_path` nor the
+/// function symbol matches any pattern in `runtime_owner_paths`.
+///
+/// Severity: Warning (Fatal under `--agent-strict`). Softer than RW001's
+/// always-Fatal posture: a stray blocking call in a non-runtime-owner
+/// module is common-and-bad but not as structurally damaging as untracked
+/// spawning. The full hot/request/async-context detection (Paradigm 14
+/// proper) requires framework loaders that don't exist yet — RW002 is
+/// the simpler, already-actionable shape.
+///
+/// Silent when `runtime_owner_paths` is empty (same opt-in posture as
+/// the rest of RW). Functions whose file has no `module_path` are
+/// skipped — we can't decide anything about them.
+pub fn rw002(air: &AirWorkspace, section: &RwSection, mode: CheckMode) -> Vec<Diagnostic> {
+    if section.runtime_owner_paths.is_empty() {
+        return Vec::new();
+    }
+
+    let mut out = Vec::new();
+    for fact in &air.facts {
+        if fact.kind != FactKind::BlockingCall {
+            continue;
+        }
+        let FactTarget::Function { symbol } = &fact.target else {
+            continue;
+        };
+        let Some((module_path, fn_span)) = lookup_function(air, symbol) else {
+            continue;
+        };
+        // Same module-path-or-function-symbol matching as RW001: inline
+        // `mod tests {}` blocks live at a deeper symbol path than the
+        // file, so a `*::tests::*` pattern would silently miss them if
+        // we only checked the file.
+        if section
+            .runtime_owner_paths
+            .iter()
+            .any(|pat| matches_pattern(pat, module_path) || matches_pattern(pat, symbol))
+        {
+            continue;
+        }
+        out.push(rw002_diagnostic(fact, symbol, module_path, fn_span, mode));
+    }
+    out
+}
+
+fn rw002_diagnostic(
+    fact: &AirFact,
+    symbol: &str,
+    module_path: &str,
+    fn_span: AirSpan,
+    mode: CheckMode,
+) -> Diagnostic {
+    let span = match &fact.target {
+        FactTarget::Span(s) => s.clone(),
+        FactTarget::Function { .. } | FactTarget::File { .. } => fn_span,
+    };
+    let evidence = fact.evidence.as_deref().unwrap_or("blocking call");
+    let why_reasons = if fact.reasons.is_empty() {
+        vec!["loader detected blocking-shaped call".to_string()]
+    } else {
+        fact.reasons.clone()
+    };
+    Diagnostic {
+        rule_id: "RW002".to_string(),
+        severity: mode.elevate(Severity::Warning),
+        span,
+        concept: None,
+        message: format!(
+            "blocking call `{evidence}` in module `{module_path}` \
+             (function `{symbol}`) outside any declared runtime owner"
+        ),
+        why: {
+            let mut w = vec![format!(
+                "module `{module_path}` matches none of the \
+                 `runtime_owner_paths` patterns"
+            )];
+            for r in why_reasons {
+                w.push(r);
+            }
+            if let Some(ev) = fact.evidence.as_deref() {
+                w.push(format!("evidence: `{ev}`"));
+            }
+            w.push(
+                "blocking calls should be confined to runtime-owner \
+                 modules so the runtime can budget them appropriately"
+                    .to_string(),
+            );
+            w
+        },
+        suggested_fix: Some(format!(
+            "move the blocking call to a runtime-owner module (a thread \
+             pool, a worker, a blocking-allowed task) and call it through \
+             a port; or, if `{module_path}` really is a legitimate \
+             blocking owner, expand `paradigms.RW.runtime_owner_paths` in \
+             `locus.lock` to include it"
+        )),
+    }
 }
 
 fn lookup_function<'a>(air: &'a AirWorkspace, symbol: &str) -> Option<(&'a str, AirSpan)> {
@@ -545,6 +650,198 @@ mod tests {
         let diags = rw001(&air, &section, CheckMode::AgentStrict);
         assert_eq!(diags.len(), 1);
         assert_eq!(diags[0].severity, Severity::Fatal);
+    }
+
+    // ---------- RW002 ----------
+
+    fn blocking_fact(symbol: &str, evidence: &str, reason: &str) -> AirFact {
+        AirFact {
+            kind: FactKind::BlockingCall,
+            target: FactTarget::Function {
+                symbol: symbol.into(),
+            },
+            source: "std-rt".into(),
+            confidence: 1.0,
+            reasons: vec![reason.into()],
+            evidence: Some(evidence.into()),
+        }
+    }
+
+    #[test]
+    fn rw002_fires_on_blocking_in_non_runtime_owner_file() {
+        let air = air_with_file(
+            Some("crate::handler"),
+            "src/handler.rs",
+            vec![func("crate::handler::create_user", "src/handler.rs", 17)],
+            vec![blocking_fact(
+                "crate::handler::create_user",
+                "std::fs::read",
+                "`std::fs::read` is a blocking-shaped call",
+            )],
+        );
+        let section = RwSection {
+            runtime_owner_paths: vec!["crate::runtime::*".into()],
+            ..RwSection::default()
+        };
+        let diags = rw002(&air, &section, CheckMode::Human);
+        assert_eq!(diags.len(), 1);
+        let d = &diags[0];
+        assert_eq!(d.rule_id, "RW002");
+        assert_eq!(d.severity, Severity::Warning);
+        assert_eq!(d.span.line_start, 17);
+        assert!(d.message.contains("crate::handler"));
+        assert!(d.message.contains("crate::handler::create_user"));
+        assert!(d.message.contains("std::fs::read"));
+        assert!(
+            d.why.iter().any(|w| w.contains("runtime_owner_paths")),
+            "expected lockfile pattern reason; got {:?}",
+            d.why
+        );
+        assert!(
+            d.why.iter().any(|w| w.contains("blocking-shaped")),
+            "expected loader reason; got {:?}",
+            d.why
+        );
+    }
+
+    #[test]
+    fn rw002_quiet_in_runtime_owner_file() {
+        let air = air_with_file(
+            Some("crate::runtime::worker"),
+            "src/runtime/worker.rs",
+            vec![func(
+                "crate::runtime::worker::run",
+                "src/runtime/worker.rs",
+                4,
+            )],
+            vec![blocking_fact(
+                "crate::runtime::worker::run",
+                "std::thread::sleep",
+                "blocking detected",
+            )],
+        );
+        let section = RwSection {
+            runtime_owner_paths: vec!["crate::runtime::*".into()],
+            ..RwSection::default()
+        };
+        assert!(rw002(&air, &section, CheckMode::Human).is_empty());
+    }
+
+    #[test]
+    fn rw002_quiet_on_other_fact_kinds() {
+        // Don't react to spawn/log/config/persistence/io facts — those are
+        // other rules' jobs.
+        let air = air_with_file(
+            Some("crate::handler"),
+            "src/handler.rs",
+            vec![func("crate::handler::touch", "src/handler.rs", 5)],
+            vec![
+                AirFact {
+                    kind: FactKind::SpawnedWork,
+                    target: FactTarget::Function {
+                        symbol: "crate::handler::touch".into(),
+                    },
+                    source: "std-rt".into(),
+                    confidence: 1.0,
+                    reasons: Vec::new(),
+                    evidence: Some("tokio::spawn".into()),
+                },
+                AirFact {
+                    kind: FactKind::Logging,
+                    target: FactTarget::Function {
+                        symbol: "crate::handler::touch".into(),
+                    },
+                    source: "std-rt".into(),
+                    confidence: 1.0,
+                    reasons: Vec::new(),
+                    evidence: None,
+                },
+                AirFact {
+                    kind: FactKind::PersistenceWrite,
+                    target: FactTarget::Function {
+                        symbol: "crate::handler::touch".into(),
+                    },
+                    source: "std-rt".into(),
+                    confidence: 1.0,
+                    reasons: Vec::new(),
+                    evidence: Some("std::fs::write".into()),
+                },
+            ],
+        );
+        let section = RwSection {
+            runtime_owner_paths: vec!["crate::runtime::*".into()],
+            ..RwSection::default()
+        };
+        assert!(rw002(&air, &section, CheckMode::Human).is_empty());
+    }
+
+    #[test]
+    fn rw002_silent_when_runtime_owner_paths_empty() {
+        let air = air_with_file(
+            Some("crate::handler"),
+            "src/handler.rs",
+            vec![func("crate::handler::create_user", "src/handler.rs", 17)],
+            vec![blocking_fact(
+                "crate::handler::create_user",
+                "std::fs::read",
+                "blocking detected",
+            )],
+        );
+        let section = RwSection::default();
+        assert!(
+            rw002(&air, &section, CheckMode::Human).is_empty(),
+            "rule should wait for explicit runtime_owner_paths declaration"
+        );
+    }
+
+    #[test]
+    fn rw002_agent_strict_elevates_warning_to_fatal() {
+        let air = air_with_file(
+            Some("crate::handler"),
+            "src/handler.rs",
+            vec![func("crate::handler::process", "src/handler.rs", 12)],
+            vec![blocking_fact(
+                "crate::handler::process",
+                "Command::output",
+                "blocking detected",
+            )],
+        );
+        let section = RwSection {
+            runtime_owner_paths: vec!["crate::runtime::*".into()],
+            ..RwSection::default()
+        };
+        let diags = rw002(&air, &section, CheckMode::AgentStrict);
+        assert_eq!(diags.len(), 1);
+        assert_eq!(diags[0].severity, Severity::Fatal);
+    }
+
+    #[test]
+    fn rw002_segment_anywhere_pattern_exempts_inline_test_module() {
+        // Inline `mod tests {}` blocks live at a deeper symbol path than
+        // the file; the function-symbol check has to catch them when the
+        // file's `module_path` doesn't itself match.
+        let air = air_with_file(
+            Some("crate::handler"),
+            "src/handler.rs",
+            vec![func(
+                "crate::handler::tests::reads_fixture",
+                "src/handler.rs",
+                42,
+            )],
+            vec![blocking_fact(
+                "crate::handler::tests::reads_fixture",
+                "std::fs::read",
+                "blocking detected",
+            )],
+        );
+        let section = RwSection {
+            runtime_owner_paths: vec!["*::tests::*".into()],
+            ..RwSection::default()
+        };
+        assert!(
+            rw002(&air, &section, CheckMode::Human).is_empty(),
+            "function-symbol match should exempt inline test modules"
+        );
     }
 
     // ---------- RW003 / RW004 helpers ----------

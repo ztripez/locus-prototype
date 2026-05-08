@@ -11,7 +11,7 @@ This file is the per-repo dev-handoff for Claude Code (and other agents — `CLA
 
 ## Project status
 
-19 paradigms registered; **76 rules implemented** (up from 41 — see `docs/PARADIGMS.md` "Implementation status (snapshot)" for the per-paradigm rule list). Highlight set:
+19 paradigms registered; **81 rules implemented** (up from 41 — see `docs/PARADIGMS.md` "Implementation status (snapshot)" for the per-paradigm rule list). The `std-rt` loader produces **6 language-level fact kinds** today (`SpawnedWork`, `ConfigRead`, `Logging`, `BlockingCall`, `PersistenceWrite`, `ExternalIo` from stdlib patterns). Highlight set:
 
 - **OT** (Canonical Domain Ownership) — OT001–OT012 implemented. End-to-end wiring: AIR emission, paradigm host, lockfile, `locus init / accept canonical|boundary / check` CLI.
 - **DG** (Dependency Graph / Direction) — DG001 (forbidden import), DG002 (dependency cycle via Tarjan SCC), DG003 (cross-feature internals reach), DG004 (shared module reaching feature). Lockfile carries `forbidden_edges`, `features` (with `public_api` patterns), and `shared_paths`. CLI mutators: `locus dg forbid-edge`, `locus dg define-feature`, `locus dg add-shared-path`.
@@ -126,6 +126,7 @@ locus check --workspace . --agent-strict # warnings → fatal
 - ✅ Cross-paradigm: `Severity::from_confidence` tier helper; `// ot: allow` + lockfile exceptions wired through the CLI's `check` pipeline.
 - ✅ Second rules for DC, ER, UT, RM (DC002 doc-residue phrases, ER002 string-shaped errors, UT002 forbidden imports, RM002 converter side-effects).
 - ✅ **Silent-error coverage gap nearly closed** — FL004 (`let _ =`), FL005 (partial `if let`), FL006 (`map_err(|_|)`), FL007 (catch-all `Err(_)` arm body), FL011 (bare `_` failure sink), ER005 (catch-all error mapping). AIR v10 adds `MatchArm` + `ClosureMethodCall` items. Still missing: `result.unwrap_or(literal)` (needs literal-shape capture on the default arg), spawned-task failures with no sink (needs `RuntimeStateOwner`/`BackgroundWorker` loader output), retry-loop shapes.
+- ✅ **stdlib-fact rules online** — std-rt loader emits `BlockingCall`, `PersistenceWrite`, `ExternalIo` from stdlib call shapes (no framework dep needed; the architectural concepts are paradigm-neutral per spec). 5 new rules consume them: BO005 (persistence in domain), PA003 (external IO in app without port), RW002 (blocking call outside runtime owner), RM005 (validator IO), RM006 (domain method writing to storage).
 - ✅ Second rules for every paradigm (16 paradigms beyond OT/DG now each ship 2–6 rules; see `docs/PARADIGMS.md` snapshot).
 - 🔜 Remaining ~21 spec patterns require new visitor work (`match` arm bodies, literal capture, `unwrap_or` chains, closure-arg shape) or new loader output (`BlockingCall`, `HotPath`, `PersistenceWrite`, `ExternalIo`, `RuntimeStateOwner`, `BackgroundWorker`).
 - 🔜 CLI oracle commands: `locus explain`, `locus query <kind>`, `locus debt` (lists active + expired exceptions), `locus graph`, `locus prune`, `locus add adapter`. Spec: `docs/PARADIGMS.md` §"Locus as an Architectural Oracle".

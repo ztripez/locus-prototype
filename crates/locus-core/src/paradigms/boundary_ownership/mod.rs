@@ -11,6 +11,9 @@
 //!   parameter or return signature.
 //! - BO004: canonical type carries a forbidden derive
 //!   (e.g. `Serialize`/`Deserialize`/`ToSchema`).
+//! - BO005: domain function performs a persistence write
+//!   (`std::fs::write`/`create_dir`/`remove_*` etc., via the std-rt
+//!   loader's `PersistenceWrite` facts).
 
 // ot: canonical
 
@@ -46,6 +49,7 @@ impl Paradigm for BoundaryOwnership {
         let mut diags = rules::bo001(air, &section, mode);
         diags.extend(rules::bo002(air, &section, mode));
         diags.extend(rules::bo004(air, &section, mode));
+        diags.extend(rules::bo005(air, &section, mode));
         diags
     }
 }

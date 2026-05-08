@@ -12,6 +12,8 @@
 //! - RM002: converter performs a side-effect fact.
 //! - RM003: handler module containing branch-rich domain policy.
 //! - RM004: repository module containing branch-rich domain logic.
+//! - RM005: validator function performing IO (external or persistence).
+//! - RM006: domain type method performing persistence-write.
 
 // ot: canonical
 
@@ -48,6 +50,8 @@ impl Paradigm for Responsibility {
         diags.extend(rules::rm002(air, &section, mode));
         diags.extend(rules::rm003(air, &section, mode));
         diags.extend(rules::rm004(air, &section, mode));
+        diags.extend(rules::rm005(air, &section, mode));
+        diags.extend(rules::rm006(air, &section, mode));
         diags
     }
 }

@@ -5,13 +5,17 @@
 //! - [`rm002`]: converter performs a side-effect fact.
 //! - [`rm003`]: handler module containing branch-rich domain policy.
 //! - [`rm004`]: repository module containing branch-rich domain logic.
+//! - [`rm005`]: validator function performing IO (external or persistence).
+//! - [`rm006`]: domain type method performing persistence-write.
 //!
 //! Lockfile-driven: stays silent until the user opts in by setting
 //! `paradigms.RM.default_max_action_kinds` (RM001), populating
 //! `paradigms.RM.converter_paths` (RM002), `paradigms.RM.handler_paths`
-//! (RM003), or `paradigms.RM.repository_paths` (RM004). This mirrors the
-//! DG/UT pattern — pre-onboarding we don't have the data (or the user's
-//! intent) to call any particular density "wrong."
+//! (RM003), `paradigms.RM.repository_paths` (RM004),
+//! `paradigms.RM.validator_paths` (RM005), or
+//! `paradigms.RM.domain_paths_rm` (RM006). This mirrors the DG/UT pattern
+//! — pre-onboarding we don't have the data (or the user's intent) to call
+//! any particular density "wrong."
 
 use std::collections::BTreeMap;
 
@@ -548,6 +552,230 @@ pub fn rm004(air: &AirWorkspace, section: &RmSection, mode: CheckMode) -> Vec<Di
         DensityRole::Repository,
         mode,
     )
+}
+
+/// RM005 — validator function performing IO.
+///
+/// For every `FactKind::ExternalIo` or `FactKind::PersistenceWrite` fact
+/// whose `target` is a `Function`, look up the targeted function and fire
+/// when its enclosing file's `module_path` matches a pattern in
+/// `validator_paths`. A validator is conceptually a pure decision function;
+/// performing IO inside one means the function fails differently for the
+/// same input depending on external state — a responsibility violation.
+///
+/// Severity: Warning by default; Fatal under `--agent-strict`.
+///
+/// Silent when `validator_paths` is empty: same opt-in UX as the rest of RM.
+///
+/// Module-path resolution: the file's `module_path` is checked first; if
+/// no match, the function symbol itself is matched against the same
+/// patterns. Lets `*::tests::*` exempt patterns reach inline test modules
+/// whose file `module_path` doesn't include the segment.
+pub fn rm005(air: &AirWorkspace, section: &RmSection, mode: CheckMode) -> Vec<Diagnostic> {
+    if section.validator_paths.is_empty() {
+        return Vec::new();
+    }
+    let mut out = Vec::new();
+    for fact in &air.facts {
+        if !is_io_fact_kind(fact.kind) {
+            continue;
+        }
+        let FactTarget::Function { symbol } = &fact.target else {
+            continue;
+        };
+        let Some((module_path, fn_span)) = lookup_function(air, symbol) else {
+            continue;
+        };
+        let matched_pattern = section
+            .validator_paths
+            .iter()
+            .find(|pat| matches_pattern(pat, module_path) || matches_pattern(pat, symbol));
+        let Some(matched_pattern) = matched_pattern else {
+            continue;
+        };
+        out.push(rm005_diagnostic(
+            fact,
+            symbol,
+            module_path,
+            fn_span,
+            matched_pattern,
+            mode,
+        ));
+    }
+    out
+}
+
+fn is_io_fact_kind(kind: FactKind) -> bool {
+    matches!(kind, FactKind::ExternalIo | FactKind::PersistenceWrite)
+}
+
+fn rm005_diagnostic(
+    fact: &AirFact,
+    symbol: &str,
+    module_path: &str,
+    fn_span: AirSpan,
+    matched_pattern: &str,
+    mode: CheckMode,
+) -> Diagnostic {
+    let span = match &fact.target {
+        FactTarget::Span(s) => s.clone(),
+        FactTarget::Function { .. } | FactTarget::File { .. } => fn_span,
+    };
+    let kind_label = format_fact_kind(fact.kind);
+    let evidence = fact.evidence.as_deref().unwrap_or("?");
+    let mut why = vec![
+        format!("module `{module_path}` matches validator_paths pattern `{matched_pattern}`"),
+        format!("fact kind: {kind_label}"),
+        format!("evidence: `{evidence}`"),
+    ];
+    for r in &fact.reasons {
+        why.push(r.clone());
+    }
+    why.push(
+        "validation and IO are different responsibilities — IO inside a \
+         validator means the function fails differently for the same input \
+         depending on external state"
+            .into(),
+    );
+    Diagnostic {
+        rule_id: "RM005".to_string(),
+        severity: mode.elevate(Severity::Warning),
+        span,
+        concept: None,
+        message: format!(
+            "validator function `{symbol}` performs `{kind_label}` (`{evidence}`) — \
+             validators must be pure decisions"
+        ),
+        why,
+        suggested_fix: Some(format!(
+            "split `{symbol}` into a pure-decision part (operates on inputs only) \
+             and a separate function that does the IO. The validator should accept \
+             already-fetched data, not fetch it itself. If `{module_path}` is not \
+             actually a validator module, narrow `paradigms.RM.validator_paths` in \
+             `locus.lock`."
+        )),
+    }
+}
+
+/// RM006 — domain type method performs persistence write.
+///
+/// For every `FactKind::PersistenceWrite` fact whose `target` is a
+/// `Function`, fire when the function symbol *looks like a method* — i.e.
+/// it has at least three `::` segments and at least one segment whose
+/// first character is uppercase (a TypeName) — AND the function's
+/// enclosing file's `module_path` matches a pattern in `domain_paths_rm`.
+/// A domain type whose methods perform persistence is mixing the model
+/// with the storage concern.
+///
+/// Severity: Warning by default; Fatal under `--agent-strict`.
+///
+/// Silent when `domain_paths_rm` is empty.
+///
+/// Module-path resolution: the file's `module_path` is checked first; if
+/// no match, the function symbol itself is matched against the same
+/// patterns.
+pub fn rm006(air: &AirWorkspace, section: &RmSection, mode: CheckMode) -> Vec<Diagnostic> {
+    if section.domain_paths_rm.is_empty() {
+        return Vec::new();
+    }
+    let mut out = Vec::new();
+    for fact in &air.facts {
+        if fact.kind != FactKind::PersistenceWrite {
+            continue;
+        }
+        let FactTarget::Function { symbol } = &fact.target else {
+            continue;
+        };
+        if !looks_like_method(symbol) {
+            continue;
+        }
+        let Some((module_path, fn_span)) = lookup_function(air, symbol) else {
+            continue;
+        };
+        let matched_pattern = section
+            .domain_paths_rm
+            .iter()
+            .find(|pat| matches_pattern(pat, module_path) || matches_pattern(pat, symbol));
+        let Some(matched_pattern) = matched_pattern else {
+            continue;
+        };
+        out.push(rm006_diagnostic(
+            fact,
+            symbol,
+            module_path,
+            fn_span,
+            matched_pattern,
+            mode,
+        ));
+    }
+    out
+}
+
+/// Heuristic: a function symbol is "method-shaped" when it has at least
+/// three `::` segments (e.g. `pkg::Type::method`) AND at least one
+/// segment past the first whose initial character is an ASCII uppercase
+/// letter (the TypeName segment). Free functions are typically `pkg::fn`
+/// or `pkg::module::fn` where every segment past the first starts with
+/// lowercase, so the heuristic excludes them by default. Inline
+/// `mod tests {}` adds a lowercase `tests` segment that doesn't trip the
+/// uppercase check.
+fn looks_like_method(symbol: &str) -> bool {
+    let segs: Vec<&str> = symbol.split("::").collect();
+    if segs.len() < 3 {
+        return false;
+    }
+    // Skip the first segment (package name) — packages can be capitalised
+    // in some ecosystems but the rule cares about method-on-type shape,
+    // which appears later in the path.
+    segs.iter()
+        .skip(1)
+        .take(segs.len() - 2) // exclude the last segment (the method name itself)
+        .any(|seg| seg.chars().next().is_some_and(|c| c.is_ascii_uppercase()))
+}
+
+fn rm006_diagnostic(
+    fact: &AirFact,
+    symbol: &str,
+    module_path: &str,
+    fn_span: AirSpan,
+    matched_pattern: &str,
+    mode: CheckMode,
+) -> Diagnostic {
+    let span = match &fact.target {
+        FactTarget::Span(s) => s.clone(),
+        FactTarget::Function { .. } | FactTarget::File { .. } => fn_span,
+    };
+    let evidence = fact.evidence.as_deref().unwrap_or("?");
+    let mut why = vec![
+        format!("module `{module_path}` matches domain_paths_rm pattern `{matched_pattern}`"),
+        format!("symbol `{symbol}` is method-shaped (contains a TypeName segment)"),
+        format!("persistence-write evidence: `{evidence}`"),
+    ];
+    for r in &fact.reasons {
+        why.push(r.clone());
+    }
+    why.push(
+        "domain methods that write to storage couple the model to the persistence \
+         framework"
+            .into(),
+    );
+    Diagnostic {
+        rule_id: "RM006".to_string(),
+        severity: mode.elevate(Severity::Warning),
+        span,
+        concept: None,
+        message: format!(
+            "domain method `{symbol}` performs persistence write — domain types \
+             should be pure data shapes, not storage-aware"
+        ),
+        why,
+        suggested_fix: Some(format!(
+            "extract the persistence call into a separate `Repository` adapter \
+             and keep the domain method on `{symbol}` pure (operates on `&self` \
+             and returns a value). If `{module_path}` is not actually a domain \
+             module, narrow `paradigms.RM.domain_paths_rm` in `locus.lock`."
+        )),
+    }
 }
 
 #[cfg(test)]
@@ -1403,5 +1631,379 @@ mod tests {
         let diags = rm004(&air, &section, CheckMode::AgentStrict);
         assert_eq!(diags.len(), 1);
         assert_eq!(diags[0].severity, Severity::Fatal);
+    }
+
+    // ---------- RM005 ----------
+
+    fn validator_section(patterns: Vec<&str>) -> RmSection {
+        RmSection {
+            validator_paths: patterns.into_iter().map(|s| s.to_string()).collect(),
+            ..RmSection::default()
+        }
+    }
+
+    #[test]
+    fn rm005_fires_on_external_io_in_validator_module() {
+        let air = air_with_facts(
+            vec![(
+                "src/validation/email.rs",
+                Some("crate::validation::email"),
+                vec![func(
+                    "crate::validation::email::is_valid",
+                    "src/validation/email.rs",
+                    7,
+                )],
+            )],
+            vec![fact(
+                FactKind::ExternalIo,
+                "crate::validation::email::is_valid",
+                "reqwest::get",
+                "external IO",
+            )],
+        );
+        let section = validator_section(vec!["crate::validation::*"]);
+        let diags = rm005(&air, &section, CheckMode::Human);
+        assert_eq!(diags.len(), 1);
+        let d = &diags[0];
+        assert_eq!(d.rule_id, "RM005");
+        assert_eq!(d.severity, Severity::Warning);
+        assert_eq!(d.span.line_start, 7);
+        assert!(d.message.contains("crate::validation::email::is_valid"));
+        assert!(d.message.contains("external-io"));
+        assert!(d.message.contains("reqwest::get"));
+        assert!(
+            d.why.iter().any(|w| w.contains("crate::validation::*")),
+            "expected matched pattern in why; got {:?}",
+            d.why
+        );
+        assert!(
+            d.why
+                .iter()
+                .any(|w| w.contains("validation and IO are different")),
+            "expected rationale in why; got {:?}",
+            d.why
+        );
+    }
+
+    #[test]
+    fn rm005_fires_on_persistence_write_in_validator_module() {
+        let air = air_with_facts(
+            vec![(
+                "src/validation/email.rs",
+                Some("crate::validation::email"),
+                vec![func(
+                    "crate::validation::email::is_valid",
+                    "src/validation/email.rs",
+                    9,
+                )],
+            )],
+            vec![fact(
+                FactKind::PersistenceWrite,
+                "crate::validation::email::is_valid",
+                "std::fs::write",
+                "persistence write",
+            )],
+        );
+        let section = validator_section(vec!["crate::validation::*"]);
+        let diags = rm005(&air, &section, CheckMode::Human);
+        assert_eq!(diags.len(), 1);
+        assert_eq!(diags[0].rule_id, "RM005");
+        assert!(diags[0].message.contains("persistence-write"));
+    }
+
+    #[test]
+    fn rm005_quiet_on_logging_fact() {
+        let air = air_with_facts(
+            vec![(
+                "src/validation/email.rs",
+                Some("crate::validation::email"),
+                vec![func(
+                    "crate::validation::email::is_valid",
+                    "src/validation/email.rs",
+                    7,
+                )],
+            )],
+            vec![fact(
+                FactKind::Logging,
+                "crate::validation::email::is_valid",
+                "tracing::info!",
+                "logging primitive",
+            )],
+        );
+        let section = validator_section(vec!["crate::validation::*"]);
+        assert!(rm005(&air, &section, CheckMode::Human).is_empty());
+    }
+
+    #[test]
+    fn rm005_silent_when_validator_paths_empty() {
+        let air = air_with_facts(
+            vec![(
+                "src/validation/email.rs",
+                Some("crate::validation::email"),
+                vec![func(
+                    "crate::validation::email::is_valid",
+                    "src/validation/email.rs",
+                    7,
+                )],
+            )],
+            vec![fact(
+                FactKind::ExternalIo,
+                "crate::validation::email::is_valid",
+                "reqwest::get",
+                "external IO",
+            )],
+        );
+        let section = RmSection::default();
+        assert!(rm005(&air, &section, CheckMode::Human).is_empty());
+    }
+
+    #[test]
+    fn rm005_agent_strict_elevates_to_fatal() {
+        let air = air_with_facts(
+            vec![(
+                "src/validation/email.rs",
+                Some("crate::validation::email"),
+                vec![func(
+                    "crate::validation::email::is_valid",
+                    "src/validation/email.rs",
+                    7,
+                )],
+            )],
+            vec![fact(
+                FactKind::ExternalIo,
+                "crate::validation::email::is_valid",
+                "reqwest::get",
+                "external IO",
+            )],
+        );
+        let section = validator_section(vec!["crate::validation::*"]);
+        let diags = rm005(&air, &section, CheckMode::AgentStrict);
+        assert_eq!(diags.len(), 1);
+        assert_eq!(diags[0].severity, Severity::Fatal);
+    }
+
+    #[test]
+    fn rm005_per_symbol_test_module_carve_out() {
+        // Function lives in a file whose module_path is the test mod, but
+        // user has put `*::tests::*` into validator_paths to flag tests
+        // explicitly — should fire. Conversely, when validator_paths
+        // doesn't include tests modules and the function symbol contains
+        // `::tests::`, it shouldn't fire.
+        let air = air_with_facts(
+            vec![(
+                "src/validation/email.rs",
+                Some("crate::validation::email::tests"),
+                vec![func(
+                    "crate::validation::email::tests::it_validates",
+                    "src/validation/email.rs",
+                    50,
+                )],
+            )],
+            vec![fact(
+                FactKind::PersistenceWrite,
+                "crate::validation::email::tests::it_validates",
+                "std::fs::write",
+                "persistence write",
+            )],
+        );
+        // Narrow patterns that exclude tests submodules — must not fire.
+        let section = validator_section(vec!["crate::validation::email::api::*"]);
+        assert!(rm005(&air, &section, CheckMode::Human).is_empty());
+    }
+
+    #[test]
+    fn rm005_matches_via_function_symbol_when_module_path_unrelated() {
+        // File-level `module_path` doesn't match, but function symbol
+        // embeds the validator path — symbol fallback should catch it.
+        let air = air_with_facts(
+            vec![(
+                "src/other.rs",
+                Some("crate::other"),
+                vec![func(
+                    "crate::validation::email::is_valid",
+                    "src/other.rs",
+                    11,
+                )],
+            )],
+            vec![fact(
+                FactKind::ExternalIo,
+                "crate::validation::email::is_valid",
+                "reqwest::get",
+                "external IO",
+            )],
+        );
+        let section = validator_section(vec!["crate::validation::*"]);
+        let diags = rm005(&air, &section, CheckMode::Human);
+        assert_eq!(diags.len(), 1);
+    }
+
+    // ---------- RM006 ----------
+
+    fn domain_rm_section(patterns: Vec<&str>) -> RmSection {
+        RmSection {
+            domain_paths_rm: patterns.into_iter().map(|s| s.to_string()).collect(),
+            ..RmSection::default()
+        }
+    }
+
+    #[test]
+    fn rm006_fires_on_persistence_write_in_domain_method() {
+        let air = air_with_facts(
+            vec![(
+                "src/domain/user.rs",
+                Some("crate::domain::user"),
+                vec![func(
+                    "crate::domain::user::User::save",
+                    "src/domain/user.rs",
+                    14,
+                )],
+            )],
+            vec![fact(
+                FactKind::PersistenceWrite,
+                "crate::domain::user::User::save",
+                "std::fs::write",
+                "persistence write",
+            )],
+        );
+        let section = domain_rm_section(vec!["crate::domain::*"]);
+        let diags = rm006(&air, &section, CheckMode::Human);
+        assert_eq!(diags.len(), 1);
+        let d = &diags[0];
+        assert_eq!(d.rule_id, "RM006");
+        assert_eq!(d.severity, Severity::Warning);
+        assert_eq!(d.span.line_start, 14);
+        assert!(d.message.contains("crate::domain::user::User::save"));
+        assert!(
+            d.why.iter().any(|w| w.contains("domain_paths_rm")),
+            "expected matched pattern label in why; got {:?}",
+            d.why
+        );
+        assert!(
+            d.why.iter().any(|w| w.contains("method-shaped")),
+            "expected method-shape reason in why; got {:?}",
+            d.why
+        );
+        assert!(
+            d.suggested_fix
+                .as_deref()
+                .map(|f| f.contains("Repository"))
+                .unwrap_or(false),
+            "expected Repository in fix; got {:?}",
+            d.suggested_fix
+        );
+    }
+
+    #[test]
+    fn rm006_quiet_when_target_is_free_function() {
+        // Symbol shape `crate::domain::user::save` has no TypeName segment
+        // — looks like a free function, so the rule must skip it.
+        let air = air_with_facts(
+            vec![(
+                "src/domain/user.rs",
+                Some("crate::domain::user"),
+                vec![func("crate::domain::user::save", "src/domain/user.rs", 14)],
+            )],
+            vec![fact(
+                FactKind::PersistenceWrite,
+                "crate::domain::user::save",
+                "std::fs::write",
+                "persistence write",
+            )],
+        );
+        let section = domain_rm_section(vec!["crate::domain::*"]);
+        assert!(rm006(&air, &section, CheckMode::Human).is_empty());
+    }
+
+    #[test]
+    fn rm006_quiet_on_other_fact_kinds() {
+        let air = air_with_facts(
+            vec![(
+                "src/domain/user.rs",
+                Some("crate::domain::user"),
+                vec![func(
+                    "crate::domain::user::User::save",
+                    "src/domain/user.rs",
+                    14,
+                )],
+            )],
+            vec![
+                fact(
+                    FactKind::ExternalIo,
+                    "crate::domain::user::User::save",
+                    "reqwest::get",
+                    "external IO",
+                ),
+                fact(
+                    FactKind::Logging,
+                    "crate::domain::user::User::save",
+                    "tracing::info!",
+                    "logging primitive",
+                ),
+            ],
+        );
+        let section = domain_rm_section(vec!["crate::domain::*"]);
+        assert!(rm006(&air, &section, CheckMode::Human).is_empty());
+    }
+
+    #[test]
+    fn rm006_silent_when_domain_paths_rm_empty() {
+        let air = air_with_facts(
+            vec![(
+                "src/domain/user.rs",
+                Some("crate::domain::user"),
+                vec![func(
+                    "crate::domain::user::User::save",
+                    "src/domain/user.rs",
+                    14,
+                )],
+            )],
+            vec![fact(
+                FactKind::PersistenceWrite,
+                "crate::domain::user::User::save",
+                "std::fs::write",
+                "persistence write",
+            )],
+        );
+        let section = RmSection::default();
+        assert!(rm006(&air, &section, CheckMode::Human).is_empty());
+    }
+
+    #[test]
+    fn rm006_agent_strict_elevates_to_fatal() {
+        let air = air_with_facts(
+            vec![(
+                "src/domain/user.rs",
+                Some("crate::domain::user"),
+                vec![func(
+                    "crate::domain::user::User::save",
+                    "src/domain/user.rs",
+                    14,
+                )],
+            )],
+            vec![fact(
+                FactKind::PersistenceWrite,
+                "crate::domain::user::User::save",
+                "std::fs::write",
+                "persistence write",
+            )],
+        );
+        let section = domain_rm_section(vec!["crate::domain::*"]);
+        let diags = rm006(&air, &section, CheckMode::AgentStrict);
+        assert_eq!(diags.len(), 1);
+        assert_eq!(diags[0].severity, Severity::Fatal);
+    }
+
+    #[test]
+    fn rm006_looks_like_method_unit_checks() {
+        // Free fn `pkg::foo` — too few segments
+        assert!(!looks_like_method("pkg::foo"));
+        // Free fn `pkg::module::foo` — no TypeName segment
+        assert!(!looks_like_method("pkg::module::foo"));
+        // Method `pkg::Type::method`
+        assert!(looks_like_method("pkg::Type::method"));
+        // Method nested deeper `pkg::module::Type::method`
+        assert!(looks_like_method("pkg::module::Type::method"));
+        // Inline tests mod free fn — lowercase `tests` doesn't trip
+        assert!(!looks_like_method("pkg::module::tests::it_works"));
     }
 }

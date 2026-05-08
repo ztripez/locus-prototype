@@ -6,12 +6,16 @@
 //! - [`pa002`]: application/domain file imports a concrete adapter framework
 //!   (`reqwest::*`, `sqlx::*`, …) — that's an adapter detail, not domain
 //!   concern.
+//! - [`pa003`]: application function performs an external-IO call directly
+//!   instead of going through a declared port.
 //! - [`pa004`]: an adapter type is constructed outside any composition
 //!   root / bootstrap / composition module.
 
 use std::collections::BTreeMap;
 
-use locus_air::{ActionKind, AirImpl, AirItem, AirWorkspace, TypeKind};
+use locus_air::{
+    ActionKind, AirFact, AirImpl, AirItem, AirSpan, AirWorkspace, FactKind, FactTarget, TypeKind,
+};
 
 use super::lockfile_schema::{PaSection, matches_pattern};
 use crate::diagnostics::{CheckMode, Diagnostic, Severity};
@@ -201,6 +205,124 @@ pub fn pa002(air: &AirWorkspace, section: &PaSection, mode: CheckMode) -> Vec<Di
         }
     }
     out
+}
+
+/// PA003 — application function performs an external-IO call without
+/// going through a declared port.
+///
+/// For every `FactKind::ExternalIo` fact whose `target` is a `Function`,
+/// resolve the function's enclosing module path and fire when that path
+/// matches one of `application_paths`. The `std-rt` loader emits these
+/// facts for `std::process::Command::*`, `std::net::*`, and similar
+/// outbound primitives. Application code reaching directly into those
+/// primitives bypasses the port layer entirely — same posture as PA002,
+/// just enforced against runtime call-site evidence rather than imports.
+///
+/// Severity: Fatal — structural; agent-strict already elevates anything.
+///
+/// Silent when `application_paths` is empty: same opt-in UX as PA002.
+///
+/// Module-path resolution: the file's `module_path` is checked first; if
+/// no match, the function symbol itself is matched against the same
+/// patterns. This lets an `*::tests::*` carve-out cover inline `mod tests`
+/// blocks that live at a deeper symbol path than the file.
+pub fn pa003(air: &AirWorkspace, section: &PaSection, mode: CheckMode) -> Vec<Diagnostic> {
+    if section.application_paths.is_empty() {
+        return Vec::new();
+    }
+    let mut out = Vec::new();
+    for fact in &air.facts {
+        if fact.kind != FactKind::ExternalIo {
+            continue;
+        }
+        let FactTarget::Function { symbol } = &fact.target else {
+            continue;
+        };
+        let Some((module_path, fn_span)) = pa_lookup_function(air, symbol) else {
+            continue;
+        };
+        let matched_pattern = section
+            .application_paths
+            .iter()
+            .find(|pat| matches_pattern(pat, module_path) || matches_pattern(pat, symbol));
+        let Some(matched_pattern) = matched_pattern else {
+            continue;
+        };
+        out.push(pa003_diagnostic(
+            fact,
+            symbol,
+            module_path,
+            fn_span,
+            matched_pattern,
+            mode,
+        ));
+    }
+    out
+}
+
+/// Resolve `symbol` against AIR. Returns the enclosing file's module_path
+/// and the function's span. Mirrors `runtime_work::rules::lookup_function`.
+fn pa_lookup_function<'a>(air: &'a AirWorkspace, symbol: &str) -> Option<(&'a str, AirSpan)> {
+    for pkg in &air.packages {
+        for file in &pkg.files {
+            for item in &file.items {
+                if let AirItem::Function(f) = item
+                    && f.symbol == symbol
+                {
+                    let module = file.module_path.as_deref()?;
+                    return Some((module, f.span.clone()));
+                }
+            }
+        }
+    }
+    None
+}
+
+fn pa003_diagnostic(
+    fact: &AirFact,
+    symbol: &str,
+    module_path: &str,
+    fn_span: AirSpan,
+    matched_pattern: &str,
+    mode: CheckMode,
+) -> Diagnostic {
+    let span = match &fact.target {
+        FactTarget::Span(s) => s.clone(),
+        FactTarget::Function { .. } | FactTarget::File { .. } => fn_span,
+    };
+    let evidence = fact.evidence.as_deref().unwrap_or("?");
+    let mut why = vec![
+        format!("module `{module_path}` matches application_paths pattern `{matched_pattern}`"),
+        format!("external-IO evidence: `{evidence}`"),
+    ];
+    for r in &fact.reasons {
+        why.push(r.clone());
+    }
+    why.push(
+        "external IO must be abstracted behind a port (trait) and \
+         implemented in an adapter, not called directly from application code"
+            .into(),
+    );
+    Diagnostic {
+        rule_id: "PA003".to_string(),
+        severity: mode.elevate(Severity::Fatal),
+        span,
+        concept: None,
+        message: format!(
+            "application function `{symbol}` performs external IO `{evidence}` \
+             without going through a declared port"
+        ),
+        why,
+        suggested_fix: Some(format!(
+            "introduce a port trait for the IO concept (e.g. `HttpClient`, \
+             `ProcessRunner`, `Network`), implement it in an adapter module, \
+             and inject the adapter through the composition root. The \
+             application function `{symbol}` should depend on the trait, not \
+             reach for `{evidence}` directly. If `{module_path}` is not \
+             actually application code, narrow `paradigms.PA.application_paths` \
+             in `locus.lock`."
+        )),
+    }
 }
 
 /// PA004 — adapter construction outside composition root.
@@ -777,5 +899,294 @@ mod tests {
             ..Default::default()
         };
         assert!(pa004(&air, &section, CheckMode::Human).is_empty());
+    }
+
+    // ----- PA003 -----
+
+    fn func_item(symbol: &str, file: &str, line: u32) -> AirItem {
+        use locus_air::AirFunction;
+        AirItem::Function(AirFunction {
+            name: symbol.rsplit("::").next().unwrap_or(symbol).into(),
+            symbol: symbol.into(),
+            visibility: Visibility::Public,
+            params: Vec::new(),
+            return_type: None,
+            span: AirSpan::new(file, line, line + 5),
+            line_count: 6,
+            doc: None,
+        })
+    }
+
+    fn external_io_fact(symbol: &str, evidence: &str, reason: &str) -> AirFact {
+        AirFact {
+            kind: FactKind::ExternalIo,
+            target: FactTarget::Function {
+                symbol: symbol.into(),
+            },
+            source: "test".into(),
+            confidence: 1.0,
+            reasons: vec![reason.into()],
+            evidence: Some(evidence.into()),
+        }
+    }
+
+    fn workspace_with_module_facts(
+        module_path: &str,
+        file: &str,
+        items: Vec<AirItem>,
+        facts: Vec<AirFact>,
+    ) -> AirWorkspace {
+        AirWorkspace {
+            schema_version: AIR_SCHEMA_VERSION,
+            packages: vec![AirPackage {
+                name: "x".into(),
+                version: "0".into(),
+                root_dir: "/".into(),
+                files: vec![AirFile {
+                    path: file.into(),
+                    module_path: Some(module_path.into()),
+                    items,
+                    hints: Vec::new(),
+                    parse_error: None,
+                    line_count: 1,
+                }],
+            }],
+            facts,
+        }
+    }
+
+    #[test]
+    fn pa003_fires_on_external_io_in_application_path() {
+        let air = workspace_with_module_facts(
+            "crate::application::user",
+            "src/app.rs",
+            vec![func_item(
+                "crate::application::user::create",
+                "src/app.rs",
+                8,
+            )],
+            vec![external_io_fact(
+                "crate::application::user::create",
+                "std::process::Command::output",
+                "std::process::Command::output is external IO",
+            )],
+        );
+        let section = PaSection {
+            application_paths: vec!["crate::application::*".into()],
+            ..Default::default()
+        };
+        let diags = pa003(&air, &section, CheckMode::Human);
+        assert_eq!(diags.len(), 1);
+        let d = &diags[0];
+        assert_eq!(d.rule_id, "PA003");
+        assert_eq!(d.severity, Severity::Fatal);
+        assert_eq!(d.span.line_start, 8);
+        assert!(d.message.contains("crate::application::user::create"));
+        assert!(d.message.contains("std::process::Command::output"));
+        assert!(
+            d.why.iter().any(|w| w.contains("crate::application::*")),
+            "expected matched pattern in why; got {:?}",
+            d.why
+        );
+        assert!(
+            d.why
+                .iter()
+                .any(|w| w.contains("external IO must be abstracted")),
+            "expected port-rationale why; got {:?}",
+            d.why
+        );
+    }
+
+    #[test]
+    fn pa003_quiet_when_function_outside_application_paths() {
+        let air = workspace_with_module_facts(
+            "crate::infrastructure::cmd",
+            "src/inf.rs",
+            vec![func_item(
+                "crate::infrastructure::cmd::run",
+                "src/inf.rs",
+                4,
+            )],
+            vec![external_io_fact(
+                "crate::infrastructure::cmd::run",
+                "std::process::Command::output",
+                "external IO",
+            )],
+        );
+        let section = PaSection {
+            application_paths: vec!["crate::application::*".into()],
+            ..Default::default()
+        };
+        assert!(pa003(&air, &section, CheckMode::Human).is_empty());
+    }
+
+    #[test]
+    fn pa003_quiet_on_other_fact_kinds() {
+        let air = workspace_with_module_facts(
+            "crate::application::user",
+            "src/app.rs",
+            vec![func_item(
+                "crate::application::user::create",
+                "src/app.rs",
+                8,
+            )],
+            vec![
+                AirFact {
+                    kind: FactKind::Logging,
+                    target: FactTarget::Function {
+                        symbol: "crate::application::user::create".into(),
+                    },
+                    source: "test".into(),
+                    confidence: 1.0,
+                    reasons: Vec::new(),
+                    evidence: Some("tracing::info!".into()),
+                },
+                AirFact {
+                    kind: FactKind::PersistenceWrite,
+                    target: FactTarget::Function {
+                        symbol: "crate::application::user::create".into(),
+                    },
+                    source: "test".into(),
+                    confidence: 1.0,
+                    reasons: Vec::new(),
+                    evidence: Some("std::fs::write".into()),
+                },
+                AirFact {
+                    kind: FactKind::BlockingCall,
+                    target: FactTarget::Function {
+                        symbol: "crate::application::user::create".into(),
+                    },
+                    source: "test".into(),
+                    confidence: 1.0,
+                    reasons: Vec::new(),
+                    evidence: Some("std::thread::sleep".into()),
+                },
+            ],
+        );
+        let section = PaSection {
+            application_paths: vec!["crate::application::*".into()],
+            ..Default::default()
+        };
+        assert!(pa003(&air, &section, CheckMode::Human).is_empty());
+    }
+
+    #[test]
+    fn pa003_silent_when_application_paths_empty() {
+        let air = workspace_with_module_facts(
+            "crate::application::user",
+            "src/app.rs",
+            vec![func_item(
+                "crate::application::user::create",
+                "src/app.rs",
+                8,
+            )],
+            vec![external_io_fact(
+                "crate::application::user::create",
+                "std::net::TcpStream::connect",
+                "external IO",
+            )],
+        );
+        let section = PaSection::default();
+        assert!(pa003(&air, &section, CheckMode::Human).is_empty());
+    }
+
+    #[test]
+    fn pa003_agent_strict_keeps_fatal() {
+        let air = workspace_with_module_facts(
+            "crate::application::user",
+            "src/app.rs",
+            vec![func_item(
+                "crate::application::user::create",
+                "src/app.rs",
+                8,
+            )],
+            vec![external_io_fact(
+                "crate::application::user::create",
+                "std::process::Command::output",
+                "external IO",
+            )],
+        );
+        let section = PaSection {
+            application_paths: vec!["crate::application::*".into()],
+            ..Default::default()
+        };
+        let diags = pa003(&air, &section, CheckMode::AgentStrict);
+        assert_eq!(diags.len(), 1);
+        assert_eq!(diags[0].severity, Severity::Fatal);
+    }
+
+    #[test]
+    fn pa003_per_symbol_test_module_carve_out_via_symbol_match() {
+        // The function lives in file `crate::application::user`, and it's
+        // also matched by `crate::application::*`. But if the user has a
+        // narrower opt-in restricted to non-test paths via a non-overlapping
+        // pattern like `crate::application::user::api::*`, the file isn't
+        // matched and nothing fires. More important: an inline `tests`
+        // module's function symbol embeds `::tests::` — a check against
+        // `application_paths` should still match the symbol if the user
+        // wrote a pattern like `*::application::*`, but a per-symbol exempt
+        // (a `*::tests::*` pattern in `application_paths` would be the
+        // wrong direction). Instead, we model "test module under
+        // application" by ensuring that when application_paths contains
+        // `crate::application::*` and the function symbol is
+        // `crate::application::user::tests::it_works` (file module path is
+        // `crate::application::user::tests` for an inline mod), the rule
+        // still fires — i.e. symbol-anywhere matching reaches inline test
+        // modules just like the file path does. The carve-out, when
+        // desired, is naturally expressed by *not* including
+        // `*::tests::*` style files in `application_paths`.
+        let air = workspace_with_module_facts(
+            "crate::application::user::tests",
+            "src/app.rs",
+            vec![func_item(
+                "crate::application::user::tests::it_works",
+                "src/app.rs",
+                30,
+            )],
+            vec![external_io_fact(
+                "crate::application::user::tests::it_works",
+                "std::process::Command::output",
+                "external IO",
+            )],
+        );
+        // User pinned application paths to non-test sub-paths only — tests
+        // module is intentionally excluded.
+        let section = PaSection {
+            application_paths: vec!["crate::application::user::api::*".into()],
+            ..Default::default()
+        };
+        assert!(
+            pa003(&air, &section, CheckMode::Human).is_empty(),
+            "tests module not in application_paths must not fire"
+        );
+    }
+
+    #[test]
+    fn pa003_matches_via_function_symbol_when_module_path_is_unrelated() {
+        // File-level module_path doesn't match (file is in
+        // `crate::other`), but the function symbol embeds the application
+        // path because it's an inline submodule. Same fix RW001 already
+        // applied.
+        let air = workspace_with_module_facts(
+            "crate::other",
+            "src/other.rs",
+            vec![func_item(
+                "crate::application::user::create",
+                "src/other.rs",
+                10,
+            )],
+            vec![external_io_fact(
+                "crate::application::user::create",
+                "std::process::Command::output",
+                "external IO",
+            )],
+        );
+        let section = PaSection {
+            application_paths: vec!["crate::application::*".into()],
+            ..Default::default()
+        };
+        // Symbol-anywhere fallback must catch it.
+        let diags = pa003(&air, &section, CheckMode::Human);
+        assert_eq!(diags.len(), 1, "symbol fallback should match");
     }
 }

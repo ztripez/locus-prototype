@@ -6,6 +6,8 @@
 //! - PA001: trait declared and immediately implemented in the same file
 //!   (port and adapter co-located — physical separation never happened).
 //! - PA002: application/domain file imports a concrete adapter framework.
+//! - PA003: application function performs external IO without going
+//!   through a declared port.
 //! - PA004: adapter type constructed outside any composition root /
 //!   bootstrap / composition module.
 //!
@@ -46,6 +48,7 @@ impl Paradigm for PortAdapter {
             lockfile.paradigm_section(PA_PREFIX).unwrap_or_default();
         let mut diags = rules::pa001(air, &section, mode);
         diags.extend(rules::pa002(air, &section, mode));
+        diags.extend(rules::pa003(air, &section, mode));
         diags.extend(rules::pa004(air, &section, mode));
         diags
     }
