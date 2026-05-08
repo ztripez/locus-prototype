@@ -74,7 +74,7 @@ use locus_core::paradigms::observability::{
 };
 use locus_core::paradigms::one_truth::{
     OT_PREFIX,
-    accept::{accept_boundary, accept_canonical},
+    accept::{accept_boundary, accept_canonical, accept_converter},
     lockfile_schema::OtSection,
 };
 use locus_core::paradigms::port_adapter::{
@@ -413,10 +413,12 @@ struct DgForbidEdgeArgs {
 // ot: boundary cli.accept cli
 #[derive(Subcommand, Debug)]
 enum AcceptCommand {
-    /// Accept a symbol as the canonical type for a concept.
+    /// Accept a symbol as canonical for a concept.
     Canonical(AcceptCanonicalArgs),
     /// Accept a symbol as a boundary adapter for an existing concept.
     Boundary(AcceptBoundaryArgs),
+    /// Accept a converter symbol for an existing concept.
+    Converter(AcceptConverterArgs),
 }
 
 // ot: boundary cli.accept-canonical cli
@@ -445,6 +447,24 @@ struct AcceptBoundaryArgs {
     /// Boundary label, e.g. `api.v1`, `persistence`, `proto`.
     #[arg(long)]
     boundary: Option<String>,
+    #[arg(long, default_value = ".")]
+    workspace: PathBuf,
+}
+
+// ot: boundary cli.accept-converter cli
+#[derive(clap::Args, Debug)]
+struct AcceptConverterArgs {
+    /// The converter symbol — e.g. `"impl TryFrom<UserDto> for User"` or a free fn path.
+    symbol: String,
+    /// Concept id the converter belongs to.
+    #[arg(long)]
+    concept: String,
+    /// Optional source-side symbol hint.
+    #[arg(long)]
+    from: Option<String>,
+    /// Optional target-side symbol hint.
+    #[arg(long)]
+    to: Option<String>,
     #[arg(long, default_value = ".")]
     workspace: PathBuf,
 }
@@ -1516,6 +1536,7 @@ fn accept(cmd: AcceptCommand) -> Result<()> {
     let workspace = match &cmd {
         AcceptCommand::Canonical(a) => a.workspace.clone(),
         AcceptCommand::Boundary(a) => a.workspace.clone(),
+        AcceptCommand::Converter(a) => a.workspace.clone(),
     };
     let air = locus_rust::scan(&workspace)
         .with_context(|| format!("scan failed: {}", workspace.display()))?;
@@ -1550,6 +1571,21 @@ fn accept(cmd: AcceptCommand) -> Result<()> {
                     .as_deref()
                     .map(|b| format!(" (label `{b}`)"))
                     .unwrap_or_default()
+            )
+        }
+        AcceptCommand::Converter(a) => {
+            accept_converter(
+                &mut section,
+                &air,
+                &a.symbol,
+                &a.concept,
+                a.from.as_deref(),
+                a.to.as_deref(),
+            )
+            .with_context(|| format!("accept converter `{}`", a.symbol))?;
+            format!(
+                "accepted `{}` as converter for concept `{}`",
+                a.symbol, a.concept
             )
         }
     };

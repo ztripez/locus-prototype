@@ -10,7 +10,7 @@ use thiserror::Error;
 
 use super::infer::stem_concept_id;
 use super::lockfile_schema::{
-    AcceptedBoundary, AcceptedCanonical, ConceptEntry, OtSection, Source,
+    AcceptedBoundary, AcceptedCanonical, AcceptedConverter, ConceptEntry, OtSection, Source,
 };
 
 #[derive(Debug, Error, PartialEq, Eq)]
@@ -123,6 +123,36 @@ pub fn accept_boundary(
             source: Source::Accepted,
         });
     }
+    Ok(())
+}
+
+/// Accept a converter for `concept`. The concept must exist (i.e. its
+/// canonical was previously accepted). `from` and `to` are optional symbol
+/// hints that flow into the lockfile entry.
+///
+/// Idempotent: if a converter with the given `symbol` already exists in
+/// the concept, this is a no-op.
+pub fn accept_converter(
+    section: &mut OtSection,
+    _air: &AirWorkspace,
+    symbol: &str,
+    concept: &str,
+    from: Option<&str>,
+    to: Option<&str>,
+) -> Result<(), AcceptError> {
+    let entry = section
+        .concepts
+        .get_mut(concept)
+        .ok_or_else(|| AcceptError::UnknownConcept(concept.to_string()))?;
+    if entry.converters.iter().any(|c| c.symbol == symbol) {
+        return Ok(());
+    }
+    entry.converters.push(AcceptedConverter {
+        from: from.unwrap_or("").to_string(),
+        to: to.unwrap_or("").to_string(),
+        symbol: symbol.to_string(),
+        source: Source::Accepted,
+    });
     Ok(())
 }
 
@@ -261,5 +291,83 @@ mod tests {
             err,
             AcceptError::SymbolAlreadyBoundary("crate::Team".into())
         );
+    }
+
+    #[test]
+    fn accept_converter_inserts_into_existing_concept() {
+        // Build a section with one accepted canonical + one boundary so the
+        // converter's endpoints both resolve.
+        let mut section = OtSection::default();
+        section.concepts.insert(
+            "user".into(),
+            ConceptEntry {
+                canonical: AcceptedCanonical {
+                    symbol: "x::User".into(),
+                    source: Source::Accepted,
+                },
+                boundaries: vec![AcceptedBoundary {
+                    symbol: "x::UserDto".into(),
+                    boundary: None,
+                    source: Source::Accepted,
+                }],
+                converters: Vec::new(),
+            },
+        );
+        let air =
+            locus_rust::scan(std::path::Path::new("../../tests/fixtures/sample-crate")).unwrap();
+        accept_converter(
+            &mut section,
+            &air,
+            "impl TryFrom<x::User> for x::UserDto",
+            "user",
+            Some("x::User"),
+            Some("x::UserDto"),
+        )
+        .unwrap();
+        let entry = section.concepts.get("user").unwrap();
+        assert_eq!(entry.converters.len(), 1);
+        assert_eq!(
+            entry.converters[0].symbol,
+            "impl TryFrom<x::User> for x::UserDto"
+        );
+    }
+
+    #[test]
+    fn accept_converter_rejects_unknown_concept() {
+        let mut section = OtSection::default();
+        let air =
+            locus_rust::scan(std::path::Path::new("../../tests/fixtures/sample-crate")).unwrap();
+        let err = accept_converter(
+            &mut section,
+            &air,
+            "sym",
+            "missing",
+            Some("x::A"),
+            Some("x::B"),
+        )
+        .unwrap_err();
+        assert!(matches!(err, AcceptError::UnknownConcept(_)));
+    }
+
+    #[test]
+    fn accept_converter_dedupes_by_symbol() {
+        let mut section = OtSection::default();
+        section.concepts.insert(
+            "user".into(),
+            ConceptEntry {
+                canonical: AcceptedCanonical {
+                    symbol: "x::User".into(),
+                    source: Source::Accepted,
+                },
+                boundaries: Vec::new(),
+                converters: Vec::new(),
+            },
+        );
+        let air =
+            locus_rust::scan(std::path::Path::new("../../tests/fixtures/sample-crate")).unwrap();
+        accept_converter(&mut section, &air, "sym", "user", None, None).unwrap();
+        accept_converter(&mut section, &air, "sym", "user", None, None).unwrap();
+        let entry = section.concepts.get("user").unwrap();
+        assert_eq!(entry.converters.len(), 1);
     }
 }
