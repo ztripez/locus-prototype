@@ -23,6 +23,10 @@ pub fn cross_paradigm_suggestions(air: &AirWorkspace, lockfile: &Lockfile) -> Ve
     if !layers.domain.is_empty() && !any_domain_paths_set(lockfile) {
         out.push(domain_layer_suggestion(&layers.domain));
     }
+    let modules = top_level_modules(air);
+    if !modules.is_empty() && !any_features_set(lockfile) {
+        out.push(feature_partition_suggestion(&modules));
+    }
     out
 }
 
@@ -49,6 +53,42 @@ fn has_nonempty_array(v: &serde_json::Value, key: &str) -> bool {
     v.get(key)
         .and_then(|a| a.as_array())
         .is_some_and(|a| !a.is_empty())
+}
+
+fn any_features_set(lockfile: &Lockfile) -> bool {
+    let dg: serde_json::Value = lockfile
+        .paradigm_section("DG")
+        .unwrap_or(serde_json::Value::Null);
+    let fo: serde_json::Value = lockfile
+        .paradigm_section("FO")
+        .unwrap_or(serde_json::Value::Null);
+    has_nonempty_array(&dg, "features") || has_nonempty_array(&fo, "features")
+}
+
+fn feature_partition_suggestion(modules: &[String]) -> Suggestion {
+    let mut commands: Vec<String> = Vec::new();
+    for m in modules {
+        commands.push(format!(
+            "locus dg define-feature --name {m} --module \"{m}::*\""
+        ));
+    }
+    commands.push("# (FO mirrors DG features once these are accepted)".into());
+    Suggestion {
+        category: SuggestionCategory::Feature,
+        headline: "no features defined; DG/FO will not fire".into(),
+        why: vec![format!("top-level modules: {}", modules.join(", "))],
+        options: vec![
+            CommandOption {
+                label: "define".into(),
+                commands,
+            },
+            CommandOption {
+                label: "or skip".into(),
+                commands: vec!["locus init --acknowledge-empty DG,FO".into()],
+            },
+        ],
+        prefixes: vec!["DG".into(), "FO".into()],
+    }
 }
 
 fn domain_layer_suggestion(globs: &[String]) -> Suggestion {
@@ -560,5 +600,64 @@ mod top_level_module_tests {
     fn ignores_crate_root_only_files() {
         let air = ws(&["x"]);
         assert!(top_level_modules(&air).is_empty());
+    }
+}
+
+#[cfg(test)]
+mod cross_paradigm_feature_tests {
+    use super::*;
+    use crate::lockfile::Lockfile;
+    use locus_air::{AirFile, AirPackage, AirWorkspace};
+
+    fn ws(modules: &[&str]) -> AirWorkspace {
+        AirWorkspace::new(vec![AirPackage {
+            name: "x".into(),
+            version: "0.0.1".into(),
+            root_dir: "/tmp/x".into(),
+            files: modules
+                .iter()
+                .map(|m| AirFile {
+                    path: format!("src/{}.rs", m.replace("::", "/")),
+                    module_path: Some((*m).into()),
+                    items: Vec::new(),
+                    hints: Vec::new(),
+                    parse_error: None,
+                    line_count: 1,
+                })
+                .collect(),
+        }])
+    }
+
+    #[test]
+    fn emits_feature_suggestion_when_dg_and_fo_empty() {
+        let air = ws(&["x::user::domain", "x::order::api", "x::billing::handlers"]);
+        let lf = Lockfile::empty();
+        let suggestions = cross_paradigm_suggestions(&air, &lf);
+        let feat = suggestions
+            .iter()
+            .find(|s| s.category == SuggestionCategory::Feature);
+        assert!(feat.is_some(), "expected a feature suggestion");
+        let s = feat.unwrap();
+        let cmds = s.options[0].commands.join("\n");
+        assert!(cmds.contains("locus dg define-feature --name user --module \"user::*\""));
+        assert!(cmds.contains("locus dg define-feature --name order --module \"order::*\""));
+        assert!(cmds.contains("locus dg define-feature --name billing --module \"billing::*\""));
+    }
+
+    #[test]
+    fn omits_feature_suggestion_when_dg_already_has_features() {
+        use serde_json::json;
+        let air = ws(&["x::user::domain"]);
+        let mut lf = Lockfile::empty();
+        lf.paradigms.insert(
+            "DG".into(),
+            json!({"features": [{"name": "user", "module": "user::*", "public_api": []}]}),
+        );
+        let suggestions = cross_paradigm_suggestions(&air, &lf);
+        assert!(
+            suggestions
+                .iter()
+                .all(|s| s.category != SuggestionCategory::Feature)
+        );
     }
 }
