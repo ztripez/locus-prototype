@@ -11,7 +11,15 @@
 
 // ot: canonical
 
+use crate::lockfile::Lockfile;
+use locus_air::AirWorkspace;
 use std::cmp::Ordering;
+
+/// Cross-paradigm suggestions (layer detection, feature partitioning, …).
+/// Phase 1 returns no suggestions; phases 2 and 4 populate it.
+pub fn cross_paradigm_suggestions(_air: &AirWorkspace, _lockfile: &Lockfile) -> Vec<Suggestion> {
+    Vec::new()
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Suggestion {

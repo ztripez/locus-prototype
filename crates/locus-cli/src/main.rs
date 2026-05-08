@@ -1500,7 +1500,44 @@ fn init(args: InitArgs) -> Result<()> {
             count
         );
     }
+
+    let mut suggestions: Vec<locus_core::init::Suggestion> = Vec::new();
+    for paradigm in &registry {
+        suggestions.extend(paradigm.suggest(&air, &lockfile));
+    }
+    suggestions.extend(locus_core::init::cross_paradigm_suggestions(
+        &air, &lockfile,
+    ));
+    let suggestions = locus_core::init::aggregate(suggestions);
+
+    let hints_promoted = count_hint_promotions(&lockfile);
+    print!("{}", render_checklist(&suggestions, hints_promoted));
+
+    if !suggestions.is_empty() {
+        std::process::exit(1);
+    }
     Ok(())
+}
+
+fn count_hint_promotions(lockfile: &Lockfile) -> usize {
+    use locus_core::paradigms::one_truth::lockfile_schema::{OtSection, Source};
+
+    let section: OtSection = match lockfile.paradigm_section("OT") {
+        Ok(s) => s,
+        Err(_) => return 0,
+    };
+    let mut count = 0usize;
+    for entry in section.concepts.values() {
+        if entry.canonical.source == Source::Hint {
+            count += 1;
+        }
+        for b in &entry.boundaries {
+            if b.source == Source::Hint {
+                count += 1;
+            }
+        }
+    }
+    count
 }
 
 fn section_is_empty(v: &serde_json::Value) -> bool {
@@ -1719,5 +1756,39 @@ mod init_acknowledge_empty_tests {
         let lockfile_bytes = std::fs::read(dir.join(LOCKFILE_NAME)).unwrap();
         let lf: Lockfile = serde_json::from_slice(&lockfile_bytes).unwrap();
         assert_eq!(lf.acknowledged_empty, vec!["RW", "DA"]);
+    }
+}
+
+fn render_checklist(suggestions: &[locus_core::init::Suggestion], hints_promoted: usize) -> String {
+    use std::fmt::Write as _;
+
+    let mut out = String::new();
+    let _ = writeln!(out, "auto-applied: {hints_promoted} source hints promoted");
+    let _ = writeln!(out, "unresolved: {}", suggestions.len());
+    if suggestions.is_empty() {
+        return out;
+    }
+    for s in suggestions {
+        out.push('\n');
+        out.push_str(&s.render());
+        out.push('\n');
+    }
+    out.push('\n');
+    out.push_str("re-run `locus init` after applying changes.\n");
+    out
+}
+
+#[cfg(test)]
+mod render_checklist_tests {
+    use super::*;
+    use locus_core::init::Suggestion;
+
+    #[test]
+    fn render_empty_checklist_says_zero_unresolved() {
+        let suggestions: Vec<Suggestion> = Vec::new();
+        let out = render_checklist(&suggestions, /*hints_promoted=*/ 4);
+        assert!(out.contains("auto-applied: 4 source hints promoted"));
+        assert!(out.contains("unresolved: 0"));
+        assert!(!out.contains("re-run"));
     }
 }
