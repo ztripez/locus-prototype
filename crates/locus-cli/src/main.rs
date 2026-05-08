@@ -143,6 +143,9 @@ enum Command {
     /// Manage DG (Dependency Graph) declarations in `locus.lock`.
     #[command(subcommand)]
     Dg(DgCommand),
+    /// Manage ER (Error Taxonomy) declarations in `locus.lock`.
+    #[command(subcommand)]
+    Er(ErCommand),
     /// Manage FL (Failure Lineage) declarations in `locus.lock`.
     #[command(subcommand)]
     Fl(FlCommand),
@@ -446,6 +449,22 @@ struct AcceptBoundaryArgs {
     workspace: PathBuf,
 }
 
+// ot: boundary cli.er cli
+#[derive(Subcommand, Debug)]
+enum ErCommand {
+    /// Mark a module pattern as part of the domain layer (ER003).
+    AddDomainPath(ErAddDomainPathArgs),
+}
+
+// ot: boundary cli.er-add-domain-path cli
+#[derive(clap::Args, Debug)]
+struct ErAddDomainPathArgs {
+    /// Module path glob, e.g. `"crate::domain::*"`.
+    pattern: String,
+    #[arg(long, default_value = ".")]
+    workspace: PathBuf,
+}
+
 // ot: boundary cli.fl cli
 #[derive(Subcommand, Debug)]
 enum FlCommand {
@@ -690,6 +709,7 @@ fn main() -> Result<()> {
         Command::Da(cmd) => da(cmd),
         Command::Dc(cmd) => dc(cmd),
         Command::Dg(cmd) => dg(cmd),
+        Command::Er(cmd) => er(cmd),
         Command::Fl(cmd) => fl(cmd),
         Command::Fo(cmd) => fo(cmd),
         Command::Mo(cmd) => mo(cmd),
@@ -1058,6 +1078,36 @@ fn fl_add_boundary_error_cli(args: FlAddBoundaryErrorArgs) -> Result<()> {
         .with_context(|| format!("write lockfile to {}", args.workspace.display()))?;
 
     println!("added boundary error pattern `{}`", args.pattern);
+    println!("updated {}", written.display());
+    Ok(())
+}
+
+fn er(cmd: ErCommand) -> Result<()> {
+    match cmd {
+        ErCommand::AddDomainPath(args) => er_add_domain_path_cli(args),
+    }
+}
+
+fn er_add_domain_path_cli(args: ErAddDomainPathArgs) -> Result<()> {
+    use locus_core::paradigms::error_taxonomy::edit::add_domain_path;
+    use locus_core::paradigms::error_taxonomy::lockfile_schema::ErSection;
+
+    let mut lockfile = Lockfile::load_or_empty(&args.workspace)
+        .with_context(|| format!("load lockfile from {}", args.workspace.display()))?;
+    let mut section: ErSection = lockfile
+        .paradigm_section("ER")
+        .context("ER lockfile section is malformed")?;
+
+    add_domain_path(&mut section, &args.pattern)
+        .with_context(|| format!("add ER domain path `{}`", args.pattern))?;
+
+    let value = serde_json::to_value(&section).context("serialize ER section")?;
+    lockfile.paradigms.insert("ER".to_string(), value);
+    let written = lockfile
+        .save(&args.workspace)
+        .with_context(|| format!("write lockfile to {}", args.workspace.display()))?;
+
+    println!("added ER domain path pattern `{}`", args.pattern);
     println!("updated {}", written.display());
     Ok(())
 }
