@@ -27,6 +27,7 @@ use crate::lockfile::Lockfile;
 use locus_air::AirWorkspace;
 
 pub mod edit;
+pub mod init;
 pub mod lockfile_schema;
 pub mod rules;
 
@@ -64,5 +65,8 @@ impl Paradigm for ConfigData {
         out.extend(rules::cf002(air, &section, mode));
         out.extend(rules::cf003(air, &section, mode));
         out
+    }
+    fn suggest(&self, air: &AirWorkspace, lockfile: &Lockfile) -> Vec<crate::init::Suggestion> {
+        init::suggest(air, lockfile)
     }
 }
