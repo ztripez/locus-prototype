@@ -62,4 +62,8 @@ impl Paradigm for OneTruth {
         out.extend(rules::ot012(air, &section, mode));
         out
     }
+
+    fn suggest(&self, air: &AirWorkspace, lockfile: &Lockfile) -> Vec<crate::init::Suggestion> {
+        init::suggest(air, lockfile)
+    }
 }

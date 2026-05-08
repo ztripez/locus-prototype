@@ -19,6 +19,16 @@ use super::infer::{ClusterMember, InferredRole, cluster_concepts};
 use super::lockfile_schema::{
     AcceptedBoundary, AcceptedCanonical, AcceptedConverter, ConceptEntry, OtSection, Source,
 };
+use crate::init::{CommandOption, Suggestion, SuggestionCategory};
+use crate::lockfile::Lockfile;
+
+/// Confidence floor above which `suggest()` emits a single "accept this
+/// cluster" option. Below it (but above [`MID_CONFIDENCE`]), the suggestion
+/// also offers a "split into separate concepts" alternative.
+const HIGH_CONFIDENCE: f32 = 0.95;
+/// Confidence floor below which `suggest()` stays silent. Members of weaker
+/// clusters surface as OT002 candidates on the next `locus check` instead.
+const MID_CONFIDENCE: f32 = 0.70;
 
 pub fn build_ot_section(air: &AirWorkspace) -> OtSection {
     let clusters = cluster_concepts(air);
@@ -134,6 +144,111 @@ fn accepted_matches(needle: &str, accepted: &BTreeSet<&str>) -> bool {
     })
 }
 
+/// Init-time onboarding suggestions for the OT paradigm.
+///
+/// Walks [`cluster_concepts`], skips clusters whose `concept_id` is already
+/// recorded in the lockfile's `OT` section, then tiers what's left by the
+/// cluster's confidence:
+/// - `>= HIGH_CONFIDENCE`: a single "accept this cluster" option.
+/// - `>= MID_CONFIDENCE`: two options — accept as one concept, or split into
+///   per-member concepts (one canonical + each member as its own canonical).
+/// - `< MID_CONFIDENCE`: silent. Weak overlap shows up later as OT002
+///   candidates on `locus check`, not init noise.
+///
+/// Clusters with no inferred canonical or no boundary members are also
+/// skipped — there's nothing for an agent to "accept" yet.
+pub fn suggest(air: &AirWorkspace, lockfile: &Lockfile) -> Vec<Suggestion> {
+    let section: OtSection = lockfile.paradigm_section("OT").unwrap_or_default();
+    let clusters = cluster_concepts(air);
+    let mut out = Vec::new();
+    for cluster in &clusters {
+        if section.concepts.contains_key(&cluster.concept_id) {
+            continue;
+        }
+        let canonical = match cluster
+            .members
+            .iter()
+            .find(|m| m.role == InferredRole::Canonical)
+        {
+            Some(c) => c,
+            None => continue,
+        };
+        let boundaries: Vec<&ClusterMember> = cluster
+            .members
+            .iter()
+            .filter(|m| m.role == InferredRole::Boundary)
+            .collect();
+        if boundaries.is_empty() {
+            continue;
+        }
+        let confidence = cluster.confidence;
+        if confidence < MID_CONFIDENCE {
+            continue;
+        }
+        let cid = &cluster.concept_id;
+        let accept_canonical_cmd = format!(
+            "locus accept canonical {} --concept {}",
+            canonical.symbol, cid
+        );
+        let accept_boundary_cmds: Vec<String> = boundaries
+            .iter()
+            .map(|m| format!("locus accept boundary {} --concept {}", m.symbol, cid))
+            .collect();
+        let mut single_option_cmds = vec![accept_canonical_cmd.clone()];
+        single_option_cmds.extend(accept_boundary_cmds.iter().cloned());
+
+        if confidence >= HIGH_CONFIDENCE {
+            out.push(Suggestion {
+                category: SuggestionCategory::Concept,
+                headline: format!(
+                    "cluster `{cid}` — {} + {}",
+                    canonical.symbol,
+                    boundaries
+                        .iter()
+                        .map(|m| m.symbol.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ),
+                why: vec![format!("confidence {:.2}", confidence)],
+                options: vec![CommandOption {
+                    label: "accept this cluster".into(),
+                    commands: single_option_cmds,
+                }],
+                prefixes: vec!["OT".into()],
+            });
+        } else {
+            // Mid-confidence: offer both interpretations.
+            let split_cmds: Vec<String> = std::iter::once(accept_canonical_cmd.clone())
+                .chain(boundaries.iter().map(|m| {
+                    format!(
+                        "locus accept canonical {} --concept {}_{}",
+                        m.symbol,
+                        cid,
+                        m.symbol.rsplit("::").next().unwrap_or("alt").to_lowercase()
+                    )
+                }))
+                .collect();
+            out.push(Suggestion {
+                category: SuggestionCategory::Concept,
+                headline: format!("cluster `{cid}` ambiguous — {}", canonical.symbol),
+                why: vec![format!("confidence {:.2}; review members", confidence)],
+                options: vec![
+                    CommandOption {
+                        label: "if same concept".into(),
+                        commands: single_option_cmds,
+                    },
+                    CommandOption {
+                        label: "if separate concepts".into(),
+                        commands: split_cmds,
+                    },
+                ],
+                prefixes: vec!["OT".into()],
+            });
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -165,5 +280,88 @@ mod tests {
             span: locus_air::AirSpan::new("t.rs", 1, 1),
         };
         assert!(!endpoints_accepted(&conv, &s));
+    }
+}
+
+#[cfg(test)]
+mod suggest_tests {
+    use super::*;
+    use crate::init::SuggestionCategory;
+    use crate::lockfile::Lockfile;
+
+    #[test]
+    fn suggestion_count_matches_clusters_with_canonical_and_boundary() {
+        let workspace = std::path::Path::new("../../tests/fixtures/sample-crate");
+        if !workspace.exists() {
+            eprintln!("sample-crate fixture missing; skipping");
+            return;
+        }
+        let air = match locus_rust::scan(workspace) {
+            Ok(a) => a,
+            Err(e) => {
+                eprintln!("scan failed: {e}; skipping");
+                return;
+            }
+        };
+        let lf = Lockfile::empty();
+        let suggestions = suggest(&air, &lf);
+        // Every emitted suggestion must be category Concept.
+        assert!(
+            suggestions
+                .iter()
+                .all(|s| s.category == SuggestionCategory::Concept)
+        );
+        // Headlines all start with `cluster ` so an agent can grep.
+        assert!(
+            suggestions
+                .iter()
+                .all(|s| s.headline.starts_with("cluster "))
+        );
+    }
+
+    #[test]
+    fn no_suggestion_for_already_accepted_concept() {
+        let workspace = std::path::Path::new("../../tests/fixtures/sample-crate");
+        if !workspace.exists() {
+            return;
+        }
+        let air = match locus_rust::scan(workspace) {
+            Ok(a) => a,
+            Err(_) => return,
+        };
+        // Pre-fill the lockfile with every clusterable concept_id from the AIR
+        // so suggest() filters them all.
+        let clusters = super::super::infer::cluster_concepts(&air);
+        let mut concepts = serde_json::Map::new();
+        for c in &clusters {
+            // Need a canonical to make `suggest` consider the cluster at all.
+            // We seed both canonical and boundary list as accepted.
+            let canonical_sym = c
+                .members
+                .iter()
+                .find(|m| m.role == super::super::infer::InferredRole::Canonical)
+                .map(|m| m.symbol.clone())
+                .unwrap_or_else(|| {
+                    c.members
+                        .first()
+                        .map(|m| m.symbol.clone())
+                        .unwrap_or_default()
+                });
+            let entry = serde_json::json!({
+                "canonical": {"symbol": canonical_sym, "source": "accepted"},
+                "boundaries": [],
+                "converters": []
+            });
+            concepts.insert(c.concept_id.clone(), entry);
+        }
+        let mut lf = Lockfile::empty();
+        lf.paradigms
+            .insert("OT".into(), serde_json::json!({"concepts": concepts}));
+        let suggestions = suggest(&air, &lf);
+        assert!(
+            suggestions.is_empty(),
+            "expected suppression of all concepts; got {} suggestion(s)",
+            suggestions.len()
+        );
     }
 }
