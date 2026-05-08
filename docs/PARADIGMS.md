@@ -134,6 +134,7 @@ This document is the *target* spec — the full set of paradigms Locus is design
 **Cross-paradigm infrastructure:**
 - `Severity::from_confidence(c, mode)` implements the spec's 0.50 / 0.70 / 0.90 inference tier table.
 - `// ot: allow XX### reason="…" expires="YYYY-MM-DD"` source hints + `Lockfile.exceptions[]` lockfile entries are honoured by the CLI's `check` pipeline. Expired exceptions emit a `LOCUS001` warning instead of silently re-firing.
+- `locus check --changed [--baseline <ref>]` filters diagnostics to files modified since the baseline (default chain: `origin/main` → `origin/master` → `main` → `master` → `HEAD~1`). Combines committed diff, working-tree diff, and untracked-but-not-ignored files so local development matches CI behaviour. Combine with `--agent-strict` for the canonical "fail CI only on PR-introduced violations" shape.
 
 ---
 

@@ -115,7 +115,16 @@ locus dg forbid-edge --from "pkg::domain::*" --to "pkg::api::*" [--reason "..."]
 # Run all enabled paradigms; exit non-zero on Fatal.
 locus check --workspace .                # human mode (warnings)
 locus check --workspace . --agent-strict # warnings → fatal
+locus check --workspace . --changed      # filter to PR-modified files
+locus check --workspace . --changed --baseline origin/develop  # custom baseline
+locus check --workspace . --changed --agent-strict  # CI shape: fail only on new violations
 ```
+
+**`--changed` semantics:** combines three git queries — `git diff baseline HEAD` (committed
+changes), `git diff HEAD` (working-tree changes), `git ls-files --others --exclude-standard`
+(untracked but unignored). Default baseline tries `origin/main` → `origin/master` → `main` →
+`master` → `HEAD~1`. The filter is applied after exception suppression so `// ot: allow`
+hints on changed code still suppress, and `LOCUS001` expired-exception warnings still surface.
 
 ## Implementation roadmap
 
@@ -131,7 +140,7 @@ locus check --workspace . --agent-strict # warnings → fatal
 - ✅ Second rules for every paradigm (16 paradigms beyond OT/DG now each ship 2–6 rules; see `docs/PARADIGMS.md` snapshot).
 - 🔜 Remaining ~21 spec patterns require new visitor work (`match` arm bodies, literal capture, `unwrap_or` chains, closure-arg shape) or new loader output (`BlockingCall`, `HotPath`, `PersistenceWrite`, `ExternalIo`, `RuntimeStateOwner`, `BackgroundWorker`).
 - 🔜 CLI oracle commands: `locus explain`, `locus query <kind>`, `locus debt` (lists active + expired exceptions), `locus graph`, `locus prune`, `locus add adapter`. Spec: `docs/PARADIGMS.md` §"Locus as an Architectural Oracle".
-- 🔜 `--changed` / `--patch` modes for diff-aware checking — without these, agent-strict elevates *all* warnings, not just new ones.
+- ✅ `--changed` / `--baseline` for diff-aware checking. Combines `git diff baseline HEAD` + working-tree diff + untracked-but-not-ignored. `--patch <file>` mode (single patch file) is a stretch goal.
 - 🔜 SARIF / JSON formatters in `locus-report` (currently a stub; CLI hand-rolls output).
 - Then: deterministic loaders (`docs/PARADIGMS.md` covers the loader system) for framework-specific normalized facts. Loader output enriches AIR with `hot_path`, `request_context`, `blocking_call`, etc. that future paradigms (AC, TX, SE) consume.
 

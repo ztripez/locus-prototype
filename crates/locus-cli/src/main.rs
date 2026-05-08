@@ -1,3 +1,5 @@
+mod diff;
+
 use std::fs::File;
 use std::io::{self, BufWriter, Write};
 use std::path::PathBuf;
@@ -653,6 +655,18 @@ struct CheckArgs {
     /// Emit diagnostics as JSON instead of human-readable text.
     #[arg(long)]
     json: bool,
+    /// Filter diagnostics to files modified since the baseline ref.
+    /// Combines tracked changes between baseline and HEAD, working-tree
+    /// changes, and untracked-but-not-ignored files. Useful in CI to
+    /// fail only on PR-introduced violations, not legacy noise.
+    #[arg(long)]
+    changed: bool,
+    /// Baseline ref for `--changed`. Defaults to the first ref that
+    /// resolves from `origin/main`, `origin/master`, `main`, `master`,
+    /// `HEAD~1`. Pass an explicit ref (e.g. `--baseline origin/develop`)
+    /// to override.
+    #[arg(long)]
+    baseline: Option<String>,
 }
 
 fn main() -> Result<()> {
@@ -1537,6 +1551,32 @@ fn check(args: CheckArgs) -> Result<()> {
     }
     let today = today_utc();
     let all = apply_exceptions(all, &air, &lockfile, Some(&today));
+
+    // Diff filter — applied after exceptions so an `// ot: allow XX###`
+    // hint on changed code still suppresses, and the LOCUS001 expired-
+    // exception warnings still surface for changed files.
+    let all = if args.changed {
+        let workspace_abs = args
+            .workspace
+            .canonicalize()
+            .unwrap_or_else(|_| args.workspace.clone());
+        let changed =
+            diff::changed_files(&workspace_abs, args.baseline.as_deref()).with_context(|| {
+                format!(
+                    "computing changed files in {} (--changed)",
+                    workspace_abs.display()
+                )
+            })?;
+        all.into_iter()
+            .filter(|d| {
+                changed
+                    .iter()
+                    .any(|rel| diff::paths_match(&d.span.file, rel, &workspace_abs))
+            })
+            .collect()
+    } else {
+        all
+    };
 
     let stdout = io::stdout();
     let mut out = BufWriter::new(stdout.lock());
