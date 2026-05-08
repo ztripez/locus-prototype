@@ -172,8 +172,18 @@ mod aggregate_tests {
 
     #[test]
     fn aggregate_merges_identical_command_sets() {
-        let a = mk(SuggestionCategory::Layer, "no domain", "BO", &["locus xx add"]);
-        let b = mk(SuggestionCategory::Layer, "no domain", "FL", &["locus xx add"]);
+        let a = mk(
+            SuggestionCategory::Layer,
+            "no domain",
+            "BO",
+            &["locus xx add"],
+        );
+        let b = mk(
+            SuggestionCategory::Layer,
+            "no domain",
+            "FL",
+            &["locus xx add"],
+        );
         let out = aggregate(vec![a, b]);
         assert_eq!(out.len(), 1);
         assert_eq!(out[0].prefixes, vec!["BO", "FL"]);
@@ -182,8 +192,18 @@ mod aggregate_tests {
 
     #[test]
     fn aggregate_keeps_distinct_command_sets() {
-        let a = mk(SuggestionCategory::Layer, "no domain", "BO", &["locus bo add"]);
-        let b = mk(SuggestionCategory::Layer, "no domain", "FL", &["locus fl add"]);
+        let a = mk(
+            SuggestionCategory::Layer,
+            "no domain",
+            "BO",
+            &["locus bo add"],
+        );
+        let b = mk(
+            SuggestionCategory::Layer,
+            "no domain",
+            "FL",
+            &["locus fl add"],
+        );
         let out = aggregate(vec![a, b]);
         assert_eq!(out.len(), 2);
     }
