@@ -661,3 +661,41 @@ mod cross_paradigm_feature_tests {
         );
     }
 }
+
+/// Compute a percentile of a `u32`-convertible slice. `q` is in `0.0..=1.0`.
+/// Returns `None` if the slice is empty. Uses ceiling-rank: position
+/// `n*q` rounded up, mapped to a 1-based index.
+pub fn percentile<T: Copy + Ord + Into<u32>>(values: &[T], q: f32) -> Option<u32> {
+    if values.is_empty() {
+        return None;
+    }
+    let mut sorted: Vec<u32> = values.iter().map(|v| (*v).into()).collect();
+    sorted.sort_unstable();
+    let n = sorted.len() as f32;
+    let rank = (n * q).ceil() as usize;
+    let idx = rank.saturating_sub(1).min(sorted.len() - 1);
+    Some(sorted[idx])
+}
+
+#[cfg(test)]
+mod stats_tests {
+    use super::*;
+
+    #[test]
+    fn p95_of_constant_returns_constant() {
+        let vals: [u32; 20] = [5; 20];
+        assert_eq!(percentile(&vals, 0.95), Some(5));
+    }
+
+    #[test]
+    fn p95_of_ramp_returns_near_top() {
+        let vals: Vec<u32> = (1..=100).collect();
+        // p95 of 1..=100: rank = ceil(100*0.95) = 95, 1-based → index 94 → value 95.
+        assert_eq!(percentile(&vals, 0.95), Some(95));
+    }
+
+    #[test]
+    fn p50_of_empty_is_none() {
+        assert_eq!(percentile::<u32>(&[], 0.50), None);
+    }
+}
