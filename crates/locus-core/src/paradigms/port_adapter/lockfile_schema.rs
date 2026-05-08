@@ -19,7 +19,7 @@
 
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct PaSection {
     /// Trait symbol patterns that are exempt from PA001. Pattern syntax
     /// mirrors AB/DG/MO/UT: simple suffix wildcards.
@@ -30,11 +30,59 @@ pub struct PaSection {
     /// pinning the full path, useful when a trait is re-exported.
     #[serde(default)]
     pub accepted_colocated_traits: Vec<String>,
+    /// Module patterns for application/domain layer files. PA002 fires when
+    /// an `AirImport` in one of these files points at a concrete adapter
+    /// framework. Examples: `"crate::application::*"`,
+    /// `"crate::domain::*"`. Silent until populated.
+    #[serde(default)]
+    pub application_paths: Vec<String>,
+    /// Concrete-adapter import-path patterns the application/domain layer
+    /// must not depend on. Matched against `AirImport.path`. Examples:
+    /// `"reqwest::*"`, `"sqlx::*"`, `"redis::*"`, `"hyper::*"`. PA002's
+    /// signal — silent until populated.
+    #[serde(default)]
+    pub concrete_adapter_patterns: Vec<String>,
+    /// Type patterns (matched against `AirTruthAction.target` for `Construct`
+    /// actions) identifying concrete adapters. PA004 fires when a
+    /// construction of one of these types happens outside any
+    /// `accepted_construction_paths` file. Silent until populated.
+    #[serde(default)]
+    pub adapter_type_patterns: Vec<String>,
+    /// Module patterns for files where adapter construction is acceptable —
+    /// composition roots, bootstrap modules, etc. Matched against
+    /// `AirFile.module_path`. Defaults seed the canonical entry points
+    /// (`*::main`, `*::bootstrap::*`, `*::composition::*`).
+    #[serde(default = "default_accepted_construction_paths")]
+    pub accepted_construction_paths: Vec<String>,
 }
 
-/// Pattern syntax: simple suffix wildcard, mirroring AB/DG/MO/UT.
-/// - `foo::Bar` — exact match
+/// Default `accepted_construction_paths` — the conventional composition-root
+/// entry points. Override via the lockfile if your project uses a different
+/// shape.
+pub fn default_accepted_construction_paths() -> Vec<String> {
+    ["*::main", "*::bootstrap::*", "*::composition::*"]
+        .iter()
+        .map(|s| (*s).to_string())
+        .collect()
+}
+
+impl Default for PaSection {
+    fn default() -> Self {
+        Self {
+            accepted_colocated_traits: Vec::new(),
+            application_paths: Vec::new(),
+            concrete_adapter_patterns: Vec::new(),
+            adapter_type_patterns: Vec::new(),
+            accepted_construction_paths: default_accepted_construction_paths(),
+        }
+    }
+}
+
+/// Pattern syntax: segment-aligned wildcards, matching BO/CR.
+/// - `foo::bar` — exact match
 /// - `foo::*` — `foo` itself or any descendant (`foo::bar`, `foo::bar::baz`)
+/// - `*::foo` — `foo` itself or anywhere ending with `::foo`
+/// - `*::foo::*` — `foo` appearing as a whole segment anywhere
 /// - `*` — anything
 ///
 /// Kept as a local copy so PA doesn't depend on a peer paradigm's helper; if
@@ -44,10 +92,31 @@ pub fn matches_pattern(pattern: &str, path: &str) -> bool {
     if pattern == "*" {
         return true;
     }
-    if let Some(prefix) = pattern.strip_suffix("::*") {
-        return path == prefix || path.starts_with(&format!("{prefix}::"));
+    let leading_wild = pattern.starts_with("*::");
+    let trailing_wild = pattern.ends_with("::*");
+    let stripped = match (leading_wild, trailing_wild) {
+        (true, true) => &pattern[3..pattern.len() - 3],
+        (true, false) => &pattern[3..],
+        (false, true) => &pattern[..pattern.len() - 3],
+        (false, false) => pattern,
+    };
+    if stripped.is_empty() {
+        return false;
     }
-    pattern == path
+    match (leading_wild, trailing_wild) {
+        (true, true) => {
+            let mid = format!("::{stripped}::");
+            let starts = format!("{stripped}::");
+            let ends = format!("::{stripped}");
+            path == stripped
+                || path.contains(&mid)
+                || path.starts_with(&starts)
+                || path.ends_with(&ends)
+        }
+        (true, false) => path == stripped || path.ends_with(&format!("::{stripped}")),
+        (false, true) => path == stripped || path.starts_with(&format!("{stripped}::")),
+        (false, false) => pattern == path,
+    }
 }
 
 #[cfg(test)]
@@ -74,9 +143,30 @@ mod tests {
     fn round_trips_through_serde() {
         let s = PaSection {
             accepted_colocated_traits: vec!["crate::utils::*".into(), "Helper".into()],
+            ..Default::default()
         };
         let j = serde_json::to_value(&s).unwrap();
         let back: PaSection = serde_json::from_value(j).unwrap();
         assert_eq!(s, back);
+    }
+
+    #[test]
+    fn default_accepted_construction_paths_seeds_canonical_entry_points() {
+        let s = PaSection::default();
+        assert_eq!(
+            s.accepted_construction_paths,
+            vec![
+                "*::main".to_string(),
+                "*::bootstrap::*".to_string(),
+                "*::composition::*".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn leading_wildcard_matches_any_ending() {
+        assert!(matches_pattern("*::main", "crate::main"));
+        assert!(matches_pattern("*::main", "main"));
+        assert!(!matches_pattern("*::main", "main::nested"));
     }
 }

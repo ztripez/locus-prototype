@@ -7,6 +7,8 @@
 //!
 //! Phase scope so far:
 //! - OB001: raw print/dbg in non-test, non-observer code.
+//! - OB002: metric-emission macro outside the accepted metric owner module.
+//! - OB003: event-emission macro outside the accepted event owner module.
 
 // ot: canonical
 
@@ -41,6 +43,9 @@ impl Paradigm for Observability {
     fn check(&self, air: &AirWorkspace, lockfile: &Lockfile, mode: CheckMode) -> Vec<Diagnostic> {
         let section: lockfile_schema::ObSection =
             lockfile.paradigm_section(OB_PREFIX).unwrap_or_default();
-        rules::ob001(air, &section, mode)
+        let mut diags = rules::ob001(air, &section, mode);
+        diags.extend(rules::ob002(air, &section, mode));
+        diags.extend(rules::ob003(air, &section, mode));
+        diags
     }
 }

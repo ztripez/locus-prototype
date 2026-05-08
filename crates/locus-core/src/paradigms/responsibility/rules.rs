@@ -3,12 +3,15 @@
 //! Implemented:
 //! - [`rm001`]: function performs too many distinct kinds of work.
 //! - [`rm002`]: converter performs a side-effect fact.
+//! - [`rm003`]: handler module containing branch-rich domain policy.
+//! - [`rm004`]: repository module containing branch-rich domain logic.
 //!
 //! Lockfile-driven: stays silent until the user opts in by setting
-//! `paradigms.RM.default_max_action_kinds` (RM001) or by populating
-//! `paradigms.RM.converter_paths` (RM002). This mirrors the DG/UT pattern —
-//! pre-onboarding we don't have the data (or the user's intent) to call any
-//! particular density "wrong."
+//! `paradigms.RM.default_max_action_kinds` (RM001), populating
+//! `paradigms.RM.converter_paths` (RM002), `paradigms.RM.handler_paths`
+//! (RM003), or `paradigms.RM.repository_paths` (RM004). This mirrors the
+//! DG/UT pattern — pre-onboarding we don't have the data (or the user's
+//! intent) to call any particular density "wrong."
 
 use std::collections::BTreeMap;
 
@@ -321,6 +324,232 @@ fn rm002_diagnostic(
     }
 }
 
+/// Which density rule fired — used to drive shared diagnostic plumbing.
+#[derive(Clone, Copy)]
+enum DensityRole {
+    Handler,
+    Repository,
+}
+
+impl DensityRole {
+    fn rule_id(self) -> &'static str {
+        match self {
+            DensityRole::Handler => "RM003",
+            DensityRole::Repository => "RM004",
+        }
+    }
+
+    fn role_label(self) -> &'static str {
+        match self {
+            DensityRole::Handler => "handler",
+            DensityRole::Repository => "repository",
+        }
+    }
+
+    fn lockfile_paths_field(self) -> &'static str {
+        match self {
+            DensityRole::Handler => "paradigms.RM.handler_paths",
+            DensityRole::Repository => "paradigms.RM.repository_paths",
+        }
+    }
+
+    fn lockfile_cap_field(self) -> &'static str {
+        match self {
+            DensityRole::Handler => "paradigms.RM.max_handler_decisions",
+            DensityRole::Repository => "paradigms.RM.max_repository_decisions",
+        }
+    }
+
+    fn suggested_fix(self, fn_sym: &str, module_path: &str, count: u32) -> String {
+        match self {
+            DensityRole::Handler => format!(
+                "the handler `{fn_sym}` in `{module_path}` is making {count} branch-style \
+                 decisions ({{StringCompare, EnumMatch}}). Push the policy down into a domain \
+                 module the handler delegates to — handlers should orchestrate, not branch. \
+                 If this density is intentional, raise `paradigms.RM.max_handler_decisions` \
+                 in `locus.lock` or remove the module from `paradigms.RM.handler_paths`."
+            ),
+            DensityRole::Repository => format!(
+                "the repository function `{fn_sym}` in `{module_path}` is making {count} \
+                 branch-style decisions ({{StringCompare, EnumMatch}}). Repositories should \
+                 stay close to persistence; lift the branching into a domain function the \
+                 repository feeds. If this density is intentional, raise \
+                 `paradigms.RM.max_repository_decisions` in `locus.lock` or remove the \
+                 module from `paradigms.RM.repository_paths`."
+            ),
+        }
+    }
+}
+
+/// Shared core for RM003 / RM004. Walks every `AirItem::Function`, looks up
+/// the enclosing file's `module_path`, and counts the function's
+/// `StringCompare` + `EnumMatch` `AirTruthAction`s. Fires when the count
+/// exceeds `cap` and the file's `module_path` matches one of `paths`.
+fn density_rule(
+    air: &AirWorkspace,
+    paths: &[String],
+    cap: u32,
+    role: DensityRole,
+    mode: CheckMode,
+) -> Vec<Diagnostic> {
+    if paths.is_empty() {
+        return Vec::new();
+    }
+
+    // Index function symbols → (span, file_path).
+    let mut function_index: BTreeMap<String, (AirSpan, String)> = BTreeMap::new();
+    let mut module_path_for_file: BTreeMap<String, String> = BTreeMap::new();
+    for pkg in &air.packages {
+        for file in &pkg.files {
+            if let Some(mp) = file.module_path.as_deref() {
+                module_path_for_file.insert(file.path.clone(), mp.to_string());
+            }
+            for item in &file.items {
+                if let AirItem::Function(f) = item {
+                    function_index
+                        .entry(f.symbol.clone())
+                        .or_insert_with(|| (f.span.clone(), file.path.clone()));
+                }
+            }
+        }
+    }
+
+    // Group decision actions (StringCompare + EnumMatch) by enclosing fn.
+    #[derive(Default)]
+    struct DecisionGroup<'a> {
+        actions: Vec<&'a AirTruthAction>,
+    }
+    let mut groups: BTreeMap<String, DecisionGroup<'_>> = BTreeMap::new();
+    for pkg in &air.packages {
+        for file in &pkg.files {
+            for item in &file.items {
+                let AirItem::TruthAction(a) = item else {
+                    continue;
+                };
+                if !matches!(a.action, ActionKind::StringCompare | ActionKind::EnumMatch) {
+                    continue;
+                }
+                let Some(fn_sym) = a.function.as_deref() else {
+                    continue;
+                };
+                groups
+                    .entry(fn_sym.to_string())
+                    .or_default()
+                    .actions
+                    .push(a);
+            }
+        }
+    }
+
+    let mut out = Vec::new();
+    for (fn_sym, group) in groups {
+        let count = group.actions.len() as u32;
+        if count <= cap {
+            continue;
+        }
+        let Some((fn_span, file_path)) = function_index.get(&fn_sym) else {
+            continue; // can't anchor without a top-level fn AIR item
+        };
+        let Some(module_path) = module_path_for_file.get(file_path) else {
+            continue;
+        };
+        let matched_pattern = paths
+            .iter()
+            .find(|pat| matches_pattern(pat, module_path))
+            .cloned();
+        let Some(matched_pattern) = matched_pattern else {
+            continue;
+        };
+
+        let mut why = vec![
+            format!(
+                "module `{module_path}` matches {} pattern `{matched_pattern}`",
+                role.lockfile_paths_field()
+            ),
+            format!(
+                "{count} StringCompare/EnumMatch action(s) — cap is {cap} \
+                 (`{}`)",
+                role.lockfile_cap_field()
+            ),
+        ];
+        for action in group.actions.iter().take(5) {
+            why.push(format!(
+                "{} `{}` at {}:{}",
+                format_kind(&action.action),
+                action.target,
+                action.span.file,
+                action.span.line_start
+            ));
+        }
+        if group.actions.len() > 5 {
+            why.push(format!(
+                "(+ {} more action(s) elided)",
+                group.actions.len() - 5
+            ));
+        }
+
+        out.push(Diagnostic {
+            rule_id: role.rule_id().to_string(),
+            severity: mode.elevate(Severity::Warning),
+            span: fn_span.clone(),
+            concept: None,
+            message: format!(
+                "{role} `{fn_sym}` makes {count} branch-style decision(s); \
+                 {role}s should not host this much policy",
+                role = role.role_label()
+            ),
+            why,
+            suggested_fix: Some(role.suggested_fix(&fn_sym, module_path, count)),
+        });
+    }
+    out
+}
+
+/// RM003 — handler module containing domain policy (branch-rich logic).
+///
+/// For each `AirItem::Function` whose enclosing file's `module_path` matches a
+/// pattern in `handler_paths`, count the function's `StringCompare` +
+/// `EnumMatch` `AirTruthAction`s. Fires when that count exceeds
+/// [`RmSection::effective_max_handler_decisions`]. Handlers are supposed to
+/// orchestrate; branch-rich policy belongs in a domain module the handler
+/// delegates to.
+///
+/// Severity: Warning by default; Fatal under `--agent-strict`.
+///
+/// Silent when `handler_paths` is empty: same opt-in UX as the rest of RM.
+pub fn rm003(air: &AirWorkspace, section: &RmSection, mode: CheckMode) -> Vec<Diagnostic> {
+    density_rule(
+        air,
+        &section.handler_paths,
+        section.effective_max_handler_decisions(),
+        DensityRole::Handler,
+        mode,
+    )
+}
+
+/// RM004 — repository module containing branch-rich logic.
+///
+/// Mirrors RM003's shape: for each `AirItem::Function` whose enclosing file's
+/// `module_path` matches a pattern in `repository_paths`, count the function's
+/// `StringCompare` + `EnumMatch` actions and fire when that count exceeds
+/// [`RmSection::effective_max_repository_decisions`]. The prescription
+/// differs from RM003: repository functions should be thin queries, so the
+/// fix is to push branches up into the domain layer the repository feeds —
+/// not down into a sibling module the way RM003 suggests.
+///
+/// Severity: Warning by default; Fatal under `--agent-strict`.
+///
+/// Silent when `repository_paths` is empty.
+pub fn rm004(air: &AirWorkspace, section: &RmSection, mode: CheckMode) -> Vec<Diagnostic> {
+    density_rule(
+        air,
+        &section.repository_paths,
+        section.effective_max_repository_decisions(),
+        DensityRole::Repository,
+        mode,
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -379,8 +608,7 @@ mod tests {
     fn enabled_section(cap: u32) -> RmSection {
         RmSection {
             default_max_action_kinds: Some(cap),
-            exempt_paths: Vec::new(),
-            converter_paths: Vec::new(),
+            ..RmSection::default()
         }
     }
 
@@ -484,7 +712,7 @@ mod tests {
         let section = RmSection {
             default_max_action_kinds: Some(2),
             exempt_paths: vec!["crate::handler::tests::*".into()],
-            converter_paths: Vec::new(),
+            ..RmSection::default()
         };
         assert!(rm001(&air, &section, CheckMode::Human).is_empty());
     }
@@ -708,9 +936,8 @@ mod tests {
 
     fn converter_section(patterns: Vec<&str>) -> RmSection {
         RmSection {
-            default_max_action_kinds: None,
-            exempt_paths: Vec::new(),
             converter_paths: patterns.into_iter().map(|s| s.to_string()).collect(),
+            ..RmSection::default()
         }
     }
 
@@ -921,6 +1148,259 @@ mod tests {
         );
         let section = converter_section(vec!["crate::mapping::*"]);
         let diags = rm002(&air, &section, CheckMode::AgentStrict);
+        assert_eq!(diags.len(), 1);
+        assert_eq!(diags[0].severity, Severity::Fatal);
+    }
+
+    // ---------- RM003 ----------
+
+    fn handler_section(patterns: Vec<&str>, cap: Option<u32>) -> RmSection {
+        RmSection {
+            handler_paths: patterns.into_iter().map(|s| s.to_string()).collect(),
+            max_handler_decisions: cap,
+            ..RmSection::default()
+        }
+    }
+
+    #[test]
+    fn rm003_fires_on_branch_rich_handler() {
+        let mut items = vec![func("crate::handler::create_user", "src/handler.rs", 10)];
+        for i in 0..4 {
+            items.push(action(
+                ActionKind::StringCompare,
+                "role",
+                "crate::handler::create_user",
+                "src/handler.rs",
+                11 + i,
+            ));
+        }
+        let air = air_with(vec![("src/handler.rs", Some("crate::handler"), items)]);
+        let section = handler_section(vec!["crate::handler::*"], Some(3));
+        let diags = rm003(&air, &section, CheckMode::Human);
+        assert_eq!(diags.len(), 1);
+        let d = &diags[0];
+        assert_eq!(d.rule_id, "RM003");
+        assert_eq!(d.severity, Severity::Warning);
+        assert_eq!(d.span.line_start, 10);
+        assert!(d.message.contains("crate::handler::create_user"));
+        assert!(d.message.contains("handler"));
+        assert!(
+            d.why.iter().any(|w| w.contains("handler_paths")),
+            "expected handler_paths in why; got {:?}",
+            d.why
+        );
+        assert!(
+            d.suggested_fix
+                .as_deref()
+                .map(|f| f.contains("delegates"))
+                .unwrap_or(false),
+            "expected handler-flavoured fix; got {:?}",
+            d.suggested_fix
+        );
+    }
+
+    #[test]
+    fn rm003_quiet_at_or_below_cap() {
+        let mut items = vec![func("crate::handler::small", "src/handler.rs", 4)];
+        for i in 0..3 {
+            items.push(action(
+                ActionKind::EnumMatch,
+                "Status",
+                "crate::handler::small",
+                "src/handler.rs",
+                5 + i,
+            ));
+        }
+        let air = air_with(vec![("src/handler.rs", Some("crate::handler"), items)]);
+        let section = handler_section(vec!["crate::handler::*"], Some(3));
+        assert!(rm003(&air, &section, CheckMode::Human).is_empty());
+    }
+
+    #[test]
+    fn rm003_silent_when_handler_paths_empty() {
+        let mut items = vec![func("crate::handler::go", "src/handler.rs", 6)];
+        for i in 0..6 {
+            items.push(action(
+                ActionKind::StringCompare,
+                "kind",
+                "crate::handler::go",
+                "src/handler.rs",
+                7 + i,
+            ));
+        }
+        let air = air_with(vec![("src/handler.rs", Some("crate::handler"), items)]);
+        let section = RmSection::default();
+        assert!(rm003(&air, &section, CheckMode::Human).is_empty());
+    }
+
+    #[test]
+    fn rm003_ignores_non_handler_modules() {
+        let mut items = vec![func("crate::domain::go", "src/domain.rs", 6)];
+        for i in 0..6 {
+            items.push(action(
+                ActionKind::StringCompare,
+                "kind",
+                "crate::domain::go",
+                "src/domain.rs",
+                7 + i,
+            ));
+        }
+        let air = air_with(vec![("src/domain.rs", Some("crate::domain"), items)]);
+        let section = handler_section(vec!["crate::handler::*"], Some(3));
+        assert!(rm003(&air, &section, CheckMode::Human).is_empty());
+    }
+
+    #[test]
+    fn rm003_ignores_non_decision_actions() {
+        let mut items = vec![func("crate::handler::go", "src/handler.rs", 6)];
+        for i in 0..6 {
+            items.push(action(
+                ActionKind::Construct,
+                "User",
+                "crate::handler::go",
+                "src/handler.rs",
+                7 + i,
+            ));
+        }
+        let air = air_with(vec![("src/handler.rs", Some("crate::handler"), items)]);
+        let section = handler_section(vec!["crate::handler::*"], Some(3));
+        assert!(rm003(&air, &section, CheckMode::Human).is_empty());
+    }
+
+    #[test]
+    fn rm003_agent_strict_elevates_to_fatal() {
+        let mut items = vec![func("crate::handler::create_user", "src/handler.rs", 10)];
+        for i in 0..4 {
+            items.push(action(
+                ActionKind::StringCompare,
+                "role",
+                "crate::handler::create_user",
+                "src/handler.rs",
+                11 + i,
+            ));
+        }
+        let air = air_with(vec![("src/handler.rs", Some("crate::handler"), items)]);
+        let section = handler_section(vec!["crate::handler::*"], Some(3));
+        let diags = rm003(&air, &section, CheckMode::AgentStrict);
+        assert_eq!(diags.len(), 1);
+        assert_eq!(diags[0].severity, Severity::Fatal);
+    }
+
+    // ---------- RM004 ----------
+
+    fn repository_section(patterns: Vec<&str>, cap: Option<u32>) -> RmSection {
+        RmSection {
+            repository_paths: patterns.into_iter().map(|s| s.to_string()).collect(),
+            max_repository_decisions: cap,
+            ..RmSection::default()
+        }
+    }
+
+    #[test]
+    fn rm004_fires_on_branch_rich_repository_function() {
+        let mut items = vec![func("crate::repo::find_by", "src/repo.rs", 8)];
+        for i in 0..5 {
+            items.push(action(
+                ActionKind::EnumMatch,
+                "QueryShape",
+                "crate::repo::find_by",
+                "src/repo.rs",
+                9 + i,
+            ));
+        }
+        let air = air_with(vec![("src/repo.rs", Some("crate::repo"), items)]);
+        let section = repository_section(vec!["crate::repo::*"], Some(3));
+        let diags = rm004(&air, &section, CheckMode::Human);
+        assert_eq!(diags.len(), 1);
+        let d = &diags[0];
+        assert_eq!(d.rule_id, "RM004");
+        assert_eq!(d.severity, Severity::Warning);
+        assert_eq!(d.span.line_start, 8);
+        assert!(d.message.contains("repository"));
+        assert!(
+            d.why.iter().any(|w| w.contains("repository_paths")),
+            "expected repository_paths in why; got {:?}",
+            d.why
+        );
+        assert!(
+            d.suggested_fix
+                .as_deref()
+                .map(|f| f.contains("Repositories"))
+                .unwrap_or(false),
+            "expected repository-flavoured fix; got {:?}",
+            d.suggested_fix
+        );
+    }
+
+    #[test]
+    fn rm004_quiet_at_or_below_cap() {
+        let mut items = vec![func("crate::repo::tiny", "src/repo.rs", 4)];
+        for i in 0..3 {
+            items.push(action(
+                ActionKind::StringCompare,
+                "table",
+                "crate::repo::tiny",
+                "src/repo.rs",
+                5 + i,
+            ));
+        }
+        let air = air_with(vec![("src/repo.rs", Some("crate::repo"), items)]);
+        let section = repository_section(vec!["crate::repo::*"], Some(3));
+        assert!(rm004(&air, &section, CheckMode::Human).is_empty());
+    }
+
+    #[test]
+    fn rm004_silent_when_repository_paths_empty() {
+        let mut items = vec![func("crate::repo::big", "src/repo.rs", 4)];
+        for i in 0..6 {
+            items.push(action(
+                ActionKind::StringCompare,
+                "table",
+                "crate::repo::big",
+                "src/repo.rs",
+                5 + i,
+            ));
+        }
+        let air = air_with(vec![("src/repo.rs", Some("crate::repo"), items)]);
+        let section = RmSection::default();
+        assert!(rm004(&air, &section, CheckMode::Human).is_empty());
+    }
+
+    #[test]
+    fn rm004_uses_default_cap_when_unset() {
+        // Section enabled (repository_paths populated) but max not pinned.
+        // Fires above the default of 3.
+        let mut items = vec![func("crate::repo::big", "src/repo.rs", 4)];
+        for i in 0..4 {
+            items.push(action(
+                ActionKind::EnumMatch,
+                "Q",
+                "crate::repo::big",
+                "src/repo.rs",
+                5 + i,
+            ));
+        }
+        let air = air_with(vec![("src/repo.rs", Some("crate::repo"), items)]);
+        let section = repository_section(vec!["crate::repo::*"], None);
+        let diags = rm004(&air, &section, CheckMode::Human);
+        assert_eq!(diags.len(), 1, "default cap should be 3");
+    }
+
+    #[test]
+    fn rm004_agent_strict_elevates_to_fatal() {
+        let mut items = vec![func("crate::repo::find_by", "src/repo.rs", 8)];
+        for i in 0..5 {
+            items.push(action(
+                ActionKind::StringCompare,
+                "field",
+                "crate::repo::find_by",
+                "src/repo.rs",
+                9 + i,
+            ));
+        }
+        let air = air_with(vec![("src/repo.rs", Some("crate::repo"), items)]);
+        let section = repository_section(vec!["crate::repo::*"], Some(3));
+        let diags = rm004(&air, &section, CheckMode::AgentStrict);
         assert_eq!(diags.len(), 1);
         assert_eq!(diags[0].severity, Severity::Fatal);
     }

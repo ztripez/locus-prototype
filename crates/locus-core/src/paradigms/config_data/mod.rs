@@ -7,6 +7,10 @@
 //!
 //! Phase scope so far:
 //! - CF001: environment-variable read outside the config layer.
+//! - CF002: filesystem-walk rule, reserved for a future filesystem-aware
+//!   loader. Lockfile fields ship today (`config_file_patterns`,
+//!   `accepted_config_files`) so users can pre-populate; the rule body
+//!   is a no-op stub until the loader lands.
 
 // ot: canonical
 
@@ -40,5 +44,6 @@ impl Paradigm for ConfigData {
         let section: lockfile_schema::CfSection =
             lockfile.paradigm_section(CF_PREFIX).unwrap_or_default();
         rules::cf001(air, &section, mode)
+        // TODO(cf002): wire when filesystem-aware loaders land
     }
 }

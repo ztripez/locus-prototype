@@ -2,15 +2,21 @@
 //!
 //! Spec: `docs/PARADIGMS.md` §"Paradigm 9: Module / File Ownership".
 //!
-//! Reads `AirItem::Type` items from each file and counts the `Public`
-//! ones, then compares against a per-module budget held in the lockfile's
-//! MO section. The first MO rule (`MO001`) flags files whose public-type
-//! count exceeds the configured budget.
+//! Phase scope so far:
+//! - MO001: too many public top-level types in a single file.
+//! - MO002: responsibility entropy in a single file (canonical/boundary/
+//!   converter hints, handler-named functions, persistence imports, io
+//!   call sites — too many distinct architectural roles co-existing).
+//! - MO003: canonical type co-located with a boundary type in the same file.
+//! - MO004: canonical type co-located with a handler-named function in the
+//!   same file.
 //!
 //! `init` returns `Null`: there's no automatic inference for "this module
 //! is allowed to be wide" — the user has to declare the override (or the
-//! default) deliberately, same as DG. Without an MO section, MO001 stays
-//! silent so un-onboarded code isn't bombarded with file-shape warnings.
+//! default) deliberately, same as DG. Without an MO section, MO001/MO002
+//! stay silent so un-onboarded code isn't bombarded with file-shape
+//! warnings. MO003/MO004 are pure structural checks driven by hints, so
+//! they fire as soon as the source carries the relevant `// ot:` comments.
 
 // ot: canonical
 
@@ -41,6 +47,10 @@ impl Paradigm for ModuleOwnership {
     fn check(&self, air: &AirWorkspace, lockfile: &Lockfile, mode: CheckMode) -> Vec<Diagnostic> {
         let section: lockfile_schema::MoSection =
             lockfile.paradigm_section(MO_PREFIX).unwrap_or_default();
-        rules::mo001(air, &section, mode)
+        let mut diags = rules::mo001(air, &section, mode);
+        diags.extend(rules::mo002(air, &section, mode));
+        diags.extend(rules::mo003(air, mode));
+        diags.extend(rules::mo004(air, &section, mode));
+        diags
     }
 }

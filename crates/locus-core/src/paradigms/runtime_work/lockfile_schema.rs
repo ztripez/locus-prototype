@@ -15,7 +15,24 @@
 
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+/// Default seed for [`RwSection::runtime_state_type_patterns`]. These are
+/// **type-text fragments** (not module-path patterns): a trailing `*` means
+/// "anything else may follow". Matched via [`type_text_matches`].
+pub const DEFAULT_RUNTIME_STATE_TYPE_PATTERNS: &[&str] = &[
+    "Mutex<*",
+    "RwLock<*",
+    "Arc<Mutex<*",
+    "Arc<RwLock<*",
+    "OnceCell<*",
+    "OnceLock<*",
+];
+
+/// Default seed for [`RwSection::singleton_name_patterns`]. Trailing-`*`
+/// fragments matched against an `AirType.name` via [`type_text_matches`] —
+/// e.g. `*Singleton` flags any name ending in `Singleton`.
+pub const DEFAULT_SINGLETON_NAME_PATTERNS: &[&str] = &["*Singleton", "*Globals"];
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct RwSection {
     /// Module patterns matching `AirFile.module_path` for files declared as
     /// runtime owners — the only places where direct task/thread spawning is
@@ -24,6 +41,73 @@ pub struct RwSection {
     /// `crate::orchestrator`).
     #[serde(default)]
     pub runtime_owner_paths: Vec<String>,
+    /// Type-text fragments (NOT module-path patterns) used by RW003 to
+    /// recognise runtime-state-shaped fields on types. Trailing `*` is
+    /// treated as a wildcard suffix — `Mutex<*` matches `Mutex<u64>`,
+    /// `Mutex<MyCfg>`, etc. Defaults to
+    /// [`DEFAULT_RUNTIME_STATE_TYPE_PATTERNS`].
+    #[serde(default = "default_runtime_state_type_patterns")]
+    pub runtime_state_type_patterns: Vec<String>,
+    /// Type-name fragments used by RW004 to recognise singleton-shaped
+    /// types (regardless of their fields). Leading `*` is treated as a
+    /// wildcard prefix — `*Singleton` matches `AppSingleton`,
+    /// `MetricsSingleton`. Defaults to
+    /// [`DEFAULT_SINGLETON_NAME_PATTERNS`].
+    #[serde(default = "default_singleton_name_patterns")]
+    pub singleton_name_patterns: Vec<String>,
+}
+
+impl Default for RwSection {
+    fn default() -> Self {
+        Self {
+            runtime_owner_paths: Vec::new(),
+            runtime_state_type_patterns: default_runtime_state_type_patterns(),
+            singleton_name_patterns: default_singleton_name_patterns(),
+        }
+    }
+}
+
+fn default_runtime_state_type_patterns() -> Vec<String> {
+    DEFAULT_RUNTIME_STATE_TYPE_PATTERNS
+        .iter()
+        .map(|s| (*s).to_string())
+        .collect()
+}
+
+fn default_singleton_name_patterns() -> Vec<String> {
+    DEFAULT_SINGLETON_NAME_PATTERNS
+        .iter()
+        .map(|s| (*s).to_string())
+        .collect()
+}
+
+/// Match a type-text fragment pattern against a type-text string.
+///
+/// Distinct from [`matches_pattern`] — this is **NOT** module-path matching.
+/// Patterns are short fragments of rendered Rust type text; the only
+/// supported wildcard is a single trailing `*` meaning "anything else may
+/// follow" (`Mutex<*` matches `Mutex<u64>`), or a single leading `*`
+/// meaning "anything before" (`*Singleton` matches `AppSingleton`). A
+/// pattern with neither wildcard requires equality.
+pub fn type_text_matches(pattern: &str, text: &str) -> bool {
+    let leading = pattern.starts_with('*');
+    let trailing = pattern.ends_with('*');
+    if leading && trailing && pattern.len() >= 2 {
+        let mid = &pattern[1..pattern.len() - 1];
+        if mid.is_empty() {
+            return true; // bare `**`
+        }
+        return text.contains(mid);
+    }
+    if trailing {
+        let prefix = &pattern[..pattern.len() - 1];
+        return text.starts_with(prefix);
+    }
+    if leading {
+        let suffix = &pattern[1..];
+        return text.ends_with(suffix);
+    }
+    pattern == text
 }
 
 /// Pattern syntax: segment-aligned wildcards.
@@ -131,5 +215,50 @@ mod tests {
         // every path — that's what `*` is for.
         assert!(!matches_pattern("*::", "anything"));
         assert!(!matches_pattern("::*", "anything"));
+    }
+
+    #[test]
+    fn type_text_matches_trailing_star_is_prefix() {
+        assert!(type_text_matches("Mutex<*", "Mutex<u64>"));
+        assert!(type_text_matches("Mutex<*", "Mutex<MyState>"));
+        assert!(type_text_matches("Arc<Mutex<*", "Arc<Mutex<HashMap<K,V>>>"));
+        assert!(!type_text_matches("Mutex<*", "RwLock<u64>"));
+        // Trailing-* is a prefix match — no segment alignment.
+        assert!(type_text_matches("Mut*", "Mutex<u64>"));
+    }
+
+    #[test]
+    fn type_text_matches_leading_star_is_suffix() {
+        assert!(type_text_matches("*Singleton", "AppSingleton"));
+        assert!(type_text_matches("*Singleton", "MetricsSingleton"));
+        assert!(!type_text_matches("*Singleton", "SingletonAdapter"));
+    }
+
+    #[test]
+    fn type_text_matches_no_wildcard_requires_equality() {
+        assert!(type_text_matches("()", "()"));
+        assert!(!type_text_matches("()", "(u32)"));
+    }
+
+    #[test]
+    fn rw_section_default_seeds_type_patterns() {
+        let section = RwSection::default();
+        assert!(section.runtime_owner_paths.is_empty());
+        assert!(
+            section
+                .runtime_state_type_patterns
+                .iter()
+                .any(|p| p == "Mutex<*"),
+            "default Mutex pattern missing; got {:?}",
+            section.runtime_state_type_patterns
+        );
+        assert!(
+            section
+                .singleton_name_patterns
+                .iter()
+                .any(|p| p == "*Singleton"),
+            "default Singleton pattern missing; got {:?}",
+            section.singleton_name_patterns
+        );
     }
 }

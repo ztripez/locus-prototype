@@ -66,6 +66,7 @@ mod tests {
         let mut section = ObSection {
             observer_paths: Vec::new(),
             forbidden_log_targets: Vec::new(),
+            ..ObSection::default()
         };
         add_forbidden_log_target(&mut section, "println").unwrap();
         add_forbidden_log_target(&mut section, "tracing::info").unwrap();

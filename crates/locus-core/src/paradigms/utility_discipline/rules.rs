@@ -8,8 +8,17 @@
 //! - [`ut002`]: utility module imports a forbidden feature/domain path. UT001
 //!   catches public types defined in utility modules; UT002 catches helpers
 //!   that *know about* domain concepts via imports.
+//! - [`ut003`]: new generic-utility-named module without acceptance. Flags
+//!   modules whose `module_path` matches one of the configured generic
+//!   utility patterns and is not present in `accepted_utility_paths`.
+//! - [`ut004`]: domain-concept logic inside a utility module. Fires when a
+//!   utility-pathed file constructs (or validates/normalizes) a configured
+//!   canonical concept.
+//! - [`ut005`]: validation/normalization inside a utility module — same as
+//!   UT004 but for any `Validate`/`Normalize` `AirTruthAction`, regardless
+//!   of target.
 
-use locus_air::{AirItem, AirWorkspace, Visibility};
+use locus_air::{ActionKind, AirItem, AirWorkspace, Visibility};
 
 use super::lockfile_schema::{UtSection, matches_pattern};
 use crate::diagnostics::{CheckMode, Diagnostic, Severity};
@@ -154,11 +163,266 @@ pub fn ut002(air: &AirWorkspace, section: &UtSection, mode: CheckMode) -> Vec<Di
     out
 }
 
+/// UT003 — new generic-utility-named module without acceptance.
+///
+/// For every `AirFile` whose `module_path` matches any pattern in
+/// `generic_utility_patterns` AND whose `module_path` is *not* present in
+/// `accepted_utility_paths`, fire one diagnostic. `accepted_utility_paths`
+/// supports the same pattern syntax as `utility_paths` (the user can
+/// accept by exact path or by glob).
+///
+/// Severity: Warning by default; `--agent-strict` elevates to Fatal. The
+/// rule goes silent when `generic_utility_patterns` is empty — UT003 is
+/// gated on the user explicitly opting in to the generic-naming check.
+pub fn ut003(air: &AirWorkspace, section: &UtSection, mode: CheckMode) -> Vec<Diagnostic> {
+    if section.generic_utility_patterns.is_empty() {
+        return Vec::new();
+    }
+    let mut out = Vec::new();
+    for pkg in &air.packages {
+        for file in &pkg.files {
+            let Some(module_path) = file.module_path.as_deref() else {
+                continue;
+            };
+            let Some(matched_pattern) = section
+                .generic_utility_patterns
+                .iter()
+                .find(|p| matches_pattern(p, module_path))
+            else {
+                continue;
+            };
+            if section
+                .accepted_utility_paths
+                .iter()
+                .any(|p| matches_pattern(p, module_path))
+            {
+                continue;
+            }
+            // Anchor at the file's first item, falling back to line 1.
+            let span = file
+                .items
+                .iter()
+                .map(|item| match item {
+                    AirItem::Type(t) => t.span.clone(),
+                    AirItem::Function(f) => f.span.clone(),
+                    AirItem::Import(i) => i.span.clone(),
+                    AirItem::Impl(i) => i.span.clone(),
+                    AirItem::Conversion(c) => c.span.clone(),
+                    AirItem::TruthAction(a) => a.span.clone(),
+                    AirItem::Usage(u) => u.span.clone(),
+                    AirItem::CallSite(c) => c.span.clone(),
+                    AirItem::SilentDiscard(d) => d.span.clone(),
+                    AirItem::PartialIfLet(p) => p.span.clone(),
+                })
+                .next()
+                .unwrap_or_else(|| locus_air::AirSpan::new(file.path.clone(), 1, 1));
+            out.push(Diagnostic {
+                rule_id: "UT003".to_string(),
+                severity: mode.elevate(Severity::Warning),
+                span,
+                concept: None,
+                message: format!(
+                    "module `{module_path}` uses a generic utility name (matched \
+                     pattern `{matched_pattern}`) and is not in `accepted_utility_paths`"
+                ),
+                why: vec![
+                    format!(
+                        "module `{module_path}` matches generic_utility_patterns \
+                         entry `{matched_pattern}`"
+                    ),
+                    "generic-named modules (`utils`, `helpers`, `common`, `misc`, \
+                     `shared`) tend to accumulate unrelated logic; require explicit \
+                     acceptance so each one is a deliberate choice"
+                        .into(),
+                ],
+                suggested_fix: Some(format!(
+                    "if `{module_path}` is intentionally a utility module, accept it \
+                     by adding its path to `paradigms.UT.accepted_utility_paths` in \
+                     `locus.lock` (you may also want to add it to `utility_paths` so \
+                     UT001/UT002/UT004/UT005 apply). Otherwise rename the module to \
+                     reflect its actual responsibility."
+                )),
+            });
+        }
+    }
+    out
+}
+
+/// UT004 — domain-concept logic inside a utility module.
+///
+/// For each `AirFile` whose `module_path` matches `utility_paths`, fire when
+/// the file contains an `AirTruthAction::Construct` whose `target` matches
+/// any pattern in `canonical_construct_patterns`, OR any `AirTruthAction`
+/// with `action ∈ {Validate, Normalize}`. Validate/Normalize actions don't
+/// need a pattern match — any utility doing input validation or
+/// normalization is by definition implementing domain rules.
+///
+/// Severity: Warning by default; `--agent-strict` elevates to Fatal.
+///
+/// Lockfile-driven silence: stays silent until both `utility_paths` is
+/// non-empty AND either `canonical_construct_patterns` is populated *or*
+/// the file actually carries Validate/Normalize actions. Specifically,
+/// the rule short-circuits when `utility_paths` is empty — same convention
+/// as UT001/UT002.
+pub fn ut004(air: &AirWorkspace, section: &UtSection, mode: CheckMode) -> Vec<Diagnostic> {
+    if section.utility_paths.is_empty() {
+        return Vec::new();
+    }
+    let mut out = Vec::new();
+    for pkg in &air.packages {
+        for file in &pkg.files {
+            let Some(module_path) = file.module_path.as_deref() else {
+                continue;
+            };
+            let Some(utility_pattern) = section
+                .utility_paths
+                .iter()
+                .find(|p| matches_pattern(p, module_path))
+            else {
+                continue;
+            };
+            for item in &file.items {
+                let AirItem::TruthAction(action) = item else {
+                    continue;
+                };
+                let trigger = match action.action {
+                    ActionKind::Validate => Some("validation"),
+                    ActionKind::Normalize => Some("normalization"),
+                    ActionKind::Construct => {
+                        if section
+                            .canonical_construct_patterns
+                            .iter()
+                            .any(|p| matches_pattern(p, &action.target))
+                        {
+                            Some("construction of a canonical concept")
+                        } else {
+                            None
+                        }
+                    }
+                    _ => None,
+                };
+                let Some(label) = trigger else {
+                    continue;
+                };
+                out.push(Diagnostic {
+                    rule_id: "UT004".to_string(),
+                    severity: mode.elevate(Severity::Warning),
+                    span: action.span.clone(),
+                    concept: None,
+                    message: format!(
+                        "utility module `{module_path}` performs {label} on `{}`",
+                        action.target
+                    ),
+                    why: vec![
+                        format!(
+                            "module `{module_path}` matches utility_paths pattern \
+                             `{utility_pattern}`"
+                        ),
+                        format!(
+                            "found `{:?}` action targeting `{}`",
+                            action.action, action.target
+                        ),
+                        "utility modules must hold only domain-free technical \
+                         helpers; constructing canonical concepts or performing \
+                         validation/normalization is domain logic that belongs in \
+                         a feature/domain module"
+                            .into(),
+                    ],
+                    suggested_fix: Some(format!(
+                        "move the {label} of `{}` into the domain/feature module \
+                         that owns the concept. If `{module_path}` is genuinely \
+                         not a utility, remove it from `paradigms.UT.utility_paths` \
+                         in `locus.lock`.",
+                        action.target
+                    )),
+                });
+            }
+        }
+    }
+    out
+}
+
+/// UT005 — validation/normalization inside a utility module.
+///
+/// Same gate as UT004 but specifically for `AirTruthAction::{Validate,
+/// Normalize}` actions, regardless of target. The two rules overlap (UT004
+/// catches Validate/Normalize too) but UT005 stays semantically focused on
+/// the "validation/normalization is domain logic" message and lets users
+/// silence one without the other (e.g. by excluding the module from
+/// `utility_paths` for UT005 only — currently both share the same gate).
+///
+/// Severity: Warning by default; `--agent-strict` elevates to Fatal.
+///
+/// Lockfile-driven silence: stays silent when `utility_paths` is empty.
+pub fn ut005(air: &AirWorkspace, section: &UtSection, mode: CheckMode) -> Vec<Diagnostic> {
+    if section.utility_paths.is_empty() {
+        return Vec::new();
+    }
+    let mut out = Vec::new();
+    for pkg in &air.packages {
+        for file in &pkg.files {
+            let Some(module_path) = file.module_path.as_deref() else {
+                continue;
+            };
+            let Some(utility_pattern) = section
+                .utility_paths
+                .iter()
+                .find(|p| matches_pattern(p, module_path))
+            else {
+                continue;
+            };
+            for item in &file.items {
+                let AirItem::TruthAction(action) = item else {
+                    continue;
+                };
+                let label = match action.action {
+                    ActionKind::Validate => "validation",
+                    ActionKind::Normalize => "normalization",
+                    _ => continue,
+                };
+                out.push(Diagnostic {
+                    rule_id: "UT005".to_string(),
+                    severity: mode.elevate(Severity::Warning),
+                    span: action.span.clone(),
+                    concept: None,
+                    message: format!(
+                        "utility module `{module_path}` performs {label} on `{}`",
+                        action.target
+                    ),
+                    why: vec![
+                        format!(
+                            "module `{module_path}` matches utility_paths pattern \
+                             `{utility_pattern}`"
+                        ),
+                        format!(
+                            "found `{:?}` action targeting `{}`",
+                            action.action, action.target
+                        ),
+                        "validation and normalization express domain rules; \
+                         they belong in a domain/feature module, not a \
+                         domain-free utility"
+                            .into(),
+                    ],
+                    suggested_fix: Some(format!(
+                        "move the {label} of `{}` into the domain/feature module \
+                         that owns the rule. If `{module_path}` is genuinely not \
+                         a utility, remove it from `paradigms.UT.utility_paths` \
+                         in `locus.lock`.",
+                        action.target
+                    )),
+                });
+            }
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use locus_air::{
-        AIR_SCHEMA_VERSION, AirFile, AirImport, AirPackage, AirSpan, AirType, TypeKind, Visibility,
+        AIR_SCHEMA_VERSION, AirFile, AirImport, AirPackage, AirSpan, AirTruthAction, AirType,
+        TypeKind, Visibility,
     };
 
     fn ty(name: &str, vis: Visibility) -> AirItem {
@@ -313,6 +577,7 @@ mod tests {
         let section = UtSection {
             utility_paths: vec!["x::utils::*".into()],
             forbidden_imports: vec!["crate::domain::*".into()],
+            ..Default::default()
         };
         let diags = ut002(&air, &section, CheckMode::Human);
         assert_eq!(diags.len(), 1);
@@ -357,6 +622,7 @@ mod tests {
         let section = UtSection {
             utility_paths: vec!["x::utils::*".into()],
             forbidden_imports: vec!["crate::domain::*".into()],
+            ..Default::default()
         };
         assert!(ut002(&air, &section, CheckMode::Human).is_empty());
     }
@@ -367,6 +633,7 @@ mod tests {
         let section = UtSection {
             utility_paths: vec!["x::utils::*".into()],
             forbidden_imports: vec!["crate::domain::*".into()],
+            ..Default::default()
         };
         assert!(ut002(&air, &section, CheckMode::Human).is_empty());
     }
@@ -377,6 +644,7 @@ mod tests {
         let section = UtSection {
             utility_paths: vec!["x::utils::*".into()],
             forbidden_imports: vec![],
+            ..Default::default()
         };
         assert!(ut002(&air, &section, CheckMode::Human).is_empty());
     }
@@ -387,6 +655,7 @@ mod tests {
         let section = UtSection {
             utility_paths: vec![],
             forbidden_imports: vec!["crate::domain::*".into()],
+            ..Default::default()
         };
         assert!(ut002(&air, &section, CheckMode::Human).is_empty());
     }
@@ -406,8 +675,286 @@ mod tests {
         let section = UtSection {
             utility_paths: vec!["x::utils::*".into()],
             forbidden_imports: vec!["crate::roles::*".into()],
+            ..Default::default()
         };
         let diags = ut002(&air, &section, CheckMode::AgentStrict);
+        assert_eq!(diags.len(), 1);
+        assert_eq!(diags[0].severity, Severity::Fatal);
+    }
+
+    // ---- UT003 / UT004 / UT005 helpers ----
+
+    fn truth_action(kind: ActionKind, target: &str, line: u32) -> AirItem {
+        AirItem::TruthAction(AirTruthAction {
+            action: kind,
+            target: target.into(),
+            function: None,
+            span: AirSpan::new("t.rs", line, line),
+            confidence: 0.9,
+            reasons: Vec::new(),
+        })
+    }
+
+    // ---- UT003 tests ----
+
+    #[test]
+    fn ut003_silent_when_generic_utility_patterns_empty() {
+        let air = air_with_module("x::utils", vec![ty("Helper", Visibility::Private)]);
+        let section = UtSection::default();
+        assert!(ut003(&air, &section, CheckMode::Human).is_empty());
+    }
+
+    #[test]
+    fn ut003_fires_on_generic_utility_module_without_acceptance() {
+        let air = air_with_module("x::utils", vec![ty("Helper", Visibility::Private)]);
+        let section = UtSection {
+            generic_utility_patterns: vec!["*::utils::*".into()],
+            ..Default::default()
+        };
+        let diags = ut003(&air, &section, CheckMode::Human);
+        assert_eq!(diags.len(), 1);
+        assert_eq!(diags[0].rule_id, "UT003");
+        assert_eq!(diags[0].severity, Severity::Warning);
+        assert!(diags[0].message.contains("x::utils"));
+        assert!(diags[0].message.contains("*::utils::*"));
+    }
+
+    #[test]
+    fn ut003_quiet_when_module_is_explicitly_accepted() {
+        let air = air_with_module("x::utils", vec![ty("Helper", Visibility::Private)]);
+        let section = UtSection {
+            generic_utility_patterns: vec!["*::utils::*".into()],
+            accepted_utility_paths: vec!["x::utils".into()],
+            ..Default::default()
+        };
+        assert!(ut003(&air, &section, CheckMode::Human).is_empty());
+    }
+
+    #[test]
+    fn ut003_accepted_supports_wildcard_patterns() {
+        // Acceptance via a glob, not just exact path.
+        let air = air_with_module("x::utils::time", vec![ty("Clock", Visibility::Private)]);
+        let section = UtSection {
+            generic_utility_patterns: vec!["*::utils::*".into()],
+            accepted_utility_paths: vec!["x::utils::*".into()],
+            ..Default::default()
+        };
+        assert!(ut003(&air, &section, CheckMode::Human).is_empty());
+    }
+
+    #[test]
+    fn ut003_quiet_when_module_does_not_match_generic_patterns() {
+        let air = air_with_module("x::domain::user", vec![ty("User", Visibility::Public)]);
+        let section = UtSection {
+            generic_utility_patterns: vec!["*::utils::*".into(), "*::helpers".into()],
+            ..Default::default()
+        };
+        assert!(ut003(&air, &section, CheckMode::Human).is_empty());
+    }
+
+    #[test]
+    fn ut003_agent_strict_elevates_to_fatal() {
+        let air = air_with_module("x::helpers", vec![ty("Util", Visibility::Private)]);
+        let section = UtSection {
+            generic_utility_patterns: vec!["*::helpers".into()],
+            ..Default::default()
+        };
+        let diags = ut003(&air, &section, CheckMode::AgentStrict);
+        assert_eq!(diags.len(), 1);
+        assert_eq!(diags[0].severity, Severity::Fatal);
+    }
+
+    // ---- UT004 tests ----
+
+    #[test]
+    fn ut004_silent_when_utility_paths_empty() {
+        let air = air_with_module(
+            "x::utils",
+            vec![truth_action(ActionKind::Validate, "email", 5)],
+        );
+        let section = UtSection::default();
+        assert!(ut004(&air, &section, CheckMode::Human).is_empty());
+    }
+
+    #[test]
+    fn ut004_fires_on_validate_action_in_utility_module() {
+        let air = air_with_module(
+            "x::utils",
+            vec![truth_action(ActionKind::Validate, "email", 5)],
+        );
+        let section = UtSection {
+            utility_paths: vec!["x::utils::*".into()],
+            ..Default::default()
+        };
+        let diags = ut004(&air, &section, CheckMode::Human);
+        assert_eq!(diags.len(), 1);
+        assert_eq!(diags[0].rule_id, "UT004");
+        assert_eq!(diags[0].severity, Severity::Warning);
+        assert!(diags[0].message.contains("validation"));
+        assert!(diags[0].message.contains("email"));
+    }
+
+    #[test]
+    fn ut004_fires_on_normalize_action_in_utility_module() {
+        let air = air_with_module(
+            "x::utils",
+            vec![truth_action(ActionKind::Normalize, "name", 7)],
+        );
+        let section = UtSection {
+            utility_paths: vec!["x::utils::*".into()],
+            ..Default::default()
+        };
+        let diags = ut004(&air, &section, CheckMode::Human);
+        assert_eq!(diags.len(), 1);
+        assert!(diags[0].message.contains("normalization"));
+    }
+
+    #[test]
+    fn ut004_construct_only_fires_when_target_matches_canonical_pattern() {
+        // Construct of a non-canonical target → quiet.
+        let air = air_with_module(
+            "x::utils",
+            vec![truth_action(ActionKind::Construct, "Vec", 5)],
+        );
+        let section = UtSection {
+            utility_paths: vec!["x::utils::*".into()],
+            canonical_construct_patterns: vec!["*::User".into()],
+            ..Default::default()
+        };
+        assert!(ut004(&air, &section, CheckMode::Human).is_empty());
+
+        // Construct of a canonical target → fires.
+        let air = air_with_module(
+            "x::utils",
+            vec![truth_action(
+                ActionKind::Construct,
+                "crate::domain::User",
+                5,
+            )],
+        );
+        let diags = ut004(&air, &section, CheckMode::Human);
+        assert_eq!(diags.len(), 1);
+        assert!(diags[0].message.contains("construction"));
+        assert!(diags[0].message.contains("crate::domain::User"));
+    }
+
+    #[test]
+    fn ut004_quiet_in_non_utility_module() {
+        let air = air_with_module(
+            "x::domain::user",
+            vec![truth_action(ActionKind::Validate, "email", 5)],
+        );
+        let section = UtSection {
+            utility_paths: vec!["x::utils::*".into()],
+            ..Default::default()
+        };
+        assert!(ut004(&air, &section, CheckMode::Human).is_empty());
+    }
+
+    #[test]
+    fn ut004_agent_strict_elevates_to_fatal() {
+        let air = air_with_module(
+            "x::utils",
+            vec![truth_action(ActionKind::Validate, "email", 5)],
+        );
+        let section = UtSection {
+            utility_paths: vec!["x::utils::*".into()],
+            ..Default::default()
+        };
+        let diags = ut004(&air, &section, CheckMode::AgentStrict);
+        assert_eq!(diags.len(), 1);
+        assert_eq!(diags[0].severity, Severity::Fatal);
+    }
+
+    // ---- UT005 tests ----
+
+    #[test]
+    fn ut005_silent_when_utility_paths_empty() {
+        let air = air_with_module(
+            "x::utils",
+            vec![truth_action(ActionKind::Validate, "email", 5)],
+        );
+        let section = UtSection::default();
+        assert!(ut005(&air, &section, CheckMode::Human).is_empty());
+    }
+
+    #[test]
+    fn ut005_fires_on_validate_action() {
+        let air = air_with_module(
+            "x::utils",
+            vec![truth_action(ActionKind::Validate, "email", 5)],
+        );
+        let section = UtSection {
+            utility_paths: vec!["x::utils::*".into()],
+            ..Default::default()
+        };
+        let diags = ut005(&air, &section, CheckMode::Human);
+        assert_eq!(diags.len(), 1);
+        assert_eq!(diags[0].rule_id, "UT005");
+        assert_eq!(diags[0].severity, Severity::Warning);
+        assert!(diags[0].message.contains("validation"));
+        assert!(diags[0].message.contains("email"));
+    }
+
+    #[test]
+    fn ut005_fires_on_normalize_action() {
+        let air = air_with_module(
+            "x::utils",
+            vec![truth_action(ActionKind::Normalize, "phone", 5)],
+        );
+        let section = UtSection {
+            utility_paths: vec!["x::utils::*".into()],
+            ..Default::default()
+        };
+        let diags = ut005(&air, &section, CheckMode::Human);
+        assert_eq!(diags.len(), 1);
+        assert!(diags[0].message.contains("normalization"));
+    }
+
+    #[test]
+    fn ut005_quiet_on_construct_action_regardless_of_pattern() {
+        // UT005 ignores Construct actions even when they match canonical
+        // patterns — that's UT004's territory.
+        let air = air_with_module(
+            "x::utils",
+            vec![truth_action(
+                ActionKind::Construct,
+                "crate::domain::User",
+                5,
+            )],
+        );
+        let section = UtSection {
+            utility_paths: vec!["x::utils::*".into()],
+            canonical_construct_patterns: vec!["*::User".into()],
+            ..Default::default()
+        };
+        assert!(ut005(&air, &section, CheckMode::Human).is_empty());
+    }
+
+    #[test]
+    fn ut005_quiet_in_non_utility_module() {
+        let air = air_with_module(
+            "x::domain::user",
+            vec![truth_action(ActionKind::Validate, "email", 5)],
+        );
+        let section = UtSection {
+            utility_paths: vec!["x::utils::*".into()],
+            ..Default::default()
+        };
+        assert!(ut005(&air, &section, CheckMode::Human).is_empty());
+    }
+
+    #[test]
+    fn ut005_agent_strict_elevates_to_fatal() {
+        let air = air_with_module(
+            "x::utils",
+            vec![truth_action(ActionKind::Normalize, "name", 5)],
+        );
+        let section = UtSection {
+            utility_paths: vec!["x::utils::*".into()],
+            ..Default::default()
+        };
+        let diags = ut005(&air, &section, CheckMode::AgentStrict);
         assert_eq!(diags.len(), 1);
         assert_eq!(diags[0].severity, Severity::Fatal);
     }

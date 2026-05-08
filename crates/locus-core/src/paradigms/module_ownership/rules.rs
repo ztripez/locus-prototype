@@ -2,15 +2,18 @@
 //!
 //! Implemented:
 //! - [`mo001`]: too many public top-level types in a single file.
-//!
-//! Future MO rules will cover the spec's full responsibility-entropy story
-//! (multiple architectural roles in one module, canonical types co-located
-//! with adapters, …). MO001 is the first slice — a count-based heuristic
-//! for the simplest variant of "this file owns too much."
+//! - [`mo002`]: responsibility entropy in a single file (canonical/boundary/
+//!   converter hints, handler-named functions, persistence imports, io call
+//!   sites — too many distinct architectural roles co-existing).
+//! - [`mo003`]: canonical hint co-located with a boundary hint in the same file.
+//! - [`mo004`]: canonical hint co-located with a handler-named function in the
+//!   same file.
 
-use locus_air::{AirItem, AirWorkspace, Visibility};
+use locus_air::{
+    AirFile, AirHint, AirImport, AirItem, AirSpan, AirWorkspace, HintKind, Visibility,
+};
 
-use super::lockfile_schema::MoSection;
+use super::lockfile_schema::{MoSection, matches_name_glob, matches_pattern};
 use crate::diagnostics::{CheckMode, Diagnostic, Severity};
 
 /// MO001 — module file has too many public top-level types.
@@ -110,12 +113,311 @@ pub fn mo001(air: &AirWorkspace, section: &MoSection, mode: CheckMode) -> Vec<Di
     out
 }
 
+/// In-code default callee patterns flagged as "io" by MO002. Kept as a
+/// constant rather than a lockfile field because MO002's spec only enumerates
+/// `entropy_threshold`, `handler_name_patterns`, and `persistence_import_patterns`
+/// as configurable surface — the io contributor is a built-in heuristic, not
+/// user policy. If a project legitimately makes io calls in a non-blob file,
+/// the noise is absorbed by the entropy threshold (count must reach 3+).
+const IO_CALLEE_PATTERNS: &[&str] = &[
+    "*::fs::*",
+    "*::net::*",
+    "*::TcpStream::*",
+    "*::TcpListener::*",
+    "*::UdpSocket::*",
+];
+
+/// Anchor a per-file diagnostic at a useful span: the first item in the
+/// file when present, otherwise line 1 of the file.
+fn file_anchor_span(file: &AirFile) -> AirSpan {
+    file.items
+        .iter()
+        .map(|item| match item {
+            AirItem::Type(t) => t.span.clone(),
+            AirItem::Function(f) => f.span.clone(),
+            AirItem::Conversion(c) => c.span.clone(),
+            AirItem::Import(i) => i.span.clone(),
+            AirItem::Impl(i) => i.span.clone(),
+            AirItem::TruthAction(a) => a.span.clone(),
+            AirItem::CallSite(c) => c.span.clone(),
+            AirItem::Usage(u) => u.span.clone(),
+            AirItem::SilentDiscard(d) => d.span.clone(),
+            AirItem::PartialIfLet(p) => p.span.clone(),
+        })
+        .next()
+        .unwrap_or_else(|| AirSpan::new(file.path.clone(), 1, 1))
+}
+
+fn has_canonical_hint(file: &AirFile) -> bool {
+    file.hints
+        .iter()
+        .any(|h| matches!(h.kind, HintKind::Canonical))
+}
+
+fn has_boundary_hint(file: &AirFile) -> bool {
+    file.hints
+        .iter()
+        .any(|h| matches!(h.kind, HintKind::Boundary { .. }))
+}
+
+fn has_converter_hint(file: &AirFile) -> bool {
+    file.hints
+        .iter()
+        .any(|h| matches!(h.kind, HintKind::Converter))
+}
+
+fn has_handler_named_function(file: &AirFile, patterns: &[&str]) -> bool {
+    file.items.iter().any(|item| {
+        let AirItem::Function(f) = item else {
+            return false;
+        };
+        patterns.iter().any(|p| matches_name_glob(p, &f.name))
+    })
+}
+
+fn has_persistence_import(file: &AirFile, patterns: &[&str]) -> bool {
+    file.items.iter().any(|item| {
+        let AirItem::Import(AirImport { path, .. }) = item else {
+            return false;
+        };
+        patterns.iter().any(|p| matches_pattern(p, path))
+    })
+}
+
+fn has_io_call_site(file: &AirFile) -> bool {
+    file.items.iter().any(|item| {
+        let AirItem::CallSite(c) = item else {
+            return false;
+        };
+        IO_CALLEE_PATTERNS
+            .iter()
+            .any(|p| matches_pattern(p, &c.callee))
+    })
+}
+
+/// MO002 — responsibility entropy in a single file.
+///
+/// Counts the number of distinct architectural roles a file carries:
+/// (a) `AirHint::Canonical` present, (b) `AirHint::Boundary` present,
+/// (c) `AirHint::Converter` present, (d) any function whose name matches
+/// `handler_name_patterns` (default `*_handler`/`handle_*`), (e) any
+/// `AirImport.path` matching `persistence_import_patterns`, (f) any
+/// `AirItem::CallSite.callee` matching the built-in io pattern set.
+///
+/// Fires when the count `>= entropy_threshold` (default 3).
+///
+/// Severity: Warning by default; `--agent-strict` elevates to Fatal.
+///
+/// Lockfile-driven silence: when the section is fully default (none of
+/// `default_max_public_types`, `entropy_threshold`, `handler_name_patterns`,
+/// `persistence_import_patterns`, or `overrides` configured), MO002 emits
+/// nothing — same convention as MO001 and the DG/UT lockfile-driven rules.
+pub fn mo002(air: &AirWorkspace, section: &MoSection, mode: CheckMode) -> Vec<Diagnostic> {
+    if section.default_max_public_types.is_none()
+        && section.entropy_threshold.is_none()
+        && section.handler_name_patterns.is_empty()
+        && section.persistence_import_patterns.is_empty()
+        && section.overrides.is_empty()
+    {
+        return Vec::new();
+    }
+    let threshold = section.effective_entropy_threshold();
+    let handler_patterns = section.effective_handler_name_patterns();
+    let persistence_patterns = section.effective_persistence_import_patterns();
+    let mut out = Vec::new();
+    for pkg in &air.packages {
+        for file in &pkg.files {
+            let Some(module_path) = file.module_path.as_deref() else {
+                continue;
+            };
+            let mut roles: Vec<&'static str> = Vec::new();
+            if has_canonical_hint(file) {
+                roles.push("canonical");
+            }
+            if has_boundary_hint(file) {
+                roles.push("boundary");
+            }
+            if has_converter_hint(file) {
+                roles.push("converter");
+            }
+            if has_handler_named_function(file, &handler_patterns) {
+                roles.push("handler");
+            }
+            if has_persistence_import(file, &persistence_patterns) {
+                roles.push("persistence");
+            }
+            if has_io_call_site(file) {
+                roles.push("io");
+            }
+            let count = roles.len() as u32;
+            if count < threshold {
+                continue;
+            }
+            let span = file_anchor_span(file);
+            let role_list = roles.join(", ");
+            out.push(Diagnostic {
+                rule_id: "MO002".to_string(),
+                severity: mode.elevate(Severity::Warning),
+                span,
+                concept: None,
+                message: format!(
+                    "module `{module_path}` carries {count} distinct architectural roles \
+                     ({role_list}); threshold is {threshold}"
+                ),
+                why: vec![
+                    format!("file `{module_path}` exhibits roles: {role_list}"),
+                    format!(
+                        "MO002 entropy threshold is {threshold} (configured via \
+                         `paradigms.MO.entropy_threshold` in `locus.lock`)"
+                    ),
+                    "a single file mixing canonical/boundary/converter/handler/persistence/io \
+                     roles is a responsibility blob — split each role into its own module"
+                        .into(),
+                ],
+                suggested_fix: Some(
+                    "split this file along role boundaries: canonical types into \
+                     `domain/`, boundary DTOs into `dto/`, conversions into a \
+                     `convert.rs`, handlers into a `handlers/` module, and \
+                     persistence/io into an adapter layer. If the density is \
+                     intentional, raise `paradigms.MO.entropy_threshold` in \
+                     `locus.lock`."
+                        .into(),
+                ),
+            });
+        }
+    }
+    out
+}
+
+/// MO003 — canonical type co-located with a boundary type in the same file.
+///
+/// Fires for any `AirFile` containing both an `AirHint::Canonical` and an
+/// `AirHint::Boundary`. The two hints describe opposing roles — canonical
+/// types are the domain truth; boundary types are the wire/protocol shadow
+/// of that truth — so co-locating them in one file blurs ownership.
+///
+/// Severity: Warning by default; `--agent-strict` elevates to Fatal. No
+/// new lockfile fields — the rule is a pure structural check on hints.
+pub fn mo003(air: &AirWorkspace, mode: CheckMode) -> Vec<Diagnostic> {
+    let mut out = Vec::new();
+    for pkg in &air.packages {
+        for file in &pkg.files {
+            let Some(module_path) = file.module_path.as_deref() else {
+                continue;
+            };
+            if !(has_canonical_hint(file) && has_boundary_hint(file)) {
+                continue;
+            }
+            let span = file
+                .hints
+                .iter()
+                .find(|h| matches!(h.kind, HintKind::Canonical))
+                .map(|h: &AirHint| h.span.clone())
+                .unwrap_or_else(|| file_anchor_span(file));
+            out.push(Diagnostic {
+                rule_id: "MO003".to_string(),
+                severity: mode.elevate(Severity::Warning),
+                span,
+                concept: None,
+                message: format!(
+                    "module `{module_path}` mixes canonical and boundary types"
+                ),
+                why: vec![
+                    format!("file `{module_path}` has both a `// ot: canonical` and a `// ot: boundary` hint"),
+                    "canonical types are the domain truth; boundary types are the \
+                     wire/protocol shadow of that truth — keeping them in one file \
+                     blurs ownership and makes the converter direction ambiguous"
+                        .into(),
+                ],
+                suggested_fix: Some(
+                    "split the file: move canonical types into a `domain/` module \
+                     and boundary types into a `dto/` module, with explicit \
+                     `From`/`TryFrom` converters between them"
+                        .into(),
+                ),
+            });
+        }
+    }
+    out
+}
+
+/// MO004 — handler co-located with a canonical concept in the same file.
+///
+/// Fires for any `AirFile` containing both an `AirHint::Canonical` *and* a
+/// function whose name matches `handler_name_patterns` (reuses the same
+/// patterns as MO002, with the same default fallback `*_handler`/`handle_*`).
+///
+/// Handlers belong to an application/transport layer; canonical types belong
+/// to the domain layer. Co-locating them couples the two.
+///
+/// Severity: Warning by default; `--agent-strict` elevates to Fatal.
+pub fn mo004(air: &AirWorkspace, section: &MoSection, mode: CheckMode) -> Vec<Diagnostic> {
+    let handler_patterns = section.effective_handler_name_patterns();
+    let mut out = Vec::new();
+    for pkg in &air.packages {
+        for file in &pkg.files {
+            let Some(module_path) = file.module_path.as_deref() else {
+                continue;
+            };
+            if !has_canonical_hint(file) {
+                continue;
+            }
+            let handler = file.items.iter().find_map(|item| {
+                let AirItem::Function(f) = item else {
+                    return None;
+                };
+                if handler_patterns
+                    .iter()
+                    .any(|p| matches_name_glob(p, &f.name))
+                {
+                    Some(f)
+                } else {
+                    None
+                }
+            });
+            let Some(handler) = handler else {
+                continue;
+            };
+            out.push(Diagnostic {
+                rule_id: "MO004".to_string(),
+                severity: mode.elevate(Severity::Warning),
+                span: handler.span.clone(),
+                concept: None,
+                message: format!(
+                    "module `{module_path}` co-locates handler `{}` with a canonical concept",
+                    handler.name
+                ),
+                why: vec![
+                    format!("file `{module_path}` has a `// ot: canonical` hint"),
+                    format!(
+                        "function `{}` matches handler name pattern (one of {:?})",
+                        handler.name, handler_patterns
+                    ),
+                    "handlers belong to an application/transport layer; canonical \
+                     types belong to the domain layer — co-locating them couples \
+                     the two and makes the canonical reusable from non-handler \
+                     callers harder"
+                        .into(),
+                ],
+                suggested_fix: Some(format!(
+                    "move `{}` into a `handlers/` module that depends on the \
+                     canonical, instead of defining both in the same file. If the \
+                     name match is a false positive, narrow \
+                     `paradigms.MO.handler_name_patterns` in `locus.lock`.",
+                    handler.name
+                )),
+            });
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::super::lockfile_schema::{MoOverride, MoSection};
     use super::*;
     use locus_air::{
-        AIR_SCHEMA_VERSION, AirFile, AirPackage, AirSpan, AirType, TypeKind, Visibility,
+        AIR_SCHEMA_VERSION, AirCallSite, AirFunction, AirPackage, AirType, CallKind, TypeKind,
     };
 
     fn pub_type(name: &str) -> AirItem {
@@ -176,6 +478,9 @@ mod tests {
         MoSection {
             default_max_public_types: Some(default_budget),
             overrides: Vec::new(),
+            entropy_threshold: None,
+            handler_name_patterns: Vec::new(),
+            persistence_import_patterns: Vec::new(),
         }
     }
 
@@ -235,6 +540,7 @@ mod tests {
                 module: "lore::api::*".into(),
                 max_public_types: 20,
             }],
+            ..Default::default()
         };
         assert!(
             mo001(&air, &section, CheckMode::Human).is_empty(),
@@ -253,6 +559,7 @@ mod tests {
                 module: "lore::domain::*".into(),
                 max_public_types: 2,
             }],
+            ..Default::default()
         };
         let diags = mo001(&air, &section, CheckMode::Human);
         assert_eq!(diags.len(), 1, "override should lower budget below count");
@@ -283,6 +590,7 @@ mod tests {
                     max_public_types: 3,
                 },
             ],
+            ..Default::default()
         };
         // First override (20) wins, so 8 public types is fine.
         assert!(mo001(&air, &section, CheckMode::Human).is_empty());
@@ -356,6 +664,7 @@ mod tests {
                 module: "lore::api::*".into(),
                 max_public_types: 20,
             }],
+            ..Default::default()
         };
         let diags = mo001(&air, &section, CheckMode::Human);
         assert_eq!(
@@ -369,5 +678,348 @@ mod tests {
             "expected fallback explanation in why; got {:?}",
             diags[0].why
         );
+    }
+
+    // ---- shared helpers for MO002 / MO003 / MO004 tests ----
+
+    fn canonical_hint() -> AirHint {
+        AirHint {
+            kind: HintKind::Canonical,
+            raw: "// ot: canonical".into(),
+            span: AirSpan::new("t.rs", 5, 5),
+            target_span: Some(AirSpan::new("t.rs", 6, 10)),
+        }
+    }
+
+    fn boundary_hint() -> AirHint {
+        AirHint {
+            kind: HintKind::Boundary {
+                concept: Some("user".into()),
+                boundary: Some("api".into()),
+            },
+            raw: "// ot: boundary user api".into(),
+            span: AirSpan::new("t.rs", 20, 20),
+            target_span: Some(AirSpan::new("t.rs", 21, 30)),
+        }
+    }
+
+    fn converter_hint() -> AirHint {
+        AirHint {
+            kind: HintKind::Converter,
+            raw: "// ot: converter".into(),
+            span: AirSpan::new("t.rs", 40, 40),
+            target_span: Some(AirSpan::new("t.rs", 41, 45)),
+        }
+    }
+
+    fn func(name: &str, line: u32) -> AirItem {
+        AirItem::Function(AirFunction {
+            name: name.into(),
+            symbol: format!("x::{name}"),
+            visibility: Visibility::Public,
+            params: Vec::new(),
+            return_type: None,
+            span: AirSpan::new("t.rs", line, line + 5),
+            line_count: 6,
+            doc: None,
+        })
+    }
+
+    fn import(path: &str) -> AirItem {
+        AirItem::Import(AirImport {
+            path: path.into(),
+            visibility: Visibility::Private,
+            span: AirSpan::new("t.rs", 1, 1),
+        })
+    }
+
+    fn call_site(callee: &str) -> AirItem {
+        AirItem::CallSite(AirCallSite {
+            callee: callee.into(),
+            kind: CallKind::Function,
+            function: None,
+            span: AirSpan::new("t.rs", 1, 1),
+        })
+    }
+
+    fn air_with_full(
+        module: Option<&str>,
+        items: Vec<AirItem>,
+        hints: Vec<AirHint>,
+    ) -> AirWorkspace {
+        AirWorkspace {
+            schema_version: AIR_SCHEMA_VERSION,
+            packages: vec![AirPackage {
+                name: "x".into(),
+                version: "0".into(),
+                root_dir: "/".into(),
+                files: vec![AirFile {
+                    path: "t.rs".into(),
+                    module_path: module.map(str::to_string),
+                    items,
+                    hints,
+                    parse_error: None,
+                    line_count: 100,
+                }],
+            }],
+            facts: Vec::new(),
+        }
+    }
+
+    fn mo_section_with_entropy(threshold: u32) -> MoSection {
+        MoSection {
+            entropy_threshold: Some(threshold),
+            ..Default::default()
+        }
+    }
+
+    // ---- MO002 tests ----
+
+    #[test]
+    fn mo002_silent_on_default_section() {
+        // Even if a file is a clear blob (canonical+boundary+converter+handler),
+        // MO002 stays silent until the lockfile section is configured.
+        let air = air_with_full(
+            Some("foo::bar"),
+            vec![func("user_handler", 10), import("crate::sqlx::query")],
+            vec![canonical_hint(), boundary_hint(), converter_hint()],
+        );
+        let section = MoSection::default();
+        assert!(mo002(&air, &section, CheckMode::Human).is_empty());
+    }
+
+    #[test]
+    fn mo002_fires_when_three_roles_meet_default_threshold() {
+        // canonical + boundary + handler = 3 roles → at default threshold (3)
+        let air = air_with_full(
+            Some("foo::bar"),
+            vec![func("user_handler", 10)],
+            vec![canonical_hint(), boundary_hint()],
+        );
+        // section is "configured" via entropy_threshold=Some(3) so the rule
+        // is active; default threshold path is exercised in another test.
+        let section = mo_section_with_entropy(3);
+        let diags = mo002(&air, &section, CheckMode::Human);
+        assert_eq!(diags.len(), 1, "got {diags:?}");
+        assert_eq!(diags[0].rule_id, "MO002");
+        assert_eq!(diags[0].severity, Severity::Warning);
+        assert!(diags[0].message.contains("foo::bar"));
+        assert!(diags[0].message.contains("3"));
+        assert!(diags[0].message.contains("canonical"));
+        assert!(diags[0].message.contains("boundary"));
+        assert!(diags[0].message.contains("handler"));
+    }
+
+    #[test]
+    fn mo002_quiet_when_below_threshold() {
+        // Only canonical + handler = 2 roles → under default threshold of 3.
+        let air = air_with_full(
+            Some("foo::bar"),
+            vec![func("on_user_handler", 10)],
+            vec![canonical_hint()],
+        );
+        let section = mo_section_with_entropy(3);
+        assert!(mo002(&air, &section, CheckMode::Human).is_empty());
+    }
+
+    #[test]
+    fn mo002_counts_persistence_imports_and_io_call_sites() {
+        // canonical + persistence import (sqlx) + io call site (fs::read) = 3
+        let air = air_with_full(
+            Some("foo::bar"),
+            vec![
+                import("crate::sqlx::query"),
+                call_site("std::fs::read_to_string"),
+            ],
+            vec![canonical_hint()],
+        );
+        let section = mo_section_with_entropy(3);
+        let diags = mo002(&air, &section, CheckMode::Human);
+        assert_eq!(diags.len(), 1);
+        let m = &diags[0].message;
+        assert!(m.contains("canonical"));
+        assert!(m.contains("persistence"));
+        assert!(m.contains("io"));
+    }
+
+    #[test]
+    fn mo002_user_handler_patterns_override_defaults() {
+        // A function called `process` does NOT match the default
+        // `*_handler`/`handle_*` patterns. With user-supplied `process*`
+        // pattern it does, raising the role count.
+        let air = air_with_full(
+            Some("foo::bar"),
+            vec![func("process", 10), import("crate::sqlx::query")],
+            vec![canonical_hint(), boundary_hint()],
+        );
+        // Default patterns: canonical + boundary + persistence = 3 → fires.
+        // User-narrowed patterns to `does_not_match_*`: canonical + boundary +
+        // persistence = 3 (handler still not counted) → still fires.
+        // To verify the override path, give threshold = 4 and patterns that
+        // match `process` so the count is 4.
+        let section = MoSection {
+            entropy_threshold: Some(4),
+            handler_name_patterns: vec!["process*".into()],
+            ..Default::default()
+        };
+        let diags = mo002(&air, &section, CheckMode::Human);
+        assert_eq!(
+            diags.len(),
+            1,
+            "expected fire at threshold 4; got {diags:?}"
+        );
+        assert!(diags[0].message.contains("handler"));
+    }
+
+    #[test]
+    fn mo002_agent_strict_elevates_to_fatal_and_skips_no_module_path() {
+        // Compound: agent-strict elevates Warning→Fatal; files without a
+        // module_path are skipped entirely (no diagnostic).
+        let air_with_path = air_with_full(
+            Some("foo::bar"),
+            vec![func("user_handler", 10)],
+            vec![canonical_hint(), boundary_hint()],
+        );
+        let section = mo_section_with_entropy(3);
+        let diags = mo002(&air_with_path, &section, CheckMode::AgentStrict);
+        assert_eq!(diags.len(), 1);
+        assert_eq!(diags[0].severity, Severity::Fatal);
+
+        let air_no_path = air_with_full(
+            None,
+            vec![func("user_handler", 10)],
+            vec![canonical_hint(), boundary_hint(), converter_hint()],
+        );
+        assert!(mo002(&air_no_path, &section, CheckMode::Human).is_empty());
+    }
+
+    // ---- MO003 tests ----
+
+    #[test]
+    fn mo003_fires_when_canonical_and_boundary_co_exist() {
+        let air = air_with_full(
+            Some("foo::bar"),
+            vec![],
+            vec![canonical_hint(), boundary_hint()],
+        );
+        let diags = mo003(&air, CheckMode::Human);
+        assert_eq!(diags.len(), 1);
+        assert_eq!(diags[0].rule_id, "MO003");
+        assert_eq!(diags[0].severity, Severity::Warning);
+        assert!(diags[0].message.contains("foo::bar"));
+        assert!(diags[0].message.contains("canonical"));
+        assert!(diags[0].message.contains("boundary"));
+    }
+
+    #[test]
+    fn mo003_quiet_with_only_canonical() {
+        let air = air_with_full(Some("foo::bar"), vec![], vec![canonical_hint()]);
+        assert!(mo003(&air, CheckMode::Human).is_empty());
+    }
+
+    #[test]
+    fn mo003_quiet_with_only_boundary() {
+        let air = air_with_full(Some("foo::bar"), vec![], vec![boundary_hint()]);
+        assert!(mo003(&air, CheckMode::Human).is_empty());
+    }
+
+    #[test]
+    fn mo003_quiet_with_no_hints() {
+        let air = air_with_full(Some("foo::bar"), vec![func("anything", 1)], vec![]);
+        assert!(mo003(&air, CheckMode::Human).is_empty());
+    }
+
+    #[test]
+    fn mo003_skips_files_without_module_path() {
+        let air = air_with_full(None, vec![], vec![canonical_hint(), boundary_hint()]);
+        assert!(mo003(&air, CheckMode::Human).is_empty());
+    }
+
+    #[test]
+    fn mo003_agent_strict_elevates_to_fatal() {
+        let air = air_with_full(
+            Some("foo::bar"),
+            vec![],
+            vec![canonical_hint(), boundary_hint()],
+        );
+        let diags = mo003(&air, CheckMode::AgentStrict);
+        assert_eq!(diags.len(), 1);
+        assert_eq!(diags[0].severity, Severity::Fatal);
+    }
+
+    // ---- MO004 tests ----
+
+    #[test]
+    fn mo004_fires_when_canonical_and_handler_co_exist() {
+        let air = air_with_full(
+            Some("foo::bar"),
+            vec![func("user_handler", 10)],
+            vec![canonical_hint()],
+        );
+        let section = MoSection::default();
+        let diags = mo004(&air, &section, CheckMode::Human);
+        assert_eq!(diags.len(), 1);
+        assert_eq!(diags[0].rule_id, "MO004");
+        assert_eq!(diags[0].severity, Severity::Warning);
+        assert!(diags[0].message.contains("foo::bar"));
+        assert!(diags[0].message.contains("user_handler"));
+    }
+
+    #[test]
+    fn mo004_quiet_when_only_canonical_no_handler() {
+        let air = air_with_full(
+            Some("foo::bar"),
+            vec![func("compute", 10)],
+            vec![canonical_hint()],
+        );
+        let section = MoSection::default();
+        assert!(mo004(&air, &section, CheckMode::Human).is_empty());
+    }
+
+    #[test]
+    fn mo004_quiet_when_only_handler_no_canonical() {
+        let air = air_with_full(Some("foo::bar"), vec![func("user_handler", 10)], vec![]);
+        let section = MoSection::default();
+        assert!(mo004(&air, &section, CheckMode::Human).is_empty());
+    }
+
+    #[test]
+    fn mo004_uses_user_supplied_handler_patterns_when_set() {
+        // `process` doesn't match the default `*_handler`/`handle_*` patterns
+        // but does match the user-supplied `process*` pattern.
+        let air = air_with_full(
+            Some("foo::bar"),
+            vec![func("process", 10)],
+            vec![canonical_hint()],
+        );
+        let default_section = MoSection::default();
+        assert!(mo004(&air, &default_section, CheckMode::Human).is_empty());
+        let section = MoSection {
+            handler_name_patterns: vec!["process*".into()],
+            ..Default::default()
+        };
+        let diags = mo004(&air, &section, CheckMode::Human);
+        assert_eq!(diags.len(), 1);
+        assert!(diags[0].message.contains("process"));
+    }
+
+    #[test]
+    fn mo004_skips_files_without_module_path() {
+        let air = air_with_full(None, vec![func("user_handler", 10)], vec![canonical_hint()]);
+        let section = MoSection::default();
+        assert!(mo004(&air, &section, CheckMode::Human).is_empty());
+    }
+
+    #[test]
+    fn mo004_agent_strict_elevates_to_fatal() {
+        let air = air_with_full(
+            Some("foo::bar"),
+            vec![func("handle_request", 10)],
+            vec![canonical_hint()],
+        );
+        let section = MoSection::default();
+        let diags = mo004(&air, &section, CheckMode::AgentStrict);
+        assert_eq!(diags.len(), 1);
+        assert_eq!(diags[0].severity, Severity::Fatal);
     }
 }

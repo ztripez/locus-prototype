@@ -20,6 +20,17 @@ use serde::{Deserialize, Serialize};
 /// enum-match, string-compare}, but not three or more.
 pub const DEFAULT_MAX_ACTION_KINDS: u32 = 2;
 
+/// Default cap for `StringCompare` + `EnumMatch` actions inside a single
+/// handler function before RM003 fires. Three permits a small dispatch table
+/// without normalising into a fully-fledged domain policy module.
+pub const DEFAULT_MAX_HANDLER_DECISIONS: u32 = 3;
+
+/// Default cap for `StringCompare` + `EnumMatch` actions inside a single
+/// repository function before RM004 fires. Same reasoning as
+/// [`DEFAULT_MAX_HANDLER_DECISIONS`] — three branches feel like incidental
+/// guards, more start to look like domain policy hiding inside data access.
+pub const DEFAULT_MAX_REPOSITORY_DECISIONS: u32 = 3;
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
 pub struct RmSection {
     /// Maximum number of distinct `ActionKind` values a single function's
@@ -39,6 +50,32 @@ pub struct RmSection {
     /// RM002 silent until the user opts in.
     #[serde(default)]
     pub converter_paths: Vec<String>,
+    /// Module patterns matching `AirFile.module_path` for files declared as
+    /// *handlers* — orchestration entry points (HTTP/RPC/CLI handlers, job
+    /// dispatchers, …). Functions in these modules should orchestrate, not
+    /// embed branch-rich domain policy. RM003 fires when a handler function
+    /// hosts more than [`RmSection::effective_max_handler_decisions`]
+    /// `StringCompare` + `EnumMatch` actions. Empty default keeps RM003 silent.
+    #[serde(default)]
+    pub handler_paths: Vec<String>,
+    /// Per-function cap on `StringCompare` + `EnumMatch` actions inside a
+    /// handler module before RM003 fires. `None` falls back to
+    /// [`DEFAULT_MAX_HANDLER_DECISIONS`].
+    #[serde(default)]
+    pub max_handler_decisions: Option<u32>,
+    /// Module patterns matching `AirFile.module_path` for files declared as
+    /// *repositories* — persistence-adjacent gateways. Functions in these
+    /// modules should be thin queries, not branch-rich domain logic. RM004
+    /// fires when a repository function hosts more than
+    /// [`RmSection::effective_max_repository_decisions`] `StringCompare` +
+    /// `EnumMatch` actions. Empty default keeps RM004 silent.
+    #[serde(default)]
+    pub repository_paths: Vec<String>,
+    /// Per-function cap on `StringCompare` + `EnumMatch` actions inside a
+    /// repository module before RM004 fires. `None` falls back to
+    /// [`DEFAULT_MAX_REPOSITORY_DECISIONS`].
+    #[serde(default)]
+    pub max_repository_decisions: Option<u32>,
 }
 
 impl RmSection {
@@ -49,6 +86,24 @@ impl RmSection {
     pub fn effective_default(&self) -> u32 {
         self.default_max_action_kinds
             .unwrap_or(DEFAULT_MAX_ACTION_KINDS)
+    }
+
+    /// Resolve the active RM003 cap. Falls back to
+    /// [`DEFAULT_MAX_HANDLER_DECISIONS`] when the user populated
+    /// `handler_paths` without pinning a count. Callers should still gate on
+    /// `handler_paths` being non-empty before invoking the rule — that's the
+    /// opt-in signal.
+    pub fn effective_max_handler_decisions(&self) -> u32 {
+        self.max_handler_decisions
+            .unwrap_or(DEFAULT_MAX_HANDLER_DECISIONS)
+    }
+
+    /// Resolve the active RM004 cap. Falls back to
+    /// [`DEFAULT_MAX_REPOSITORY_DECISIONS`] when the user populated
+    /// `repository_paths` without pinning a count.
+    pub fn effective_max_repository_decisions(&self) -> u32 {
+        self.max_repository_decisions
+            .unwrap_or(DEFAULT_MAX_REPOSITORY_DECISIONS)
     }
 }
 
@@ -113,6 +168,7 @@ mod tests {
             default_max_action_kinds: Some(4),
             exempt_paths: Vec::new(),
             converter_paths: Vec::new(),
+            ..Default::default()
         };
         assert_eq!(s.effective_default(), 4);
     }

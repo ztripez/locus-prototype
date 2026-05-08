@@ -6,6 +6,10 @@
 //!   facts produced by the std-rt loader (or any other loader that knows
 //!   about env-read patterns) — and pairs each with the file the targeted
 //!   function lives in.
+//! - [`cf002`]: filesystem-walk rule, reserved for a future
+//!   filesystem-aware loader. Lockfile fields (`config_file_patterns`,
+//!   `accepted_config_files`) ship today so users can pre-populate the
+//!   allowlist; the rule body is a no-op stub.
 
 use locus_air::{AirFact, AirItem, AirWorkspace, FactKind, FactTarget};
 
@@ -53,6 +57,29 @@ pub fn cf001(air: &AirWorkspace, section: &CfSection, mode: CheckMode) -> Vec<Di
         out.push(diagnostic_for(fact, symbol, module_path, fn_span, mode));
     }
     out
+}
+
+/// CF002 — unregistered config-like file in the workspace.
+///
+/// **Reserved / not yet implemented.** Locus rules consume `AirWorkspace`,
+/// which carries no filesystem-walk results. CF002 is a filesystem-aware
+/// rule: it would scan the repo root for files matching
+/// `section.config_file_patterns` (`*.yaml`, `*.toml`, …) outside any
+/// pattern in `section.config_paths` (a module-path concept that maps to
+/// directories the user already owns) and outside the
+/// `section.accepted_config_files` allowlist (`Cargo.toml`,
+/// `.github/**/*`, …).
+///
+/// Until a filesystem-aware loader lands and surfaces those facts to the
+/// paradigm tier, this function returns an empty diagnostic vector. The
+/// lockfile fields are present today so users can pre-populate them
+/// without later schema churn; the eventual implementation will read the
+/// same fields without breaking on-disk format.
+///
+/// Tracked: see workspace-level CHANGELOG / loader plan in
+/// `docs/PARADIGMS.md` §"Framework Knowledge and Sub-Paradigm Loaders".
+pub fn cf002(_air: &AirWorkspace, _section: &CfSection, _mode: CheckMode) -> Vec<Diagnostic> {
+    Vec::new()
 }
 
 /// Find the `(module_path, function_span)` for the function with this
@@ -195,6 +222,7 @@ mod tests {
         );
         let section = CfSection {
             config_paths: vec!["crate::config::*".into()],
+            ..Default::default()
         };
         let diags = cf001(&air, &section, CheckMode::Human);
         assert_eq!(diags.len(), 1);
@@ -234,6 +262,7 @@ mod tests {
         );
         let section = CfSection {
             config_paths: vec!["crate::config::*".into()],
+            ..Default::default()
         };
         assert!(cf001(&air, &section, CheckMode::Human).is_empty());
     }
@@ -268,6 +297,7 @@ mod tests {
         );
         let section = CfSection {
             config_paths: vec!["crate::config::*".into()],
+            ..Default::default()
         };
         assert!(cf001(&air, &section, CheckMode::Human).is_empty());
     }
@@ -297,6 +327,7 @@ mod tests {
         );
         let section = CfSection {
             config_paths: vec!["crate::config::*".into()],
+            ..Default::default()
         };
         assert!(cf001(&air, &section, CheckMode::Human).is_empty());
     }
@@ -312,6 +343,7 @@ mod tests {
         );
         let section = CfSection {
             config_paths: vec!["crate::config::*".into()],
+            ..Default::default()
         };
         let diags = cf001(&air, &section, CheckMode::AgentStrict);
         assert_eq!(diags.len(), 1);
@@ -330,7 +362,37 @@ mod tests {
         );
         let section = CfSection {
             config_paths: vec!["crate::config::*".into()],
+            ..Default::default()
         };
         assert!(cf001(&air, &section, CheckMode::Human).is_empty());
+    }
+
+    // ---- CF002: deferred filesystem-walk rule ----
+
+    #[test]
+    fn cf002_returns_no_diagnostics_today() {
+        // Stub rule — the body is reserved for a future filesystem-aware
+        // loader. Until that lands, CF002 is silent regardless of input.
+        let air = air_with(Some("crate::handler::user"), Vec::new(), Vec::new());
+        let section = CfSection::default();
+        assert!(cf002(&air, &section, CheckMode::Human).is_empty());
+        assert!(cf002(&air, &section, CheckMode::AgentStrict).is_empty());
+    }
+
+    #[test]
+    fn cf002_lockfile_fields_round_trip_through_serde() {
+        // Users can pre-populate the future rule's allowlist today.
+        // The defaults survive a serde round-trip; partial JSON falls back
+        // to the seeded patterns.
+        let s = CfSection::default();
+        assert!(!s.config_file_patterns.is_empty());
+        assert!(!s.accepted_config_files.is_empty());
+
+        let j = serde_json::to_value(&s).unwrap();
+        let back: CfSection = serde_json::from_value(j).unwrap();
+        assert_eq!(s, back);
+
+        let from_empty: CfSection = serde_json::from_str("{}").unwrap();
+        assert_eq!(from_empty, CfSection::default());
     }
 }

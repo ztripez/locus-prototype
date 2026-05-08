@@ -5,6 +5,14 @@
 //! budget are flagged by CX001. The default budget is workspace-wide;
 //! specific module patterns can raise or lower it (parsers/solvers may
 //! legitimately be long; converters/handlers usually should not).
+//!
+//! Beyond CX001's per-function line budget, CX records two additional
+//! workspace-wide thresholds: `max_public_items` (caps the per-file public
+//! API surface area, used by CX007) and `max_fan_out` (caps the number of
+//! call sites issued by a single function, used by CX008). Both have
+//! built-in defaults but ship with non-empty fallbacks so the section is
+//! still useful for un-onboarded projects; CX008 stays silent until the
+//! user populates `orchestration_paths`.
 
 // ot: canonical
 
@@ -17,7 +25,7 @@ use serde::{Deserialize, Serialize};
 /// trail or a refactor into smaller pieces.
 pub const DEFAULT_MAX_FUNCTION_LINES: u32 = 50;
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct CxSection {
     /// Workspace-wide budget for the line count of any single function.
     /// `None` means "fall back to [`DEFAULT_MAX_FUNCTION_LINES`]" — we keep
@@ -31,6 +39,61 @@ pub struct CxSection {
     /// patterns above broader ones by ordering the vec.
     #[serde(default)]
     pub overrides: Vec<CxOverride>,
+    /// CX007 — cap on public `AirItem` count per file (anything exposing
+    /// API: `Type` or `Function` with `Visibility::Public`). Defaults to
+    /// [`default_max_public_items`].
+    #[serde(default = "default_max_public_items")]
+    pub max_public_items: u32,
+    /// CX007 — module-path patterns whose files are exempt from
+    /// `max_public_items`. Defaults to [`default_exempt_paths`] (test
+    /// modules) so re-exporting modules and prelude files don't trip the
+    /// rule out of the gate.
+    #[serde(default = "default_exempt_paths")]
+    pub exempt_paths: Vec<String>,
+    /// CX008 — cap on the number of call sites a single function may
+    /// issue. Defaults to [`default_max_fan_out`].
+    #[serde(default = "default_max_fan_out")]
+    pub max_fan_out: u32,
+    /// CX008 — module-path patterns marking "orchestration" modules where
+    /// high fan-out is expected (composition roots, CLI dispatch, runtime
+    /// orchestrators). Default empty; CX008 stays silent until the user
+    /// populates this list, mirroring the DG/MO un-onboarded UX.
+    #[serde(default)]
+    pub orchestration_paths: Vec<String>,
+}
+
+impl Default for CxSection {
+    fn default() -> Self {
+        Self {
+            default_max_function_lines: None,
+            overrides: Vec::new(),
+            max_public_items: default_max_public_items(),
+            exempt_paths: default_exempt_paths(),
+            max_fan_out: default_max_fan_out(),
+            orchestration_paths: Vec::new(),
+        }
+    }
+}
+
+/// Default cap for CX007. Thirty public items is "a generous facade" — most
+/// well-factored modules expose far fewer; past this point a file is
+/// usually a kitchen-sink prelude that should be split.
+pub fn default_max_public_items() -> u32 {
+    30
+}
+
+/// Default exempt paths for CX007. Test modules legitimately surface a lot
+/// of `pub` helpers (test fixtures, mock builders) and the CX surface-area
+/// signal is meaningless there.
+pub fn default_exempt_paths() -> Vec<String> {
+    vec!["*::tests::*".to_string(), "*::test::*".to_string()]
+}
+
+/// Default cap for CX008. Twenty-five call sites is "this function has
+/// real orchestration shape" — past it, a function is usually a god method
+/// reaching into too many places.
+pub fn default_max_fan_out() -> u32 {
+    25
 }
 
 impl CxSection {
@@ -62,22 +125,47 @@ pub struct CxOverride {
     pub max_function_lines: u32,
 }
 
-/// Pattern syntax: simple suffix wildcard.
+/// Pattern syntax: segment-aligned wildcards.
 /// - `foo::bar` — exact match
 /// - `foo::*` — `foo` itself or any descendant (`foo::bar`, `foo::bar::baz`)
+/// - `*::foo` — `foo` itself or anywhere ending with `::foo`
+/// - `*::foo::*` — `foo` appearing as any whole segment
 /// - `*` — anything
 ///
-/// Mirrors `module_ownership::lockfile_schema::matches_pattern`. Kept as a
-/// local copy so CX doesn't depend on MO; if a third paradigm needs the
-/// same helper, promote it to a shared module then.
+/// Slightly richer than MO's matcher because CX007's `exempt_paths` ships
+/// with `*::tests::*` defaults, and CX008's `orchestration_paths` users
+/// commonly want to match `*::cli::*`-style middle segments. Kept as a
+/// local copy so CX doesn't depend on a peer paradigm.
 pub fn matches_pattern(pattern: &str, path: &str) -> bool {
     if pattern == "*" {
         return true;
     }
-    if let Some(prefix) = pattern.strip_suffix("::*") {
-        return path == prefix || path.starts_with(&format!("{prefix}::"));
+    let leading_wild = pattern.starts_with("*::");
+    let trailing_wild = pattern.ends_with("::*");
+    let stripped = match (leading_wild, trailing_wild) {
+        (true, true) => &pattern[3..pattern.len() - 3],
+        (true, false) => &pattern[3..],
+        (false, true) => &pattern[..pattern.len() - 3],
+        (false, false) => pattern,
+    };
+    if stripped.is_empty() {
+        // `*::` / `::*` alone — malformed; treat as no-match. Users meant `*`.
+        return false;
     }
-    pattern == path
+    match (leading_wild, trailing_wild) {
+        (true, true) => {
+            let mid = format!("::{stripped}::");
+            let starts = format!("{stripped}::");
+            let ends = format!("::{stripped}");
+            path == stripped
+                || path.contains(&mid)
+                || path.starts_with(&starts)
+                || path.ends_with(&ends)
+        }
+        (true, false) => path == stripped || path.ends_with(&format!("::{stripped}")),
+        (false, true) => path == stripped || path.starts_with(&format!("{stripped}::")),
+        (false, false) => pattern == path,
+    }
 }
 
 #[cfg(test)]
@@ -89,13 +177,18 @@ mod tests {
         let s = CxSection::default();
         assert_eq!(s.effective_default(), DEFAULT_MAX_FUNCTION_LINES);
         assert!(s.overrides.is_empty());
+        // CX007/CX008 fields populated by their helper defaults.
+        assert_eq!(s.max_public_items, default_max_public_items());
+        assert_eq!(s.exempt_paths, default_exempt_paths());
+        assert_eq!(s.max_fan_out, default_max_fan_out());
+        assert!(s.orchestration_paths.is_empty());
     }
 
     #[test]
     fn configured_default_overrides_fallback() {
         let s = CxSection {
             default_max_function_lines: Some(30),
-            overrides: Vec::new(),
+            ..CxSection::default()
         };
         assert_eq!(s.effective_default(), 30);
     }
@@ -114,6 +207,7 @@ mod tests {
                     max_function_lines: 80,
                 },
             ],
+            ..CxSection::default()
         };
         let hit = s
             .matching_override("lore::parser::expr")

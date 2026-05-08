@@ -21,6 +21,9 @@
 //!   isn't on the `silent_discard_allowed_callees` allowlist.
 //! - FL005: `if let Ok/Err(...) = expr { ... }` with no `else` branch in
 //!   a module that isn't in `invariant_owner_paths`.
+//! - FL013: a function returning `Result<_, String>` / `Result<_, &str>`
+//!   that contains a stringifying call site (`to_string` / `format!` /
+//!   `format` / `display`) — lossy error stringification at the source.
 
 // ot: canonical
 
@@ -58,6 +61,7 @@ impl Paradigm for FailureLineage {
         out.extend(rules::fl003(air, &section, mode));
         out.extend(rules::fl004(air, &section, mode));
         out.extend(rules::fl005(air, &section, mode));
+        out.extend(rules::fl013(air, &section, mode));
         out
     }
 }

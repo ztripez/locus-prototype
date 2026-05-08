@@ -5,6 +5,10 @@
 //!   of DG003 — DG003 forbids feature A *reaching into* feature B's
 //!   internals; FO001 forbids feature A and feature B both *defining* the
 //!   same public type name).
+//! - [`fo004`]: a type defined inside a `shared_paths` region has a field
+//!   whose `type_text` mentions a feature-internal symbol — i.e. a
+//!   "shared" DTO that secretly knows about a specific feature's internals.
+//!   The shared module stops being shared.
 //!
 //! Follow the OT (`crates/locus-core/src/paradigms/one_truth/rules.rs`) and
 //! DG (`crates/locus-core/src/paradigms/dependency_graph/rules.rs`) patterns
@@ -128,6 +132,125 @@ fn owning_feature<'a>(features: &'a [FoFeature], path: &str) -> Option<&'a FoFea
     features.iter().find(|f| matches_pattern(&f.module, path))
 }
 
+/// FO004 — shared type field references a feature-internal symbol.
+///
+/// For every `AirItem::Type` whose enclosing `AirFile.module_path` matches
+/// any pattern in `section.shared_paths`, scan each field's `type_text`
+/// for path-like tokens (split on non-identifier characters and `::`)
+/// that match any declared feature's `module` pattern. Fires once per
+/// (shared type, field, feature-mention).
+///
+/// The motivating shape: a workspace declares `shared::dto` as a shared
+/// module and `crate::billing::*` as a feature. When `shared::dto::Receipt`
+/// has a field of type `Vec<crate::billing::Invoice>`, the shared DTO
+/// has secretly become billing-coupled — defeating the point of sharing
+/// it across other features. The fix is either to move the type into
+/// `billing` (where the coupling already lives) or to mediate the
+/// coupling through a feature-neutral shape.
+///
+/// Stays silent when `shared_paths` is empty OR `features` is empty:
+/// the rule needs both halves to reason about boundary violations, so
+/// silence is the correct posture for un-onboarded codebases.
+///
+/// Severity: Warning by default; Fatal under `--agent-strict` via
+/// [`CheckMode::elevate`]. The decision-tier is "warn-then-discuss":
+/// some shared modules legitimately depend on a single feature's types
+/// (a billing-event schema in a `shared::events` crate is fine).
+pub fn fo004(air: &AirWorkspace, section: &FoSection, mode: CheckMode) -> Vec<Diagnostic> {
+    if section.shared_paths.is_empty() || section.features.is_empty() {
+        return Vec::new();
+    }
+    let mut out = Vec::new();
+    for pkg in &air.packages {
+        for file in &pkg.files {
+            let Some(module_path) = file.module_path.as_deref() else {
+                continue;
+            };
+            if !section
+                .shared_paths
+                .iter()
+                .any(|pat| matches_pattern(pat, module_path))
+            {
+                continue;
+            }
+            for item in &file.items {
+                let AirItem::Type(ty) = item else {
+                    continue;
+                };
+                for field in &ty.fields {
+                    for token in path_like_tokens(&field.type_text) {
+                        if let Some(feature) = section
+                            .features
+                            .iter()
+                            .find(|f| matches_pattern(&f.module, token))
+                        {
+                            out.push(Diagnostic {
+                                rule_id: "FO004".to_string(),
+                                severity: mode.elevate(Severity::Warning),
+                                span: ty.span.clone(),
+                                concept: Some(ty.name.clone()),
+                                message: format!(
+                                    "shared type `{ty_name}` in `{module_path}` has field \
+                                     `{field}: {field_type}` referencing feature `{feat}` \
+                                     internal symbol `{token}`",
+                                    ty_name = ty.name,
+                                    field = field.name,
+                                    field_type = field.type_text,
+                                    feat = feature.name,
+                                ),
+                                why: vec![
+                                    format!(
+                                        "type `{}` lives in shared module `{module_path}`",
+                                        ty.symbol
+                                    ),
+                                    format!(
+                                        "field `{}` has type text `{}`",
+                                        field.name, field.type_text
+                                    ),
+                                    format!(
+                                        "path token `{token}` matches feature `{}`'s \
+                                         module pattern `{}`",
+                                        feature.name, feature.module
+                                    ),
+                                    "Feature Ownership: a shared module that names a \
+                                     feature-internal type is no longer shared — every \
+                                     consumer now indirectly depends on that feature"
+                                        .into(),
+                                ],
+                                suggested_fix: Some(format!(
+                                    "either move `{}` into feature `{}` (where the \
+                                     coupling already lives) or replace the field's type \
+                                     with a feature-neutral DTO. If the coupling is \
+                                     intentional (e.g. a billing-event schema), narrow \
+                                     `paradigms.FO.shared_paths` so this module is no \
+                                     longer treated as shared.",
+                                    ty.name, feature.name
+                                )),
+                            });
+                            // Each (field, feature) pair fires at most once.
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    out
+}
+
+/// Split `type_text` into path-like tokens — sequences of identifier
+/// characters and `::` separators — and yield each non-empty token.
+/// Non-identifier characters (`<`, `>`, `,`, `&`, ` `, `(`, `)`, `[`,
+/// `]`, `*`, `'`) are treated as separators. Tokens without `::` are
+/// still yielded; FO callers feed declared `module` patterns which are
+/// segment-aligned, so a single-segment token like `String` cannot
+/// accidentally match `crate::billing::*`.
+fn path_like_tokens(type_text: &str) -> impl Iterator<Item = &str> {
+    type_text
+        .split(|c: char| !(c.is_alphanumeric() || c == '_' || c == ':'))
+        .filter(|s| !s.is_empty())
+}
+
 /// Lower-snake → UpperCamel for the suggested-fix prose. Best-effort: split on
 /// `_`/`::`/`-`/whitespace, capitalize each chunk, concatenate. We only use
 /// this to nudge the user toward a rename — exact prefix doesn't matter.
@@ -150,7 +273,7 @@ fn pascalize(s: &str) -> String {
 mod tests {
     use super::*;
     use locus_air::{
-        AIR_SCHEMA_VERSION, AirFile, AirPackage, AirSpan, AirType, TypeKind, Visibility,
+        AIR_SCHEMA_VERSION, AirField, AirFile, AirPackage, AirSpan, AirType, TypeKind, Visibility,
     };
 
     fn ty(name: &str, symbol: &str, vis: Visibility) -> AirItem {
@@ -160,6 +283,30 @@ mod tests {
             symbol: symbol.into(),
             visibility: vis,
             fields: Vec::new(),
+            variants: Vec::new(),
+            derives: Vec::new(),
+            attrs: Vec::new(),
+            span: AirSpan::new("t.rs", 1, 1),
+            doc: None,
+        })
+    }
+
+    /// Helper for FO004: a Public struct with the given fields, each
+    /// field expressed as `(field_name, type_text)`.
+    fn ty_with_fields(name: &str, symbol: &str, fields: &[(&str, &str)]) -> AirItem {
+        AirItem::Type(AirType {
+            kind: TypeKind::Struct,
+            name: name.into(),
+            symbol: symbol.into(),
+            visibility: Visibility::Public,
+            fields: fields
+                .iter()
+                .map(|(n, t)| AirField {
+                    name: (*n).into(),
+                    type_text: (*t).into(),
+                    visibility: Visibility::Public,
+                })
+                .collect(),
             variants: Vec::new(),
             derives: Vec::new(),
             attrs: Vec::new(),
@@ -219,6 +366,7 @@ mod tests {
                 feature("billing", "crate::billing::*"),
                 feature("identity", "crate::identity::*"),
             ],
+            ..Default::default()
         };
         let diags = fo001(&air, &section, CheckMode::Human);
         assert_eq!(diags.len(), 1);
@@ -270,6 +418,7 @@ mod tests {
                 feature("identity", "crate::identity::*"),
                 feature("ops", "crate::ops::*"),
             ],
+            ..Default::default()
         };
         let diags = fo001(&air, &section, CheckMode::Human);
         assert_eq!(diags.len(), 2, "got {diags:?}");
@@ -307,6 +456,7 @@ mod tests {
                 feature("billing", "crate::billing::*"),
                 feature("identity", "crate::identity::*"),
             ],
+            ..Default::default()
         };
         assert!(fo001(&air, &section, CheckMode::Human).is_empty());
     }
@@ -334,6 +484,7 @@ mod tests {
         ]);
         let section = FoSection {
             features: vec![feature("billing", "crate::billing::*")],
+            ..Default::default()
         };
         assert!(fo001(&air, &section, CheckMode::Human).is_empty());
     }
@@ -378,6 +529,7 @@ mod tests {
                 feature("billing", "crate::billing::*"),
                 feature("identity", "crate::identity::*"),
             ],
+            ..Default::default()
         };
         // Only one Public definition exists, so nothing fires.
         assert!(fo001(&air, &section, CheckMode::Human).is_empty());
@@ -417,6 +569,7 @@ mod tests {
                 feature("billing", "crate::billing::*"),
                 feature("identity", "crate::identity::*"),
             ],
+            ..Default::default()
         };
         let diags = fo001(&air, &section, CheckMode::AgentStrict);
         assert_eq!(diags.len(), 1);
@@ -448,7 +601,170 @@ mod tests {
                 feature("billing", "crate::billing::*"),
                 feature("identity", "crate::identity::*"),
             ],
+            ..Default::default()
         };
         assert!(fo001(&air, &section, CheckMode::Human).is_empty());
+    }
+
+    // ---- FO004: shared type field references a feature-internal symbol ----
+
+    #[test]
+    fn fo004_fires_when_shared_field_names_feature_internal_type() {
+        // `shared::dto::Receipt.line_items: Vec<crate::billing::Invoice>`
+        // — billing leaks into shared.
+        let air = air_with_files(vec![(
+            "shared/dto.rs",
+            Some("shared::dto"),
+            vec![ty_with_fields(
+                "Receipt",
+                "shared::dto::Receipt",
+                &[("line_items", "Vec<crate::billing::Invoice>")],
+            )],
+        )]);
+        let section = FoSection {
+            features: vec![feature("billing", "crate::billing::*")],
+            shared_paths: vec!["shared::dto::*".into()],
+        };
+        let diags = fo004(&air, &section, CheckMode::Human);
+        assert_eq!(diags.len(), 1, "got {diags:?}");
+        assert_eq!(diags[0].rule_id, "FO004");
+        assert_eq!(diags[0].severity, Severity::Warning);
+        assert!(diags[0].message.contains("Receipt"));
+        assert!(diags[0].message.contains("billing"));
+        assert!(diags[0].message.contains("line_items"));
+        assert_eq!(diags[0].concept.as_deref(), Some("Receipt"));
+    }
+
+    #[test]
+    fn fo004_silent_when_shared_paths_empty() {
+        let air = air_with_files(vec![(
+            "shared/dto.rs",
+            Some("shared::dto"),
+            vec![ty_with_fields(
+                "Receipt",
+                "shared::dto::Receipt",
+                &[("line_items", "Vec<crate::billing::Invoice>")],
+            )],
+        )]);
+        let section = FoSection {
+            features: vec![feature("billing", "crate::billing::*")],
+            shared_paths: Vec::new(),
+        };
+        assert!(fo004(&air, &section, CheckMode::Human).is_empty());
+    }
+
+    #[test]
+    fn fo004_silent_when_features_empty() {
+        let air = air_with_files(vec![(
+            "shared/dto.rs",
+            Some("shared::dto"),
+            vec![ty_with_fields(
+                "Receipt",
+                "shared::dto::Receipt",
+                &[("line_items", "Vec<crate::billing::Invoice>")],
+            )],
+        )]);
+        let section = FoSection {
+            features: Vec::new(),
+            shared_paths: vec!["shared::dto::*".into()],
+        };
+        assert!(fo004(&air, &section, CheckMode::Human).is_empty());
+    }
+
+    #[test]
+    fn fo004_quiet_when_shared_field_uses_only_neutral_types() {
+        // `Vec<u32>` and `String` don't match any feature's module pattern.
+        let air = air_with_files(vec![(
+            "shared/dto.rs",
+            Some("shared::dto"),
+            vec![ty_with_fields(
+                "Receipt",
+                "shared::dto::Receipt",
+                &[("amount", "u64"), ("memo", "String")],
+            )],
+        )]);
+        let section = FoSection {
+            features: vec![feature("billing", "crate::billing::*")],
+            shared_paths: vec!["shared::dto::*".into()],
+        };
+        assert!(fo004(&air, &section, CheckMode::Human).is_empty());
+    }
+
+    #[test]
+    fn fo004_quiet_when_type_lives_outside_shared_paths() {
+        // The type lives in `crate::billing` (a feature, not shared) — not
+        // FO004's jurisdiction.
+        let air = air_with_files(vec![(
+            "billing/receipt.rs",
+            Some("crate::billing::receipt"),
+            vec![ty_with_fields(
+                "Receipt",
+                "crate::billing::receipt::Receipt",
+                &[("invoice", "crate::billing::Invoice")],
+            )],
+        )]);
+        let section = FoSection {
+            features: vec![feature("billing", "crate::billing::*")],
+            shared_paths: vec!["shared::dto::*".into()],
+        };
+        assert!(fo004(&air, &section, CheckMode::Human).is_empty());
+    }
+
+    #[test]
+    fn fo004_agent_strict_elevates_to_fatal() {
+        let air = air_with_files(vec![(
+            "shared/dto.rs",
+            Some("shared::dto"),
+            vec![ty_with_fields(
+                "Receipt",
+                "shared::dto::Receipt",
+                &[("invoice", "crate::billing::Invoice")],
+            )],
+        )]);
+        let section = FoSection {
+            features: vec![feature("billing", "crate::billing::*")],
+            shared_paths: vec!["shared::dto::*".into()],
+        };
+        let diags = fo004(&air, &section, CheckMode::AgentStrict);
+        assert_eq!(diags.len(), 1);
+        assert_eq!(diags[0].severity, Severity::Fatal);
+    }
+
+    #[test]
+    fn fo004_fires_per_field_with_feature_mention() {
+        // Two fields, both leaking different feature-internal types.
+        // Should fire twice (once per field).
+        let air = air_with_files(vec![(
+            "shared/dto.rs",
+            Some("shared::dto"),
+            vec![ty_with_fields(
+                "Snapshot",
+                "shared::dto::Snapshot",
+                &[
+                    ("invoice", "crate::billing::Invoice"),
+                    ("user", "crate::identity::User"),
+                ],
+            )],
+        )]);
+        let section = FoSection {
+            features: vec![
+                feature("billing", "crate::billing::*"),
+                feature("identity", "crate::identity::*"),
+            ],
+            shared_paths: vec!["shared::dto::*".into()],
+        };
+        let diags = fo004(&air, &section, CheckMode::Human);
+        assert_eq!(diags.len(), 2, "got {diags:?}");
+        let messages: Vec<&str> = diags.iter().map(|d| d.message.as_str()).collect();
+        assert!(
+            messages
+                .iter()
+                .any(|m| m.contains("invoice") && m.contains("billing"))
+        );
+        assert!(
+            messages
+                .iter()
+                .any(|m| m.contains("user") && m.contains("identity"))
+        );
     }
 }

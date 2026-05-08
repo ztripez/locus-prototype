@@ -4,6 +4,10 @@
 //!
 //! Phase scope:
 //! - DA001: trait with exactly one implementation and no accepted port role.
+//! - DA002: factory function (`create_*`/`make_*`/`build_*`/`*_factory`)
+//!   that only ever constructs a single type.
+//! - DA007: strategy enum (`*Strategy`/`*Mode`/`*Policy`) with exactly
+//!   one variant.
 //!
 //! `init` returns `Null`: there's no automatic inference for "this trait is
 //! a real port" — the user has to declare that intent by toggling
@@ -40,6 +44,9 @@ impl Paradigm for DemandDriven {
     fn check(&self, air: &AirWorkspace, lockfile: &Lockfile, mode: CheckMode) -> Vec<Diagnostic> {
         let section: lockfile_schema::DaSection =
             lockfile.paradigm_section(DA_PREFIX).unwrap_or_default();
-        rules::da001(air, &section, mode)
+        let mut diags = rules::da001(air, &section, mode);
+        diags.extend(rules::da002(air, &section, mode));
+        diags.extend(rules::da007(air, &section, mode));
+        diags
     }
 }

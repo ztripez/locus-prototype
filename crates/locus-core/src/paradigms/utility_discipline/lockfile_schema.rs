@@ -28,7 +28,38 @@ pub struct UtSection {
     /// Empty by default — UT002 stays silent until the user opts in.
     #[serde(default)]
     pub forbidden_imports: Vec<String>,
+    /// UT003 — module-path patterns recognised as "generic utility" naming.
+    /// A new module whose `module_path` matches one of these patterns *and*
+    /// is not present in `accepted_utility_paths` raises UT003. Empty
+    /// disables UT003 entirely (lockfile-driven silence). [`Self::new`] /
+    /// `init` seed this with [`DEFAULT_GENERIC_UTILITY_PATTERNS`].
+    #[serde(default)]
+    pub generic_utility_patterns: Vec<String>,
+    /// UT003 — exact module paths (or patterns) that are explicitly
+    /// accepted as utility modules even though they match
+    /// `generic_utility_patterns`. Mirrors DG/OT acceptance lists: the user
+    /// confirms "yes, this generic-named module is fine" once.
+    #[serde(default)]
+    pub accepted_utility_paths: Vec<String>,
+    /// UT004 — patterns matching `AirTruthAction.target` that indicate a
+    /// canonical concept being constructed (e.g. `User`, `*::User`,
+    /// `*::domain::*`). Empty keeps UT004 silent until the user populates
+    /// the list — there's no safe automatic guess for "what counts as a
+    /// canonical concept" in an arbitrary codebase.
+    #[serde(default)]
+    pub canonical_construct_patterns: Vec<String>,
 }
+
+/// Default seed for [`UtSection::generic_utility_patterns`]. Exposed as a
+/// constant so `init` and tests can share the same list.
+pub const DEFAULT_GENERIC_UTILITY_PATTERNS: &[&str] = &[
+    "*::utils::*",
+    "*::utils",
+    "*::helpers",
+    "*::common",
+    "*::misc",
+    "*::shared",
+];
 
 /// Pattern syntax: segment-aligned wildcards.
 /// - `foo::bar` — exact match
@@ -132,5 +163,27 @@ mod tests {
         // every path — that's what `*` is for.
         assert!(!matches_pattern("*::", "anything"));
         assert!(!matches_pattern("::*", "anything"));
+    }
+
+    #[test]
+    fn round_trips_all_fields_through_serde() {
+        let s = UtSection {
+            utility_paths: vec!["x::utils::*".into()],
+            forbidden_imports: vec!["crate::domain::*".into()],
+            generic_utility_patterns: vec!["*::utils::*".into(), "*::helpers".into()],
+            accepted_utility_paths: vec!["x::utils::time".into()],
+            canonical_construct_patterns: vec!["*::User".into()],
+        };
+        let j = serde_json::to_value(&s).unwrap();
+        let back: UtSection = serde_json::from_value(j).unwrap();
+        assert_eq!(s, back);
+    }
+
+    #[test]
+    fn default_section_has_empty_new_fields() {
+        let s = UtSection::default();
+        assert!(s.generic_utility_patterns.is_empty());
+        assert!(s.accepted_utility_paths.is_empty());
+        assert!(s.canonical_construct_patterns.is_empty());
     }
 }

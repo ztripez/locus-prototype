@@ -34,6 +34,15 @@ pub struct DcSection {
     /// DC002 entirely — DC002 stays silent when this is empty.
     #[serde(default = "default_forbidden_doc_phrases")]
     pub forbidden_doc_phrases: Vec<ForbiddenPhrase>,
+
+    /// Markers that, when present in a public item's doc text without an
+    /// immediate parenthesised owner reference (e.g. `TODO(alice):` or
+    /// `FIXME(#123):`), fire DC004. Defaults to a high-signal seed list of
+    /// the four canonical "needs follow-up" markers (`TODO`, `FIXME`,
+    /// `HACK`, `XXX`). Clearing the list opts out of DC004 entirely —
+    /// DC004 stays silent when this is empty.
+    #[serde(default = "default_unowned_marker_patterns")]
+    pub unowned_marker_patterns: Vec<String>,
 }
 
 impl Default for DcSection {
@@ -42,8 +51,18 @@ impl Default for DcSection {
             require_public_docs: false,
             exempt_paths: Vec::new(),
             forbidden_doc_phrases: default_forbidden_doc_phrases(),
+            unowned_marker_patterns: default_unowned_marker_patterns(),
         }
     }
+}
+
+// ot: allow DC002 reason="doc deliberately quotes the marker patterns it filters on" expires="2099-01-01"
+/// Seeded marker list for DC004 — the canonical "needs follow-up" markers
+/// that should always carry a parenthesised owner reference (e.g.
+/// `mark(alice):`, `mark(#123):` — see DC004 for the actual marker text).
+/// An owner-less marker is a stale reminder with no path to resolution.
+pub fn default_unowned_marker_patterns() -> Vec<String> {
+    vec!["TODO".into(), "FIXME".into(), "HACK".into(), "XXX".into()]
 }
 
 // ot: allow DC002 reason="documentation deliberately quotes residue phrases for the alias-matching example" expires="2099-01-01"
@@ -82,6 +101,7 @@ fn default_phrase_confidence() -> f32 {
 }
 
 // ot: allow DC002 reason="documentation deliberately quotes the residue phrases it filters on" expires="2099-01-01"
+// ot: allow DC004 reason="docstring deliberately quotes the bare marker family DC004 fires on" expires="2099-01-01"
 /// Seeded forbidden-phrase list — high-signal LLM-transcript residue and
 /// stale planning markers. Confidences chosen per
 /// `docs/PARADIGMS.md` §"Paradigm 17" so that the strongest signals

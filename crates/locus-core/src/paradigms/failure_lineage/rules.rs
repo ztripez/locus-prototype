@@ -21,6 +21,11 @@
 //!   expr { ... }` with no `else` branch outside `invariant_owner_paths`.
 //!   The unmatched arm is implicitly silent. Reads `AirItem::PartialIfLet`
 //!   items the visitor emits since AIR v9.
+//! - [`fl013`]: a function returning `Result<_, String>` or `Result<_, &str>`
+//!   that contains a call site stringifying via `to_string` / `format!` /
+//!   `format` / `display`. The error is being lossily collapsed to a string
+//!   on its way out of the function, erasing the failure lineage at the
+//!   source. Lockfile-driven silence via the existing `invariant_owner_paths`.
 //!
 //! Future FL rules will tackle the patterns AIR still can't see: `match
 //! result { ..., Err(_) => () }` (arm-body inspection), spawned-task
@@ -628,6 +633,176 @@ fn diagnostic_for_fl005(
              partial match, suppress with `// ot: allow FL005 reason=\"…\" \
              expires=\"YYYY-MM-DD\"`"
         )),
+    }
+}
+
+/// FL013 — lossy error stringification in error returns.
+///
+/// Catches the pattern: a function returns `Result<T, String>` (or
+/// `Result<T, &str>`) and somewhere inside it a call site stringifies a
+/// value — `.to_string()`, `format!(...)`, `format(...)`, `.display()`.
+/// The function isn't carrying a typed error out; it's collapsing
+/// whatever failed into a string at the source, so the call site that
+/// should have produced a typed `Err(SomeErrorVariant)` lossy-converted
+/// instead. Failure lineage is gone the moment the function returns.
+///
+/// Detection:
+/// - Walk every `AirItem::Function` whose `return_type` parses as
+///   `Result<_, String>` or `Result<_, &str>` (the same extractor FL001
+///   uses, with normalisation that strips one leading `&`). Custom
+///   `Result<T>` aliases without a top-level comma are skipped.
+/// - For each matching function, walk every `AirItem::CallSite` whose
+///   `function == Some(func.symbol)`. Fire when **any** call site's
+///   callee (last `::` segment) matches one of `["to_string",
+///   "format!", "format", "display"]`. Bare-name match — receiver type
+///   resolution is out of scope, same posture as FL003.
+/// - Skip files (and call-site enclosing-modules) that match
+///   `invariant_owner_paths`. We reuse the existing FL field rather
+///   than introduce a new lockfile knob — the semantics line up
+///   (modules where the rule's anti-pattern is legitimate, e.g.
+///   test fixtures, CLI surfaces, supervisors).
+///
+/// Severity: `mode.elevate(Severity::Warning)` — Warning in human, Fatal
+/// under `--agent-strict`. Same posture as FL002 / FL003 / FL004 / FL005.
+///
+/// Silent until `invariant_owner_paths` is populated, mirroring every
+/// other lockfile-driven FL rule.
+pub fn fl013(air: &AirWorkspace, section: &FlSection, mode: CheckMode) -> Vec<Diagnostic> {
+    if section.invariant_owner_paths.is_empty() {
+        return Vec::new();
+    }
+
+    const STRINGIFY_CALLEES: &[&str] = &["to_string", "format!", "format", "display"];
+
+    let mut out = Vec::new();
+    for pkg in &air.packages {
+        for file in &pkg.files {
+            let Some(module_path) = file.module_path.as_deref() else {
+                continue;
+            };
+            // Pre-compute file-level invariant-owner status. If the file
+            // is on the allowlist, every call site inside it is too.
+            let file_is_owner = section
+                .invariant_owner_paths
+                .iter()
+                .any(|p| matches_pattern(p, module_path));
+            if file_is_owner {
+                continue;
+            }
+
+            // Pass 1: collect Result<_, String|&str> functions in this file.
+            let stringy_fns: Vec<&locus_air::AirFunction> = file
+                .items
+                .iter()
+                .filter_map(|item| match item {
+                    AirItem::Function(func) => {
+                        let ret = func.return_type.as_deref()?;
+                        let err_ty = extract_result_error_type(ret)?;
+                        let normalised = err_ty.trim().strip_prefix('&').unwrap_or(err_ty).trim();
+                        if normalised == "String" || normalised == "str" {
+                            Some(func)
+                        } else {
+                            None
+                        }
+                    }
+                    _ => None,
+                })
+                .collect();
+            if stringy_fns.is_empty() {
+                continue;
+            }
+
+            // Pass 2: scan call sites; for each matching enclosing-fn, fire
+            // on the first stringifying callee we see (one diag per fn —
+            // multiple stringifications inside one function reduce to a
+            // single signal; the fix is the same regardless of count).
+            for func in stringy_fns {
+                if callsite_in_invariant_owner(
+                    module_path,
+                    Some(&func.symbol),
+                    &section.invariant_owner_paths,
+                ) {
+                    continue;
+                }
+                let hit = file.items.iter().find_map(|item| {
+                    let AirItem::CallSite(cs) = item else {
+                        return None;
+                    };
+                    if cs.function.as_deref() != Some(func.symbol.as_str()) {
+                        return None;
+                    }
+                    let last = cs.callee.rsplit("::").next().unwrap_or(&cs.callee);
+                    if STRINGIFY_CALLEES.contains(&last) {
+                        Some(cs)
+                    } else {
+                        None
+                    }
+                });
+                if let Some(cs) = hit {
+                    out.push(diagnostic_for_fl013(func, cs, module_path, mode));
+                }
+            }
+        }
+    }
+    out
+}
+
+fn diagnostic_for_fl013(
+    func: &locus_air::AirFunction,
+    cs: &locus_air::AirCallSite,
+    module_path: &str,
+    mode: CheckMode,
+) -> Diagnostic {
+    let ret = func.return_type.as_deref().unwrap_or("?");
+    Diagnostic {
+        rule_id: "FL013".to_string(),
+        severity: mode.elevate(Severity::Warning),
+        span: cs.span.clone(),
+        concept: None,
+        message: format!(
+            "lossy error stringification in `{}` (`{ret}`) — call site `{}` collapses \
+             a typed value into a string before it leaves the function",
+            func.name, cs.callee,
+        ),
+        why: vec![
+            format!("function `{}` (`{}`)", func.name, func.symbol),
+            format!("return type `{ret}` — `String` / `&str` errors carry no failure lineage"),
+            format!("call site `{}` (line {})", cs.callee, cs.span.line_start),
+            format!(
+                "module `{module_path}` does not match any \
+                 `paradigms.FL.invariant_owner_paths` pattern"
+            ),
+            "stringifying an error at the source erases the variant the caller \
+             would otherwise pattern-match against; the failure mode is gone by \
+             the time the function returns"
+                .into(),
+        ],
+        suggested_fix: Some(format!(
+            "define a typed error (`enum {}Error {{ ... }}` or similar) and use \
+             `?` propagation so each failure mode keeps its own variant; if \
+             `{module_path}` is a legitimate string-error surface (top-level \
+             CLI, test fixture, supervisor), add it to \
+             `paradigms.FL.invariant_owner_paths`. For a one-off accepted \
+             stringification, suppress with `// ot: allow FL013 reason=\"…\" \
+             expires=\"YYYY-MM-DD\"`",
+            capitalize_first_fl013(&func.name),
+        )),
+    }
+}
+
+/// Capitalize-first helper, local to FL013. Duplicated rather than imported
+/// from a sibling paradigm (CLAUDE.md: paradigms must not depend on each
+/// other).
+fn capitalize_first_fl013(s: &str) -> String {
+    let mut chars = s.chars();
+    match chars.next() {
+        Some(c) if c.is_ascii_alphabetic() => {
+            let mut out = String::with_capacity(s.len());
+            out.push(c.to_ascii_uppercase());
+            out.extend(chars);
+            out
+        }
+        _ => s.to_string(),
     }
 }
 
@@ -1458,6 +1633,185 @@ mod tests {
             vec![partial_if_let("Ok", Some("x::domain::user::greet"), 22)],
         );
         let diags = fl005(&air, &fl004_section(), CheckMode::AgentStrict);
+        assert_eq!(diags.len(), 1);
+        assert_eq!(diags[0].severity, Severity::Fatal);
+    }
+
+    // ---- fl013 behavioural tests ----
+
+    /// Onboarded baseline for FL013 — same shape as fl003/fl004 baselines.
+    fn fl013_section() -> FlSection {
+        FlSection {
+            invariant_owner_paths: vec!["x::supervisor::*".into()],
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn fl013_fires_when_string_result_fn_calls_to_string() {
+        // `fn save() -> Result<(), String>` body contains `.to_string()`.
+        let air = air_with_module(
+            "x::domain::user",
+            vec![
+                func("save", Some("Result<(), String>")),
+                call_site(
+                    "to_string",
+                    CallKind::Method,
+                    Some("x::domain::user::save"),
+                    14,
+                ),
+            ],
+        );
+        let diags = fl013(&air, &fl013_section(), CheckMode::Human);
+        assert_eq!(diags.len(), 1, "expected one FL013 diag, got {diags:?}");
+        assert_eq!(diags[0].rule_id, "FL013");
+        assert_eq!(diags[0].severity, Severity::Warning);
+        assert_eq!(diags[0].span.line_start, 14);
+        assert!(diags[0].message.contains("save"));
+        assert!(diags[0].message.contains("to_string"));
+        assert!(diags[0].message.contains("Result<(), String>"));
+        assert!(
+            diags[0]
+                .suggested_fix
+                .as_deref()
+                .unwrap_or("")
+                .contains("?"),
+            "suggested fix should mention `?` propagation; got: {:?}",
+            diags[0].suggested_fix,
+        );
+    }
+
+    #[test]
+    fn fl013_fires_on_format_macro_in_str_result() {
+        // `fn save() -> Result<(), &str>` body contains `format!(...)`.
+        let air = air_with_module(
+            "x::domain::user",
+            vec![
+                func("describe", Some("Result<String, &str>")),
+                call_site(
+                    "format",
+                    CallKind::Macro,
+                    Some("x::domain::user::describe"),
+                    7,
+                ),
+            ],
+        );
+        let diags = fl013(&air, &fl013_section(), CheckMode::Human);
+        assert_eq!(diags.len(), 1);
+        assert!(diags[0].message.contains("describe"));
+        assert!(diags[0].message.contains("format"));
+    }
+
+    #[test]
+    fn fl013_quiet_when_error_type_is_typed() {
+        // `Result<_, MyError>` is fine — even if the function calls
+        // `.to_string()` somewhere internally, FL013 doesn't apply.
+        let air = air_with_module(
+            "x::domain::user",
+            vec![
+                func("greet", Some("Result<(), MyError>")),
+                call_site(
+                    "to_string",
+                    CallKind::Method,
+                    Some("x::domain::user::greet"),
+                    3,
+                ),
+            ],
+        );
+        assert!(fl013(&air, &fl013_section(), CheckMode::Human).is_empty());
+    }
+
+    #[test]
+    fn fl013_quiet_when_string_fn_has_no_stringification_call() {
+        // Function returns `Result<_, String>` but its body has only a
+        // `.len()` call — no FL013 trigger.
+        let air = air_with_module(
+            "x::domain::user",
+            vec![
+                func("save", Some("Result<(), String>")),
+                call_site("len", CallKind::Method, Some("x::domain::user::save"), 4),
+            ],
+        );
+        assert!(fl013(&air, &fl013_section(), CheckMode::Human).is_empty());
+    }
+
+    #[test]
+    fn fl013_quiet_in_invariant_owner_module() {
+        // Same offending pattern, but the file is on the invariant-owner
+        // allowlist (file_module matches `x::supervisor::*`). FL013 must
+        // suppress the diagnostic. We build the AIR explicitly so the
+        // module_path and the enclosing-fn symbols line up under
+        // `x::supervisor::*` (the shared `func` helper hardcodes a
+        // domain-shaped symbol prefix).
+        let air = AirWorkspace {
+            schema_version: AIR_SCHEMA_VERSION,
+            packages: vec![AirPackage {
+                name: "x".into(),
+                version: "0".into(),
+                root_dir: "/".into(),
+                files: vec![AirFile {
+                    path: "src/supervisor/root.rs".into(),
+                    module_path: Some("x::supervisor::root".into()),
+                    items: vec![
+                        AirItem::Function(AirFunction {
+                            name: "save".into(),
+                            symbol: "x::supervisor::root::save".into(),
+                            visibility: Visibility::Public,
+                            params: Vec::new(),
+                            return_type: Some("Result<(), String>".into()),
+                            span: AirSpan::new("src/supervisor/root.rs", 1, 5),
+                            line_count: 5,
+                            doc: None,
+                        }),
+                        AirItem::CallSite(AirCallSite {
+                            callee: "to_string".into(),
+                            kind: CallKind::Method,
+                            function: Some("x::supervisor::root::save".into()),
+                            span: AirSpan::new("src/supervisor/root.rs", 3, 3),
+                        }),
+                    ],
+                    hints: Vec::new(),
+                    parse_error: None,
+                    line_count: 5,
+                }],
+            }],
+            facts: Vec::new(),
+        };
+        assert!(fl013(&air, &fl013_section(), CheckMode::Human).is_empty());
+    }
+
+    #[test]
+    fn fl013_silent_when_invariant_owner_paths_empty() {
+        let air = air_with_module(
+            "x::domain::user",
+            vec![
+                func("save", Some("Result<(), String>")),
+                call_site(
+                    "to_string",
+                    CallKind::Method,
+                    Some("x::domain::user::save"),
+                    14,
+                ),
+            ],
+        );
+        assert!(fl013(&air, &FlSection::default(), CheckMode::Human).is_empty());
+    }
+
+    #[test]
+    fn fl013_agent_strict_elevates_warning_to_fatal() {
+        let air = air_with_module(
+            "x::domain::user",
+            vec![
+                func("save", Some("Result<(), String>")),
+                call_site(
+                    "to_string",
+                    CallKind::Method,
+                    Some("x::domain::user::save"),
+                    14,
+                ),
+            ],
+        );
+        let diags = fl013(&air, &fl013_section(), CheckMode::AgentStrict);
         assert_eq!(diags.len(), 1);
         assert_eq!(diags[0].severity, Severity::Fatal);
     }

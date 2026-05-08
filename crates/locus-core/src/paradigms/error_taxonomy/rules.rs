@@ -4,15 +4,22 @@
 //! - [`er001`]: multiple public error types in one file (taxonomy fork).
 //! - [`er002`]: a `Result<_, E>` return type whose `E` matches a user-listed
 //!   "string-shaped" / catch-all forbidden pattern (taxonomy collapse).
+//! - [`er003`]: a domain error enum embeds a boundary error type as a
+//!   variant field — structural taxonomy violation that buries the
+//!   transport failure inside the domain vocabulary.
+//! - [`er007`]: a variant name appears on two or more `*Error*` enums in
+//!   the workspace — the taxonomy is drifting / duplicating.
 //!
 //! ER001 is heuristic and lockfile-free — it operates purely on AIR and the
 //! `Error`/`Err` name suffix convention. ER002 is lockfile-driven via
 //! [`ErSection::forbidden_error_types`]; it stays silent until that list is
-//! populated.
+//! populated. ER003 is lockfile-driven via [`ErSection::domain_paths`] +
+//! [`ErSection::boundary_error_patterns`]; silent until both are populated.
+//! ER007 is heuristic and lockfile-free.
 
 use locus_air::{AirItem, AirWorkspace, Visibility};
 
-use super::lockfile_schema::ErSection;
+use super::lockfile_schema::{ErSection, matches_pattern};
 use crate::diagnostics::{CheckMode, Diagnostic, Severity};
 
 /// ER001 — multiple error types in the same module.
@@ -188,6 +195,240 @@ pub fn er002(air: &AirWorkspace, section: &ErSection, mode: CheckMode) -> Vec<Di
                         func.name,
                     )),
                 });
+            }
+        }
+    }
+    out
+}
+
+/// ER003 — boundary error type embedded as a field on a domain error enum.
+///
+/// For every `AirFile` whose `module_path` matches a pattern in
+/// `domain_paths`, walk each `AirItem::Type` with `kind == Enum` and
+/// inspect every variant's field's `type_text`. Fire one diagnostic per
+/// matching field whose rendered type text matches any pattern in
+/// `boundary_error_patterns`.
+///
+/// The matcher is the FL/DG style (segment-aligned wildcards). It runs
+/// against the variant field's *raw* `type_text` — same source-of-truth
+/// rendering used by FL001 against `Result<T, E>` signatures. Common
+/// patterns:
+///
+/// - `"reqwest::Error"` — exact match
+/// - `"sqlx::*"` — anything in the `sqlx` crate
+/// - `"http::*"` — anything in the `http` crate
+/// - `"std::io::Error"` — exact match
+///
+/// Severity: **Fatal** in both modes. Embedding a transport error as a
+/// variant field is the structural mirror of FL001 (same error leaking
+/// through a *return type*): the layer edge that should have wrapped the
+/// boundary failure didn't, the failure has lost its owner, and now the
+/// loss is encoded in the type system. `mode.elevate` is still applied
+/// for symmetry, even though it's a no-op on Fatal.
+///
+/// Silent until **both** `domain_paths` and `boundary_error_patterns`
+/// are populated. Mirrors FL001's onboarding posture.
+pub fn er003(air: &AirWorkspace, section: &ErSection, mode: CheckMode) -> Vec<Diagnostic> {
+    if section.domain_paths.is_empty() || section.boundary_error_patterns.is_empty() {
+        return Vec::new();
+    }
+    let mut out = Vec::new();
+    for pkg in &air.packages {
+        for file in &pkg.files {
+            let Some(module_path) = file.module_path.as_deref() else {
+                continue;
+            };
+            let Some(domain_pattern) = section
+                .domain_paths
+                .iter()
+                .find(|pat| matches_pattern(pat, module_path))
+            else {
+                continue;
+            };
+            for item in &file.items {
+                let AirItem::Type(ty) = item else {
+                    continue;
+                };
+                if ty.kind != locus_air::TypeKind::Enum {
+                    continue;
+                }
+                for variant in &ty.variants {
+                    for field in &variant.fields {
+                        let Some(boundary_pattern) = section
+                            .boundary_error_patterns
+                            .iter()
+                            .find(|pat| matches_pattern(pat, &field.type_text))
+                        else {
+                            continue;
+                        };
+                        out.push(Diagnostic {
+                            rule_id: "ER003".to_string(),
+                            severity: mode.elevate(Severity::Fatal),
+                            span: ty.span.clone(),
+                            concept: None,
+                            message: format!(
+                                "domain error `{}::{}` field has boundary error type `{}` \
+                                 (matched domain pattern `{}`, boundary pattern `{}`)",
+                                ty.name,
+                                variant.name,
+                                field.type_text,
+                                domain_pattern,
+                                boundary_pattern,
+                            ),
+                            why: vec![
+                                format!(
+                                    "module `{module_path}` matches domain pattern \
+                                     `{domain_pattern}`"
+                                ),
+                                format!("enum `{}` (`{}`)", ty.name, ty.symbol),
+                                format!(
+                                    "variant `{}` has field `{}: {}`",
+                                    variant.name,
+                                    if field.name.is_empty() {
+                                        "_"
+                                    } else {
+                                        field.name.as_str()
+                                    },
+                                    field.type_text,
+                                ),
+                                format!(
+                                    "field type `{}` matches boundary pattern \
+                                     `{boundary_pattern}`",
+                                    field.type_text
+                                ),
+                                "domain error enums must speak the domain's failure \
+                                 vocabulary; embedding a transport / boundary error as a \
+                                 variant field buries the layer edge that should have \
+                                 wrapped it"
+                                    .into(),
+                            ],
+                            suggested_fix: Some(format!(
+                                "wrap `{}` in a domain-shaped variant — replace the field \
+                                 with a structured value capturing only the domain-relevant \
+                                 facts (e.g. `Network {{ url: String }}` instead of \
+                                 `Network(reqwest::Error)`), or add a separate boundary \
+                                 error type at the adapter layer that converts to `{}` \
+                                 via `From`",
+                                field.type_text, ty.name,
+                            )),
+                        });
+                    }
+                }
+            }
+        }
+    }
+    out
+}
+
+/// ER007 — variant name shared across two or more `*Error*` enums.
+///
+/// Walks every `AirItem::Type` with `kind == Enum` whose name passes
+/// [`has_error_suffix`] (matching ER001's `Error` / `Err` whole-word
+/// suffix discipline). Records every `(file_path, type_name,
+/// variant_name)` triple, then for each variant name appearing on
+/// **two or more distinct error types** (different `type_name` *or*
+/// different `file_path`) emits one diagnostic per occurrence beyond
+/// the first, citing the incumbent error type that introduced the name.
+///
+/// The drift this catches: `enum UserError { NotFound, Invalid }`
+/// living next to `enum OrderError { NotFound, Invalid }` — both
+/// "not found" failures in the workspace look identical to a
+/// caller, but they're modelled as two unrelated variants. The fix
+/// is usually to extract a shared `enum DomainError` (or to give
+/// each variant a more specific name).
+///
+/// Severity: `mode.elevate(Severity::Warning)`. The spec frames this
+/// as drift, not a structural violation — Warning by default, Fatal
+/// under `--agent-strict`. No lockfile fields; ER007 is heuristic and
+/// always-on (suppress per-callsite via `// ot: allow ER007`).
+///
+/// Determinism note: results are gathered in workspace iteration
+/// order (package → file → item → variant), and the "first" occurrence
+/// is whichever the iterator yielded first. AIR ordering is stable
+/// within a run, so a given `AirWorkspace` always produces the same
+/// (incumbent, duplicates) split.
+pub fn er007(air: &AirWorkspace, mode: CheckMode) -> Vec<Diagnostic> {
+    use std::collections::HashMap;
+
+    /// First-seen occurrence of a variant name in an `*Error*` enum.
+    struct Incumbent<'a> {
+        type_name: &'a str,
+        file_path: &'a str,
+    }
+
+    let mut first_seen: HashMap<&str, Incumbent<'_>> = HashMap::new();
+    let mut out = Vec::new();
+
+    for pkg in &air.packages {
+        for file in &pkg.files {
+            for item in &file.items {
+                let AirItem::Type(ty) = item else {
+                    continue;
+                };
+                if ty.kind != locus_air::TypeKind::Enum {
+                    continue;
+                }
+                if !has_error_suffix(&ty.name) {
+                    continue;
+                }
+                for variant in &ty.variants {
+                    match first_seen.get(variant.name.as_str()) {
+                        None => {
+                            first_seen.insert(
+                                variant.name.as_str(),
+                                Incumbent {
+                                    type_name: ty.name.as_str(),
+                                    file_path: file.path.as_str(),
+                                },
+                            );
+                        }
+                        Some(incumbent) => {
+                            // Only fire when the duplicate sits on a *different*
+                            // error type (different type name or different file).
+                            // Same enum redeclaring the same variant name isn't
+                            // legal Rust and will be caught by `rustc`; we just
+                            // skip it defensively.
+                            if incumbent.type_name == ty.name.as_str()
+                                && incumbent.file_path == file.path.as_str()
+                            {
+                                continue;
+                            }
+                            out.push(Diagnostic {
+                                rule_id: "ER007".to_string(),
+                                severity: mode.elevate(Severity::Warning),
+                                span: ty.span.clone(),
+                                concept: None,
+                                message: format!(
+                                    "duplicate error variant `{}` on `{}` — already \
+                                     declared on `{}` in `{}`",
+                                    variant.name, ty.name, incumbent.type_name, incumbent.file_path,
+                                ),
+                                why: vec![
+                                    format!("variant `{}` declared on `{}`", variant.name, ty.name),
+                                    format!(
+                                        "incumbent: `{}::{}` in `{}`",
+                                        incumbent.type_name, variant.name, incumbent.file_path,
+                                    ),
+                                    format!("current declaration in `{}`", file.path),
+                                    "duplicate variants across error enums signal a drifting \
+                                     taxonomy: the same failure mode is being modelled twice \
+                                     under different types, so callers can't pattern-match \
+                                     across the workspace's error surface"
+                                        .into(),
+                                ],
+                                suggested_fix: Some(format!(
+                                    "extract `{}` into a shared error type (`enum \
+                                     DomainError {{ {} ,… }}`) and re-export it from both \
+                                     `{}` and `{}`, or rename one of them to clarify the \
+                                     distinct semantics. For an intentional duplication, \
+                                     suppress with `// ot: allow ER007 reason=\"…\" \
+                                     expires=\"YYYY-MM-DD\"`",
+                                    variant.name, variant.name, incumbent.type_name, ty.name,
+                                )),
+                            });
+                        }
+                    }
+                }
             }
         }
     }
@@ -578,6 +819,7 @@ mod tests {
     fn er002_section(patterns: &[&str]) -> ErSection {
         ErSection {
             forbidden_error_types: patterns.iter().map(|p| (*p).into()).collect(),
+            ..Default::default()
         }
     }
 
@@ -767,5 +1009,322 @@ mod tests {
             "Box<dyn std::error::Error + Send + Sync>"
         ));
         assert!(!matches_error_pattern("Box<dyn *>", "Arc<dyn Error>"));
+    }
+
+    // ---- ER003 helpers + tests ----
+
+    fn enum_with_variants(name: &str, variants: Vec<(&str, Vec<&str>)>) -> AirItem {
+        let air_variants: Vec<locus_air::AirVariant> = variants
+            .into_iter()
+            .map(|(vname, field_types)| locus_air::AirVariant {
+                name: vname.into(),
+                fields: field_types
+                    .into_iter()
+                    .enumerate()
+                    .map(|(i, t)| locus_air::AirField {
+                        name: format!("f{i}"),
+                        type_text: t.into(),
+                        visibility: Visibility::Public,
+                    })
+                    .collect(),
+            })
+            .collect();
+        AirItem::Type(AirType {
+            kind: TypeKind::Enum,
+            name: name.into(),
+            symbol: format!("crate::errors::{name}"),
+            visibility: Visibility::Public,
+            fields: Vec::new(),
+            variants: air_variants,
+            derives: Vec::new(),
+            attrs: Vec::new(),
+            span: AirSpan::new("src/errors.rs", 1, 1),
+            doc: None,
+        })
+    }
+
+    fn er003_section() -> ErSection {
+        ErSection {
+            domain_paths: vec!["x::domain::*".into()],
+            boundary_error_patterns: vec![
+                "reqwest::Error".into(),
+                "sqlx::*".into(),
+                "std::io::Error".into(),
+            ],
+            ..Default::default()
+        }
+    }
+
+    fn air_with_module(file_path: &str, module: &str, items: Vec<AirItem>) -> AirWorkspace {
+        AirWorkspace {
+            schema_version: AIR_SCHEMA_VERSION,
+            packages: vec![AirPackage {
+                name: "x".into(),
+                version: "0".into(),
+                root_dir: "/".into(),
+                files: vec![AirFile {
+                    path: file_path.into(),
+                    module_path: Some(module.into()),
+                    items,
+                    hints: Vec::new(),
+                    parse_error: None,
+                    line_count: 1,
+                }],
+            }],
+            facts: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn er003_fires_on_boundary_field_in_domain_enum() {
+        let air = air_with_module(
+            "src/domain/user.rs",
+            "x::domain::user",
+            vec![enum_with_variants(
+                "UserError",
+                vec![("Network", vec!["reqwest::Error"]), ("NotFound", vec![])],
+            )],
+        );
+        let diags = er003(&air, &er003_section(), CheckMode::Human);
+        assert_eq!(diags.len(), 1, "expected one diag, got {diags:?}");
+        assert_eq!(diags[0].rule_id, "ER003");
+        assert_eq!(diags[0].severity, Severity::Fatal);
+        assert!(diags[0].message.contains("UserError"));
+        assert!(diags[0].message.contains("Network"));
+        assert!(diags[0].message.contains("reqwest::Error"));
+    }
+
+    #[test]
+    fn er003_fires_via_wildcard_boundary_pattern() {
+        // `sqlx::*` matches `sqlx::postgres::PgError`.
+        let air = air_with_module(
+            "src/domain/orders.rs",
+            "x::domain::orders",
+            vec![enum_with_variants(
+                "OrderError",
+                vec![("Db", vec!["sqlx::postgres::PgError"])],
+            )],
+        );
+        let diags = er003(&air, &er003_section(), CheckMode::Human);
+        assert_eq!(diags.len(), 1);
+        assert!(diags[0].message.contains("sqlx::postgres::PgError"));
+        assert!(diags[0].message.contains("sqlx::*"));
+    }
+
+    #[test]
+    fn er003_quiet_on_domain_only_field_types() {
+        let air = air_with_module(
+            "src/domain/user.rs",
+            "x::domain::user",
+            vec![enum_with_variants(
+                "UserError",
+                vec![("NotFound", vec![]), ("Invalid", vec!["String"])],
+            )],
+        );
+        assert!(er003(&air, &er003_section(), CheckMode::Human).is_empty());
+    }
+
+    #[test]
+    fn er003_quiet_outside_domain_paths() {
+        // Same boundary error, but living in an adapter module — fine.
+        let air = air_with_module(
+            "src/adapters/http.rs",
+            "x::adapters::http",
+            vec![enum_with_variants(
+                "HttpError",
+                vec![("Network", vec!["reqwest::Error"])],
+            )],
+        );
+        assert!(er003(&air, &er003_section(), CheckMode::Human).is_empty());
+    }
+
+    #[test]
+    fn er003_silent_when_lockfile_lists_empty() {
+        let air = air_with_module(
+            "src/domain/user.rs",
+            "x::domain::user",
+            vec![enum_with_variants(
+                "UserError",
+                vec![("Network", vec!["reqwest::Error"])],
+            )],
+        );
+        // domain only
+        let only_domain = ErSection {
+            domain_paths: vec!["x::domain::*".into()],
+            ..Default::default()
+        };
+        assert!(er003(&air, &only_domain, CheckMode::Human).is_empty());
+        // boundary only
+        let only_boundary = ErSection {
+            boundary_error_patterns: vec!["reqwest::Error".into()],
+            ..Default::default()
+        };
+        assert!(er003(&air, &only_boundary, CheckMode::Human).is_empty());
+        // default (both empty)
+        assert!(er003(&air, &ErSection::default(), CheckMode::Human).is_empty());
+    }
+
+    #[test]
+    fn er003_skips_struct_kinds() {
+        // Only enum variants are inspected. A struct field with a boundary
+        // type is out of ER003's scope (it would be flagged by other rules).
+        let mut item = enum_with_variants("UserError", vec![("Network", vec!["reqwest::Error"])]);
+        if let AirItem::Type(ref mut ty) = item {
+            ty.kind = TypeKind::Struct;
+        }
+        let air = air_with_module("src/domain/user.rs", "x::domain::user", vec![item]);
+        assert!(er003(&air, &er003_section(), CheckMode::Human).is_empty());
+    }
+
+    #[test]
+    fn er003_emits_one_diag_per_offending_field() {
+        let air = air_with_module(
+            "src/domain/user.rs",
+            "x::domain::user",
+            vec![enum_with_variants(
+                "UserError",
+                vec![
+                    ("Network", vec!["reqwest::Error"]),
+                    ("Db", vec!["sqlx::Error"]),
+                    ("Io", vec!["std::io::Error"]),
+                    ("NotFound", vec![]),
+                ],
+            )],
+        );
+        let diags = er003(&air, &er003_section(), CheckMode::Human);
+        assert_eq!(diags.len(), 3);
+        let messages: Vec<&str> = diags.iter().map(|d| d.message.as_str()).collect();
+        assert!(messages.iter().any(|m| m.contains("Network")));
+        assert!(messages.iter().any(|m| m.contains("Db")));
+        assert!(messages.iter().any(|m| m.contains("Io")));
+    }
+
+    // ---- ER007 tests ----
+
+    fn er007_air(files: Vec<(&str, Vec<AirItem>)>) -> AirWorkspace {
+        AirWorkspace {
+            schema_version: AIR_SCHEMA_VERSION,
+            packages: vec![AirPackage {
+                name: "x".into(),
+                version: "0".into(),
+                root_dir: "/".into(),
+                files: files
+                    .into_iter()
+                    .map(|(path, items)| AirFile {
+                        path: path.into(),
+                        module_path: Some("crate".into()),
+                        items,
+                        hints: Vec::new(),
+                        parse_error: None,
+                        line_count: 1,
+                    })
+                    .collect(),
+            }],
+            facts: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn er007_fires_when_variant_name_repeats_across_error_enums() {
+        let air = er007_air(vec![(
+            "src/errors.rs",
+            vec![
+                enum_with_variants("UserError", vec![("NotFound", vec![]), ("Invalid", vec![])]),
+                enum_with_variants(
+                    "OrderError",
+                    vec![("NotFound", vec![]), ("Cancelled", vec![])],
+                ),
+            ],
+        )]);
+        let diags = er007(&air, CheckMode::Human);
+        // `NotFound` appears on UserError (incumbent) and OrderError → 1 diag.
+        assert_eq!(diags.len(), 1);
+        assert_eq!(diags[0].rule_id, "ER007");
+        assert_eq!(diags[0].severity, Severity::Warning);
+        assert!(diags[0].message.contains("NotFound"));
+        assert!(diags[0].message.contains("OrderError"));
+        assert!(diags[0].message.contains("UserError"));
+    }
+
+    #[test]
+    fn er007_quiet_when_each_variant_unique() {
+        let air = er007_air(vec![(
+            "src/errors.rs",
+            vec![
+                enum_with_variants("UserError", vec![("NotFound", vec![])]),
+                enum_with_variants("OrderError", vec![("Cancelled", vec![])]),
+                enum_with_variants("BillingError", vec![("Declined", vec![])]),
+            ],
+        )]);
+        assert!(er007(&air, CheckMode::Human).is_empty());
+    }
+
+    #[test]
+    fn er007_skips_non_error_enums() {
+        // `Status` enum shares variant names with `UserError` but isn't an
+        // error type — must not trip ER007.
+        let air = er007_air(vec![(
+            "src/types.rs",
+            vec![
+                enum_with_variants("Status", vec![("Active", vec![]), ("NotFound", vec![])]),
+                enum_with_variants("UserError", vec![("NotFound", vec![])]),
+            ],
+        )]);
+        // Only `UserError::NotFound` is observed (Status is skipped); single
+        // occurrence → no diagnostic.
+        assert!(er007(&air, CheckMode::Human).is_empty());
+    }
+
+    #[test]
+    fn er007_detects_duplicates_across_files() {
+        let air = er007_air(vec![
+            (
+                "src/users.rs",
+                vec![enum_with_variants("UserError", vec![("Invalid", vec![])])],
+            ),
+            (
+                "src/orders.rs",
+                vec![enum_with_variants("OrderError", vec![("Invalid", vec![])])],
+            ),
+        ]);
+        let diags = er007(&air, CheckMode::Human);
+        assert_eq!(diags.len(), 1);
+        assert!(diags[0].message.contains("Invalid"));
+        assert!(
+            diags[0].why.iter().any(|w| w.contains("src/users.rs")),
+            "why list should reference the incumbent file; got: {:?}",
+            diags[0].why,
+        );
+    }
+
+    #[test]
+    fn er007_emits_one_diag_per_extra_occurrence() {
+        // `NotFound` appears on three error types → two extra occurrences,
+        // one diagnostic each.
+        let air = er007_air(vec![(
+            "src/errors.rs",
+            vec![
+                enum_with_variants("UserError", vec![("NotFound", vec![])]),
+                enum_with_variants("OrderError", vec![("NotFound", vec![])]),
+                enum_with_variants("BillingError", vec![("NotFound", vec![])]),
+            ],
+        )]);
+        let diags = er007(&air, CheckMode::Human);
+        assert_eq!(diags.len(), 2);
+        assert!(diags.iter().all(|d| d.rule_id == "ER007"));
+    }
+
+    #[test]
+    fn er007_agent_strict_elevates_to_fatal() {
+        let air = er007_air(vec![(
+            "src/errors.rs",
+            vec![
+                enum_with_variants("UserError", vec![("NotFound", vec![])]),
+                enum_with_variants("OrderError", vec![("NotFound", vec![])]),
+            ],
+        )]);
+        let diags = er007(&air, CheckMode::AgentStrict);
+        assert_eq!(diags.len(), 1);
+        assert_eq!(diags[0].severity, Severity::Fatal);
     }
 }

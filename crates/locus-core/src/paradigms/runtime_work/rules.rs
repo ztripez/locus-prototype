@@ -2,14 +2,18 @@
 //!
 //! Implemented:
 //! - [`rw001`]: spawn-shaped fact outside any declared runtime owner module.
+//! - [`rw003`]: `Mutex` / `RwLock` field outside the runtime-ownership
+//!   boundary.
+//! - [`rw004`]: `static` / `OnceCell` / `Lazy`-shaped global outside the
+//!   runtime-ownership boundary.
 //!
 //! All RW rules are lockfile-driven: they stay silent until the user has
 //! populated `runtime_owner_paths` (otherwise we have no idea which modules
 //! are legitimately spawning runtime work).
 
-use locus_air::{AirFact, AirItem, AirSpan, AirWorkspace, FactKind, FactTarget};
+use locus_air::{AirFact, AirItem, AirSpan, AirType, AirWorkspace, FactKind, FactTarget, TypeKind};
 
-use super::lockfile_schema::{RwSection, matches_pattern};
+use super::lockfile_schema::{RwSection, matches_pattern, type_text_matches};
 use crate::diagnostics::{CheckMode, Diagnostic, Severity};
 
 /// RW001 — spawn outside the runtime-ownership boundary.
@@ -125,11 +129,228 @@ fn diagnostic_for(
     }
 }
 
+/// True when `module_path` matches any pattern in `runtime_owner_paths`.
+/// Mirrors the matching used by RW001 but without the function-symbol
+/// fallback — RW003/RW004 only have the file's `module_path` to work with.
+fn module_is_runtime_owner(section: &RwSection, module_path: &str) -> bool {
+    section
+        .runtime_owner_paths
+        .iter()
+        .any(|pat| matches_pattern(pat, module_path))
+}
+
+/// True when *any* of the type-text fragment patterns matches `text`.
+fn any_type_text_matches(patterns: &[String], text: &str) -> bool {
+    patterns.iter().any(|p| type_text_matches(p, text))
+}
+
+/// RW003 — `Mutex` / `RwLock` (or similar runtime-state container) field
+/// outside the runtime-ownership boundary.
+///
+/// For each `AirItem::Type` whose enclosing file's `module_path` is **not**
+/// covered by `runtime_owner_paths`, fire when any field's `type_text`
+/// matches `runtime_state_type_patterns`. The pattern syntax for these
+/// fragments is intentionally minimal — see [`type_text_matches`].
+///
+/// Severity: Warning by default; Fatal under `--agent-strict`.
+///
+/// Silent when `runtime_owner_paths` is empty (same opt-in posture as the
+/// rest of RW): without a declared owner there's no way to flag "outside
+/// the owner" without hand-waving.
+pub fn rw003(air: &AirWorkspace, section: &RwSection, mode: CheckMode) -> Vec<Diagnostic> {
+    if section.runtime_owner_paths.is_empty() {
+        return Vec::new();
+    }
+
+    let mut out = Vec::new();
+    for pkg in &air.packages {
+        for file in &pkg.files {
+            let Some(module_path) = file.module_path.as_deref() else {
+                continue;
+            };
+            if module_is_runtime_owner(section, module_path) {
+                continue;
+            }
+            for item in &file.items {
+                let AirItem::Type(t) = item else { continue };
+                let Some((field_name, field_text, matched_pattern)) =
+                    first_runtime_state_field(t, &section.runtime_state_type_patterns)
+                else {
+                    continue;
+                };
+                out.push(rw003_diagnostic(
+                    t,
+                    module_path,
+                    field_name,
+                    field_text,
+                    matched_pattern,
+                    mode,
+                ));
+            }
+        }
+    }
+    out
+}
+
+/// Find the first field on `t` whose rendered type text matches one of the
+/// runtime-state-type patterns. Returns `(field_name, field_type_text,
+/// matched_pattern)` so the diagnostic can quote the actual offender.
+fn first_runtime_state_field<'a>(
+    t: &'a AirType,
+    patterns: &'a [String],
+) -> Option<(&'a str, &'a str, &'a str)> {
+    for f in &t.fields {
+        for pat in patterns {
+            if type_text_matches(pat, &f.type_text) {
+                return Some((f.name.as_str(), f.type_text.as_str(), pat.as_str()));
+            }
+        }
+    }
+    None
+}
+
+fn rw003_diagnostic(
+    t: &AirType,
+    module_path: &str,
+    field_name: &str,
+    field_text: &str,
+    matched_pattern: &str,
+    mode: CheckMode,
+) -> Diagnostic {
+    Diagnostic {
+        rule_id: "RW003".to_string(),
+        severity: mode.elevate(Severity::Warning),
+        span: t.span.clone(),
+        concept: None,
+        message: format!(
+            "type `{}` in module `{module_path}` holds a runtime-state field \
+             `{field_name}: {field_text}` outside any declared runtime owner",
+            t.symbol
+        ),
+        why: vec![
+            format!("module `{module_path}` matches none of `runtime_owner_paths`"),
+            format!(
+                "field `{field_name}` has type `{field_text}` which matches \
+                 runtime-state pattern `{matched_pattern}`"
+            ),
+        ],
+        suggested_fix: Some(format!(
+            "move `{}` (or the `{field_name}` field) into a runtime-owner \
+             module — supervisors, runtime cores, worker pools — and have \
+             this code talk to it through a port. If `{module_path}` is in \
+             fact a legitimate runtime owner, expand \
+             `paradigms.RW.runtime_owner_paths` in `locus.lock`. To loosen \
+             type detection, edit \
+             `paradigms.RW.runtime_state_type_patterns`.",
+            t.symbol
+        )),
+    }
+}
+
+/// RW004 — `static`/`OnceCell`/`Lazy`/named-singleton type outside the
+/// runtime-ownership boundary.
+///
+/// Narrower than RW003: fires only when the type **itself** looks like a
+/// singleton wrapper. A type qualifies if either:
+///
+/// 1. its `name` matches one of `singleton_name_patterns` (e.g. `*Singleton`,
+///    `*Globals`); or
+/// 2. it is a single-field `Struct` whose sole field's `type_text` matches
+///    `runtime_state_type_patterns` (in practice: `OnceCell<...>` /
+///    `OnceLock<...>` / `Lazy<...>` patterns).
+///
+/// Reusing `runtime_state_type_patterns` keeps the inner-type vocabulary in
+/// one place. Same severity / opt-in posture as RW003.
+pub fn rw004(air: &AirWorkspace, section: &RwSection, mode: CheckMode) -> Vec<Diagnostic> {
+    if section.runtime_owner_paths.is_empty() {
+        return Vec::new();
+    }
+
+    let mut out = Vec::new();
+    for pkg in &air.packages {
+        for file in &pkg.files {
+            let Some(module_path) = file.module_path.as_deref() else {
+                continue;
+            };
+            if module_is_runtime_owner(section, module_path) {
+                continue;
+            }
+            for item in &file.items {
+                let AirItem::Type(t) = item else { continue };
+                let by_name = any_type_text_matches(&section.singleton_name_patterns, &t.name);
+                let by_shape = is_single_field_runtime_state_struct(t, section);
+                if !(by_name || by_shape) {
+                    continue;
+                }
+                out.push(rw004_diagnostic(t, module_path, by_name, by_shape, mode));
+            }
+        }
+    }
+    out
+}
+
+/// True when `t` is a single-field struct whose sole field's type text
+/// matches one of the runtime-state-type fragment patterns.
+fn is_single_field_runtime_state_struct(t: &AirType, section: &RwSection) -> bool {
+    if t.kind != TypeKind::Struct || t.fields.len() != 1 {
+        return false;
+    }
+    any_type_text_matches(&section.runtime_state_type_patterns, &t.fields[0].type_text)
+}
+
+fn rw004_diagnostic(
+    t: &AirType,
+    module_path: &str,
+    by_name: bool,
+    by_shape: bool,
+    mode: CheckMode,
+) -> Diagnostic {
+    let mut why = vec![format!(
+        "module `{module_path}` matches none of `runtime_owner_paths`"
+    )];
+    if by_name {
+        why.push(format!(
+            "type name `{}` matches one of `singleton_name_patterns`",
+            t.name
+        ));
+    }
+    if by_shape && let Some(f) = t.fields.first() {
+        why.push(format!(
+            "single-field struct whose field `{}: {}` matches \
+             `runtime_state_type_patterns`",
+            f.name, f.type_text
+        ));
+    }
+    Diagnostic {
+        rule_id: "RW004".to_string(),
+        severity: mode.elevate(Severity::Warning),
+        span: t.span.clone(),
+        concept: None,
+        message: format!(
+            "global-singleton-shaped type `{}` lives in `{module_path}`, \
+             outside any declared runtime owner",
+            t.symbol
+        ),
+        why,
+        suggested_fix: Some(format!(
+            "globals are runtime state; move `{}` into a runtime-owner \
+             module and inject it where needed. If this *is* a legitimate \
+             runtime-owner location, expand \
+             `paradigms.RW.runtime_owner_paths` in `locus.lock`; to widen \
+             or narrow detection, edit \
+             `paradigms.RW.singleton_name_patterns` or \
+             `paradigms.RW.runtime_state_type_patterns`.",
+            t.symbol
+        )),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use locus_air::{
-        AIR_SCHEMA_VERSION, AirFile, AirFunction, AirPackage, AirSpan, AirWorkspace, Visibility,
+        AIR_SCHEMA_VERSION, AirField, AirFile, AirFunction, AirPackage, AirSpan, AirWorkspace,
+        Visibility,
     };
 
     fn func(symbol: &str, file: &str, line: u32) -> AirItem {
@@ -196,6 +417,7 @@ mod tests {
         );
         let section = RwSection {
             runtime_owner_paths: vec!["crate::runtime::*".into(), "bin::*".into()],
+            ..RwSection::default()
         };
         let diags = rw001(&air, &section, CheckMode::Human);
         assert_eq!(diags.len(), 1);
@@ -234,6 +456,7 @@ mod tests {
         );
         let section = RwSection {
             runtime_owner_paths: vec!["crate::runtime::*".into()],
+            ..RwSection::default()
         };
         assert!(rw001(&air, &section, CheckMode::Human).is_empty());
     }
@@ -269,6 +492,7 @@ mod tests {
         );
         let section = RwSection {
             runtime_owner_paths: vec!["crate::runtime::*".into()],
+            ..RwSection::default()
         };
         assert!(rw001(&air, &section, CheckMode::Human).is_empty());
     }
@@ -298,6 +522,7 @@ mod tests {
         );
         let section = RwSection {
             runtime_owner_paths: vec!["crate::runtime::*".into()],
+            ..RwSection::default()
         };
         assert!(rw001(&air, &section, CheckMode::Human).is_empty());
     }
@@ -315,8 +540,328 @@ mod tests {
         );
         let section = RwSection {
             runtime_owner_paths: vec!["crate::runtime::*".into()],
+            ..RwSection::default()
         };
         let diags = rw001(&air, &section, CheckMode::AgentStrict);
+        assert_eq!(diags.len(), 1);
+        assert_eq!(diags[0].severity, Severity::Fatal);
+    }
+
+    // ---------- RW003 / RW004 helpers ----------
+
+    fn ty(name: &str, kind: TypeKind, fields: Vec<(&str, &str)>, file: &str, line: u32) -> AirItem {
+        AirItem::Type(AirType {
+            kind,
+            name: name.into(),
+            symbol: format!("crate::{name}"),
+            visibility: Visibility::Public,
+            fields: fields
+                .into_iter()
+                .map(|(n, t)| AirField {
+                    name: n.into(),
+                    type_text: t.into(),
+                    visibility: Visibility::Public,
+                })
+                .collect(),
+            variants: Vec::new(),
+            derives: Vec::new(),
+            attrs: Vec::new(),
+            span: AirSpan::new(file, line, line + 4),
+            doc: None,
+        })
+    }
+
+    fn air_with_types(module: Option<&str>, file: &str, items: Vec<AirItem>) -> AirWorkspace {
+        AirWorkspace {
+            schema_version: AIR_SCHEMA_VERSION,
+            packages: vec![AirPackage {
+                name: "x".into(),
+                version: "0".into(),
+                root_dir: "/".into(),
+                files: vec![AirFile {
+                    path: file.into(),
+                    module_path: module.map(|s| s.into()),
+                    items,
+                    hints: Vec::new(),
+                    parse_error: None,
+                    line_count: 1,
+                }],
+            }],
+            facts: Vec::new(),
+        }
+    }
+
+    // ---------- RW003 ----------
+
+    #[test]
+    fn rw003_fires_on_mutex_field_outside_owner() {
+        let air = air_with_types(
+            Some("crate::handler"),
+            "src/handler.rs",
+            vec![ty(
+                "ServiceState",
+                TypeKind::Struct,
+                vec![("inner", "Mutex<HashMap<u64,User>>")],
+                "src/handler.rs",
+                4,
+            )],
+        );
+        let section = RwSection {
+            runtime_owner_paths: vec!["crate::runtime::*".into()],
+            ..RwSection::default()
+        };
+        let diags = rw003(&air, &section, CheckMode::Human);
+        assert_eq!(diags.len(), 1);
+        let d = &diags[0];
+        assert_eq!(d.rule_id, "RW003");
+        assert_eq!(d.severity, Severity::Warning);
+        assert!(d.message.contains("crate::ServiceState"));
+        assert!(d.message.contains("Mutex"));
+        assert!(
+            d.why.iter().any(|w| w.contains("Mutex<*")),
+            "expected matched pattern in why; got {:?}",
+            d.why
+        );
+    }
+
+    #[test]
+    fn rw003_quiet_inside_runtime_owner_module() {
+        let air = air_with_types(
+            Some("crate::runtime::pool"),
+            "src/runtime/pool.rs",
+            vec![ty(
+                "Pool",
+                TypeKind::Struct,
+                vec![("guard", "Mutex<()>")],
+                "src/runtime/pool.rs",
+                4,
+            )],
+        );
+        let section = RwSection {
+            runtime_owner_paths: vec!["crate::runtime::*".into()],
+            ..RwSection::default()
+        };
+        assert!(rw003(&air, &section, CheckMode::Human).is_empty());
+    }
+
+    #[test]
+    fn rw003_quiet_when_no_field_matches_patterns() {
+        let air = air_with_types(
+            Some("crate::handler"),
+            "src/handler.rs",
+            vec![ty(
+                "Plain",
+                TypeKind::Struct,
+                vec![("name", "String"), ("count", "u64")],
+                "src/handler.rs",
+                4,
+            )],
+        );
+        let section = RwSection {
+            runtime_owner_paths: vec!["crate::runtime::*".into()],
+            ..RwSection::default()
+        };
+        assert!(rw003(&air, &section, CheckMode::Human).is_empty());
+    }
+
+    #[test]
+    fn rw003_silent_when_runtime_owner_paths_empty() {
+        let air = air_with_types(
+            Some("crate::handler"),
+            "src/handler.rs",
+            vec![ty(
+                "ServiceState",
+                TypeKind::Struct,
+                vec![("inner", "Arc<RwLock<State>>")],
+                "src/handler.rs",
+                4,
+            )],
+        );
+        let section = RwSection::default();
+        assert!(rw003(&air, &section, CheckMode::Human).is_empty());
+    }
+
+    #[test]
+    fn rw003_matches_arc_mutex_via_pattern_seed() {
+        let air = air_with_types(
+            Some("crate::handler"),
+            "src/handler.rs",
+            vec![ty(
+                "Service",
+                TypeKind::Struct,
+                vec![("state", "Arc<Mutex<Inner>>")],
+                "src/handler.rs",
+                4,
+            )],
+        );
+        let section = RwSection {
+            runtime_owner_paths: vec!["crate::runtime::*".into()],
+            ..RwSection::default()
+        };
+        let diags = rw003(&air, &section, CheckMode::Human);
+        assert_eq!(diags.len(), 1);
+    }
+
+    #[test]
+    fn rw003_agent_strict_elevates_to_fatal() {
+        let air = air_with_types(
+            Some("crate::handler"),
+            "src/handler.rs",
+            vec![ty(
+                "ServiceState",
+                TypeKind::Struct,
+                vec![("inner", "RwLock<u64>")],
+                "src/handler.rs",
+                4,
+            )],
+        );
+        let section = RwSection {
+            runtime_owner_paths: vec!["crate::runtime::*".into()],
+            ..RwSection::default()
+        };
+        let diags = rw003(&air, &section, CheckMode::AgentStrict);
+        assert_eq!(diags.len(), 1);
+        assert_eq!(diags[0].severity, Severity::Fatal);
+    }
+
+    // ---------- RW004 ----------
+
+    #[test]
+    fn rw004_fires_on_singleton_name_outside_owner() {
+        let air = air_with_types(
+            Some("crate::handler"),
+            "src/handler.rs",
+            vec![ty(
+                "AppSingleton",
+                TypeKind::Struct,
+                vec![("config", "Config")],
+                "src/handler.rs",
+                4,
+            )],
+        );
+        let section = RwSection {
+            runtime_owner_paths: vec!["crate::runtime::*".into()],
+            ..RwSection::default()
+        };
+        let diags = rw004(&air, &section, CheckMode::Human);
+        assert_eq!(diags.len(), 1);
+        let d = &diags[0];
+        assert_eq!(d.rule_id, "RW004");
+        assert_eq!(d.severity, Severity::Warning);
+        assert!(d.message.contains("AppSingleton"));
+        assert!(
+            d.why.iter().any(|w| w.contains("singleton_name_patterns")),
+            "expected name-pattern reason in why; got {:?}",
+            d.why
+        );
+    }
+
+    #[test]
+    fn rw004_fires_on_single_field_oncecell_struct_outside_owner() {
+        let air = air_with_types(
+            Some("crate::handler"),
+            "src/handler.rs",
+            vec![ty(
+                "Config",
+                TypeKind::Struct,
+                vec![("inner", "OnceCell<Inner>")],
+                "src/handler.rs",
+                4,
+            )],
+        );
+        let section = RwSection {
+            runtime_owner_paths: vec!["crate::runtime::*".into()],
+            ..RwSection::default()
+        };
+        let diags = rw004(&air, &section, CheckMode::Human);
+        assert_eq!(diags.len(), 1);
+        assert_eq!(diags[0].rule_id, "RW004");
+        assert!(
+            diags[0]
+                .why
+                .iter()
+                .any(|w| w.contains("single-field struct")),
+            "expected shape-based reason in why; got {:?}",
+            diags[0].why
+        );
+    }
+
+    #[test]
+    fn rw004_quiet_inside_runtime_owner_module() {
+        let air = air_with_types(
+            Some("crate::runtime::globals"),
+            "src/runtime/globals.rs",
+            vec![ty(
+                "AppSingleton",
+                TypeKind::Struct,
+                vec![("config", "Config")],
+                "src/runtime/globals.rs",
+                4,
+            )],
+        );
+        let section = RwSection {
+            runtime_owner_paths: vec!["crate::runtime::*".into()],
+            ..RwSection::default()
+        };
+        assert!(rw004(&air, &section, CheckMode::Human).is_empty());
+    }
+
+    #[test]
+    fn rw004_quiet_on_plain_struct() {
+        let air = air_with_types(
+            Some("crate::handler"),
+            "src/handler.rs",
+            vec![ty(
+                "User",
+                TypeKind::Struct,
+                vec![("name", "String"), ("age", "u32")],
+                "src/handler.rs",
+                4,
+            )],
+        );
+        let section = RwSection {
+            runtime_owner_paths: vec!["crate::runtime::*".into()],
+            ..RwSection::default()
+        };
+        assert!(rw004(&air, &section, CheckMode::Human).is_empty());
+    }
+
+    #[test]
+    fn rw004_silent_when_runtime_owner_paths_empty() {
+        let air = air_with_types(
+            Some("crate::handler"),
+            "src/handler.rs",
+            vec![ty(
+                "AppSingleton",
+                TypeKind::Struct,
+                vec![("config", "Config")],
+                "src/handler.rs",
+                4,
+            )],
+        );
+        let section = RwSection::default();
+        assert!(rw004(&air, &section, CheckMode::Human).is_empty());
+    }
+
+    #[test]
+    fn rw004_agent_strict_elevates_to_fatal() {
+        let air = air_with_types(
+            Some("crate::handler"),
+            "src/handler.rs",
+            vec![ty(
+                "Globals",
+                TypeKind::Struct,
+                vec![("conf", "Config")],
+                "src/handler.rs",
+                4,
+            )],
+        );
+        // `*Globals` is in the default singleton_name_patterns seed.
+        let section = RwSection {
+            runtime_owner_paths: vec!["crate::runtime::*".into()],
+            ..RwSection::default()
+        };
+        let diags = rw004(&air, &section, CheckMode::AgentStrict);
         assert_eq!(diags.len(), 1);
         assert_eq!(diags[0].severity, Severity::Fatal);
     }

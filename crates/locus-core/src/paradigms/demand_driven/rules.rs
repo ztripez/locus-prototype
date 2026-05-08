@@ -3,18 +3,23 @@
 //! Implemented:
 //! - [`da001`]: trait declared with exactly one implementation in the
 //!   workspace and no accepted port role — speculative variation surface.
+//! - [`da002`]: function whose name matches `factory_name_patterns`
+//!   (`create_*`, `make_*`, `*_factory`, `build_*`) but only ever
+//!   constructs a single concrete type — the abstraction has zero
+//!   variation, it's a renamed constructor.
+//! - [`da007`]: enum whose name matches `strategy_name_patterns`
+//!   (`*Strategy`, `*Mode`, `*Policy`) but has exactly one variant — a
+//!   stub abstraction with no actual variation.
 //!
-//! Future DA rules will cover the rest of the spec (single-entry registries,
-//! one-variant strategy enums, factories that construct one type, …). DA001
-//! is the cleanest first slice: AIR schema v5 emits both `TypeKind::Trait`
-//! declarations and `AirItem::Impl` records, so the rule needs no fuzzy text
-//! matching — a trait with one impl block is a structural fact.
+//! All DA rules are gated on the section's `enabled` flag. With the seed
+//! pattern lists shipping non-empty, the only opt-in step a user makes is
+//! flipping `paradigms.DA.enabled = true`.
 
 use std::collections::BTreeMap;
 
-use locus_air::{AirItem, AirType, AirWorkspace, TypeKind};
+use locus_air::{ActionKind, AirFunction, AirItem, AirType, AirWorkspace, TypeKind};
 
-use super::lockfile_schema::DaSection;
+use super::lockfile_schema::{DaSection, matches_name_glob};
 use crate::diagnostics::{CheckMode, Diagnostic, Severity};
 
 /// DA001 — trait with exactly one implementation and no accepted port role.
@@ -151,6 +156,200 @@ fn last_segment(path: &str) -> &str {
     path.rsplit("::").next().unwrap_or(path)
 }
 
+/// DA002 — single-construct factory function.
+///
+/// For every `AirItem::Function` whose `name` matches any pattern in
+/// `section.factory_name_patterns`, count the `AirItem::TruthAction`
+/// entries with `action == Construct` and `function == Some(func.symbol)`.
+/// Fires when the count is exactly 1: a `create_*` / `make_*` /
+/// `build_*` / `*_factory` that only ever constructs one type is just a
+/// renamed constructor — the factory abstraction earned no variation.
+///
+/// Zero-construct factories (the function's body has no `Construct`
+/// truth-action — e.g. it's a façade that delegates) and multi-construct
+/// factories (real variation, justified) are both quiet.
+///
+/// Severity: Warning by default; Fatal under `--agent-strict`.
+///
+/// Stays silent when `factory_name_patterns` is empty, when
+/// `section.enabled == false`, or when the workspace has no functions.
+pub fn da002(air: &AirWorkspace, section: &DaSection, mode: CheckMode) -> Vec<Diagnostic> {
+    if !section.enabled || section.factory_name_patterns.is_empty() {
+        return Vec::new();
+    }
+
+    // Index Construct truth-actions by enclosing function symbol. Each
+    // entry's value is the count + a sample target (used for the
+    // diagnostic's why).
+    struct ConstructStats {
+        count: u32,
+        first_target: String,
+    }
+    let mut by_fn: BTreeMap<&str, ConstructStats> = BTreeMap::new();
+    for pkg in &air.packages {
+        for file in &pkg.files {
+            for item in &file.items {
+                let AirItem::TruthAction(act) = item else {
+                    continue;
+                };
+                if act.action != ActionKind::Construct {
+                    continue;
+                }
+                let Some(fn_sym) = act.function.as_deref() else {
+                    continue;
+                };
+                let entry = by_fn.entry(fn_sym).or_insert_with(|| ConstructStats {
+                    count: 0,
+                    first_target: act.target.clone(),
+                });
+                entry.count += 1;
+            }
+        }
+    }
+
+    let mut out = Vec::new();
+    for pkg in &air.packages {
+        for file in &pkg.files {
+            for item in &file.items {
+                let AirItem::Function(func) = item else {
+                    continue;
+                };
+                let Some(matched_pattern) = section
+                    .factory_name_patterns
+                    .iter()
+                    .find(|p| matches_name_glob(p, &func.name))
+                else {
+                    continue;
+                };
+                let Some(stats) = by_fn.get(func.symbol.as_str()) else {
+                    continue; // 0 constructions — out of scope for DA002
+                };
+                if stats.count != 1 {
+                    continue;
+                }
+                out.push(diagnostic_da002(
+                    func,
+                    matched_pattern,
+                    &stats.first_target,
+                    mode,
+                ));
+            }
+        }
+    }
+    out
+}
+
+fn diagnostic_da002(
+    func: &AirFunction,
+    matched_pattern: &str,
+    target: &str,
+    mode: CheckMode,
+) -> Diagnostic {
+    Diagnostic {
+        rule_id: "DA002".to_string(),
+        severity: mode.elevate(Severity::Warning),
+        span: func.span.clone(),
+        concept: Some(func.name.clone()),
+        message: format!(
+            "factory function `{}` constructs exactly one type — \
+             abstraction may be speculative",
+            func.name
+        ),
+        why: vec![
+            format!("function `{}` (`{}`)", func.name, func.symbol),
+            format!("name matches factory pattern `{matched_pattern}`"),
+            "exactly one `Construct` truth-action recorded with this \
+             function as its enclosing scope"
+                .into(),
+            format!("constructs `{target}`"),
+            "Demand-Driven Architecture: a factory's job is to *vary* \
+             construction; one target = renamed constructor"
+                .into(),
+        ],
+        suggested_fix: Some(format!(
+            "if `{name}` is a renamed constructor, replace it with \
+             `{target}::new(...)` (or the type's accepted constructor) \
+             and delete the wrapper. If `{name}` will gain variation \
+             soon, narrow `paradigms.DA.factory_name_patterns` so its \
+             current shape isn't flagged.",
+            name = func.name,
+            target = target,
+        )),
+    }
+}
+
+/// DA007 — single-variant strategy enum.
+///
+/// For every `AirItem::Type` whose `kind == Enum` and whose `name`
+/// matches any pattern in `section.strategy_name_patterns`, fire when
+/// `variants.len() == 1`. A 1-variant `*Strategy` / `*Mode` / `*Policy`
+/// is a stub: there's no actual variation, just speculative shape.
+///
+/// Severity: Warning by default; Fatal under `--agent-strict`.
+///
+/// Stays silent when `strategy_name_patterns` is empty, when
+/// `section.enabled == false`, or when no enums match.
+pub fn da007(air: &AirWorkspace, section: &DaSection, mode: CheckMode) -> Vec<Diagnostic> {
+    if !section.enabled || section.strategy_name_patterns.is_empty() {
+        return Vec::new();
+    }
+    let mut out = Vec::new();
+    for pkg in &air.packages {
+        for file in &pkg.files {
+            for item in &file.items {
+                let AirItem::Type(ty) = item else {
+                    continue;
+                };
+                if ty.kind != TypeKind::Enum {
+                    continue;
+                }
+                let Some(matched_pattern) = section
+                    .strategy_name_patterns
+                    .iter()
+                    .find(|p| matches_name_glob(p, &ty.name))
+                else {
+                    continue;
+                };
+                if ty.variants.len() != 1 {
+                    continue;
+                }
+                let only_variant = &ty.variants[0].name;
+                out.push(Diagnostic {
+                    rule_id: "DA007".to_string(),
+                    severity: mode.elevate(Severity::Warning),
+                    span: ty.span.clone(),
+                    concept: Some(ty.name.clone()),
+                    message: format!(
+                        "strategy-shaped enum `{}` has exactly one variant \
+                         (`{}`) — abstraction is a stub",
+                        ty.name, only_variant
+                    ),
+                    why: vec![
+                        format!("enum `{}` (`{}`)", ty.name, ty.symbol),
+                        format!("name matches strategy pattern `{matched_pattern}`"),
+                        format!("single variant: `{}` (no actual variation)", only_variant),
+                        "Demand-Driven Architecture: a 1-variant enum \
+                         carries no decision — it's an unstarted point of \
+                         variation"
+                            .into(),
+                    ],
+                    suggested_fix: Some(format!(
+                        "if there is no real variation, inline the only \
+                         variant `{variant}` at call sites and delete the \
+                         enum. If a second variant is expected soon, \
+                         narrow `paradigms.DA.strategy_name_patterns` so \
+                         `{name}` isn't matched until the second variant \
+                         lands.",
+                        variant = only_variant,
+                        name = ty.name,
+                    )),
+                });
+            }
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -222,6 +421,7 @@ mod tests {
         DaSection {
             enabled: true,
             accepted_single_impl: Vec::new(),
+            ..DaSection::default()
         }
     }
 
@@ -285,6 +485,7 @@ mod tests {
         let section = DaSection {
             enabled: true,
             accepted_single_impl: vec!["Clock".into()],
+            ..DaSection::default()
         };
         assert!(da001(&air, &section, CheckMode::Human).is_empty());
     }
@@ -298,6 +499,7 @@ mod tests {
         let section = DaSection {
             enabled: true,
             accepted_single_impl: vec!["my_crate::ports::Clock".into()],
+            ..DaSection::default()
         };
         assert!(da001(&air, &section, CheckMode::Human).is_empty());
     }
@@ -311,6 +513,7 @@ mod tests {
         let section = DaSection {
             enabled: true,
             accepted_single_impl: vec!["my_crate::infra::*".into()],
+            ..DaSection::default()
         };
         assert!(da001(&air, &section, CheckMode::Human).is_empty());
     }
@@ -456,5 +659,205 @@ mod tests {
         let diags = da001(&air, &enabled(), CheckMode::Human);
         assert_eq!(diags.len(), 1);
         assert_eq!(diags[0].span, trait_span);
+    }
+
+    // ------------- DA002 / DA007 helpers -------------
+
+    use locus_air::{ActionKind, AirFunction, AirTruthAction, AirVariant};
+
+    fn fn_decl(name: &str, symbol: &str) -> AirItem {
+        AirItem::Function(AirFunction {
+            name: name.into(),
+            symbol: symbol.into(),
+            visibility: Visibility::Public,
+            params: Vec::new(),
+            return_type: None,
+            span: AirSpan::new("t.rs", 1, 1),
+            line_count: 1,
+            doc: None,
+        })
+    }
+
+    fn construct_action(target: &str, function: &str) -> AirItem {
+        AirItem::TruthAction(AirTruthAction {
+            action: ActionKind::Construct,
+            target: target.into(),
+            function: Some(function.into()),
+            span: AirSpan::new("t.rs", 2, 2),
+            confidence: 1.0,
+            reasons: Vec::new(),
+        })
+    }
+
+    fn enum_decl(name: &str, symbol: &str, variants: &[&str]) -> AirItem {
+        AirItem::Type(AirType {
+            kind: TypeKind::Enum,
+            name: name.into(),
+            symbol: symbol.into(),
+            visibility: Visibility::Public,
+            fields: Vec::new(),
+            variants: variants
+                .iter()
+                .map(|v| AirVariant {
+                    name: (*v).into(),
+                    fields: Vec::new(),
+                })
+                .collect(),
+            derives: Vec::new(),
+            attrs: Vec::new(),
+            span: AirSpan::new("t.rs", 1, 1),
+            doc: None,
+        })
+    }
+
+    // ------------- DA002 tests -------------
+
+    #[test]
+    fn da002_fires_when_factory_constructs_one_target() {
+        // `make_widget` constructs `Widget` once → DA002 fires.
+        let air = air_with(vec![
+            fn_decl("make_widget", "x::make_widget"),
+            construct_action("x::Widget", "x::make_widget"),
+        ]);
+        let diags = da002(&air, &enabled(), CheckMode::Human);
+        assert_eq!(diags.len(), 1, "got {diags:?}");
+        assert_eq!(diags[0].rule_id, "DA002");
+        assert_eq!(diags[0].severity, Severity::Warning);
+        assert!(diags[0].message.contains("make_widget"));
+        assert!(diags[0].message.contains("exactly one type"));
+        assert_eq!(diags[0].concept.as_deref(), Some("make_widget"));
+    }
+
+    #[test]
+    fn da002_quiet_when_factory_constructs_two_or_more_distinct_targets() {
+        // Real variation justifies the factory.
+        let air = air_with(vec![
+            fn_decl("create_notifier", "x::create_notifier"),
+            construct_action("x::EmailNotifier", "x::create_notifier"),
+            construct_action("x::SmsNotifier", "x::create_notifier"),
+        ]);
+        assert!(da002(&air, &enabled(), CheckMode::Human).is_empty());
+    }
+
+    #[test]
+    fn da002_quiet_when_factory_has_zero_construct_actions() {
+        // A pass-through factory with no Construct truth-action — out of
+        // DA002's scope (a different rule could flag pure delegation).
+        let air = air_with(vec![fn_decl("build_thing", "x::build_thing")]);
+        assert!(da002(&air, &enabled(), CheckMode::Human).is_empty());
+    }
+
+    #[test]
+    fn da002_quiet_when_function_name_doesnt_match_pattern() {
+        let air = air_with(vec![
+            fn_decl("compute_widget", "x::compute_widget"),
+            construct_action("x::Widget", "x::compute_widget"),
+        ]);
+        assert!(da002(&air, &enabled(), CheckMode::Human).is_empty());
+    }
+
+    #[test]
+    fn da002_silent_when_section_disabled() {
+        let air = air_with(vec![
+            fn_decl("make_widget", "x::make_widget"),
+            construct_action("x::Widget", "x::make_widget"),
+        ]);
+        // `enabled = false` (the default) silences DA002 even with a
+        // textbook violation in scope.
+        assert!(da002(&air, &DaSection::default(), CheckMode::Human).is_empty());
+    }
+
+    #[test]
+    fn da002_silent_when_factory_name_patterns_empty() {
+        let air = air_with(vec![
+            fn_decl("make_widget", "x::make_widget"),
+            construct_action("x::Widget", "x::make_widget"),
+        ]);
+        let section = DaSection {
+            enabled: true,
+            factory_name_patterns: Vec::new(),
+            ..DaSection::default()
+        };
+        assert!(da002(&air, &section, CheckMode::Human).is_empty());
+    }
+
+    #[test]
+    fn da002_agent_strict_elevates_to_fatal() {
+        let air = air_with(vec![
+            fn_decl("make_widget", "x::make_widget"),
+            construct_action("x::Widget", "x::make_widget"),
+        ]);
+        let diags = da002(&air, &enabled(), CheckMode::AgentStrict);
+        assert_eq!(diags.len(), 1);
+        assert_eq!(diags[0].severity, Severity::Fatal);
+    }
+
+    // ------------- DA007 tests -------------
+
+    #[test]
+    fn da007_fires_on_single_variant_strategy_enum() {
+        let air = air_with(vec![enum_decl(
+            "RetryStrategy",
+            "x::RetryStrategy",
+            &["Linear"],
+        )]);
+        let diags = da007(&air, &enabled(), CheckMode::Human);
+        assert_eq!(diags.len(), 1, "got {diags:?}");
+        assert_eq!(diags[0].rule_id, "DA007");
+        assert_eq!(diags[0].severity, Severity::Warning);
+        assert!(diags[0].message.contains("RetryStrategy"));
+        assert!(diags[0].message.contains("Linear"));
+        assert_eq!(diags[0].concept.as_deref(), Some("RetryStrategy"));
+    }
+
+    #[test]
+    fn da007_quiet_when_strategy_enum_has_two_or_more_variants() {
+        let air = air_with(vec![enum_decl(
+            "RetryStrategy",
+            "x::RetryStrategy",
+            &["Linear", "Exponential"],
+        )]);
+        assert!(da007(&air, &enabled(), CheckMode::Human).is_empty());
+    }
+
+    #[test]
+    fn da007_quiet_when_enum_name_doesnt_match_pattern() {
+        // `RetryConfig` is not a `*Strategy`/`*Mode`/`*Policy` — out of scope.
+        let air = air_with(vec![enum_decl(
+            "RetryConfig",
+            "x::RetryConfig",
+            &["Default"],
+        )]);
+        assert!(da007(&air, &enabled(), CheckMode::Human).is_empty());
+    }
+
+    #[test]
+    fn da007_silent_when_section_disabled() {
+        let air = air_with(vec![enum_decl(
+            "RetryStrategy",
+            "x::RetryStrategy",
+            &["Linear"],
+        )]);
+        assert!(da007(&air, &DaSection::default(), CheckMode::Human).is_empty());
+    }
+
+    #[test]
+    fn da007_agent_strict_elevates_to_fatal() {
+        let air = air_with(vec![enum_decl(
+            "AccessPolicy",
+            "x::AccessPolicy",
+            &["AllowAll"],
+        )]);
+        let diags = da007(&air, &enabled(), CheckMode::AgentStrict);
+        assert_eq!(diags.len(), 1);
+        assert_eq!(diags[0].severity, Severity::Fatal);
+    }
+
+    #[test]
+    fn da007_skips_struct_with_strategy_name() {
+        // Only enums fire — a `RetryStrategy` *struct* is some other shape
+        // and DA007 should ignore it.
+        let air = air_with(vec![struct_decl("RetryStrategy", "x::RetryStrategy")]);
+        assert!(da007(&air, &enabled(), CheckMode::Human).is_empty());
     }
 }

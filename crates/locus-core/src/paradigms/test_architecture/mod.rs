@@ -9,6 +9,9 @@
 //!
 //! Phase scope so far:
 //! - TA001: test module defines a public domain-shaped type.
+//! - TA002: test type whose name overlaps an accepted canonical concept.
+//! - TA003: test struct whose name and field-set both echo a canonical concept.
+//! - TA004: port impl in test code outside accepted test-adapter modules.
 
 // ot: canonical
 
@@ -41,6 +44,10 @@ impl Paradigm for TestArchitecture {
     fn check(&self, air: &AirWorkspace, lockfile: &Lockfile, mode: CheckMode) -> Vec<Diagnostic> {
         let section: lockfile_schema::TaSection =
             lockfile.paradigm_section(TA_PREFIX).unwrap_or_default();
-        rules::ta001(air, &section, mode)
+        let mut diags = rules::ta001(air, &section, mode);
+        diags.extend(rules::ta002(air, &section, mode));
+        diags.extend(rules::ta003(air, &section, mode));
+        diags.extend(rules::ta004(air, &section, mode));
+        diags
     }
 }

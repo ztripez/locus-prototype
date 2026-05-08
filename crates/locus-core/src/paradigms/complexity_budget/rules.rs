@@ -2,15 +2,21 @@
 //!
 //! Implemented:
 //! - [`cx001`]: function exceeds its line budget.
+//! - [`cx007`]: file exposes more public API items than `max_public_items`.
+//! - [`cx008`]: function issues more call sites than `max_fan_out` and
+//!   doesn't live under an accepted `orchestration_paths` module.
 //!
 //! Future CX rules will cover the spec's broader complexity story
-//! (responsibility entropy, fan-in/out caps for utility modules, branchy
-//! converters, …). CX001 is the first slice — the simplest, most useful
-//! complexity check: line count per function vs a configurable budget.
+//! (responsibility entropy, branchy converters, …). CX001 is the simplest,
+//! most useful complexity check: line count per function vs a configurable
+//! budget. CX007/CX008 add per-file API surface and per-function fan-out
+//! caps so the budget story covers shape, not just length.
 
-use locus_air::{AirItem, AirWorkspace};
+use std::collections::HashMap;
 
-use super::lockfile_schema::CxSection;
+use locus_air::{AirItem, AirWorkspace, Visibility};
+
+use super::lockfile_schema::{CxSection, matches_pattern};
 use crate::diagnostics::{CheckMode, Diagnostic, Severity};
 
 /// CX001 — function exceeds its line budget.
@@ -104,11 +110,202 @@ pub fn cx001(air: &AirWorkspace, section: &CxSection, mode: CheckMode) -> Vec<Di
     out
 }
 
+/// CX007 — excessive public surface.
+///
+/// For each `AirFile` with a `module_path`, count `AirItem` entries that
+/// expose API: `Type` and `Function` items with `Visibility::Public`. Fire
+/// one diagnostic per file whose count exceeds `section.max_public_items`
+/// AND whose `module_path` doesn't match any pattern in
+/// `section.exempt_paths`.
+///
+/// Severity: Warning by default. `--agent-strict` elevates to Fatal via
+/// [`CheckMode::elevate`].
+///
+/// Unlike CX001 there's no "silent on default section" guard: the section
+/// ships with a sensible `max_public_items` (30) plus default exempt
+/// paths covering test modules, so the rule is useful out of the box.
+/// Files without a `module_path` are skipped — we can't apply
+/// `exempt_paths` without one.
+pub fn cx007(air: &AirWorkspace, section: &CxSection, mode: CheckMode) -> Vec<Diagnostic> {
+    let mut out = Vec::new();
+    for pkg in &air.packages {
+        for file in &pkg.files {
+            let Some(module_path) = file.module_path.as_deref() else {
+                continue;
+            };
+            if section
+                .exempt_paths
+                .iter()
+                .any(|pat| matches_pattern(pat, module_path))
+            {
+                continue;
+            }
+
+            let public_count = file
+                .items
+                .iter()
+                .filter(|it| match it {
+                    AirItem::Type(t) => t.visibility == Visibility::Public,
+                    AirItem::Function(f) => f.visibility == Visibility::Public,
+                    _ => false,
+                })
+                .count() as u32;
+
+            if public_count <= section.max_public_items {
+                continue;
+            }
+
+            // Anchor the diagnostic at the file's first item span when we
+            // have one; otherwise fall back to a synthetic span at line 1
+            // of the file path so the diagnostic still points somewhere.
+            let span = file
+                .items
+                .iter()
+                .find_map(|it| match it {
+                    AirItem::Type(t) => Some(t.span.clone()),
+                    AirItem::Function(f) => Some(f.span.clone()),
+                    _ => None,
+                })
+                .unwrap_or_else(|| locus_air::AirSpan::new(file.path.clone(), 1, 1));
+
+            out.push(Diagnostic {
+                rule_id: "CX007".to_string(),
+                severity: mode.elevate(Severity::Warning),
+                span,
+                concept: None,
+                message: format!(
+                    "module `{module_path}` exposes {public_count} public items, budget {} \
+                     — likely a kitchen-sink facade",
+                    section.max_public_items
+                ),
+                why: vec![
+                    format!("file `{}`", file.path),
+                    format!("module path `{module_path}`"),
+                    format!(
+                        "public item count {public_count} > max_public_items {}",
+                        section.max_public_items
+                    ),
+                ],
+                suggested_fix: Some(
+                    "split the module into smaller, more focused units; or — if this \
+                     facade is intentional (e.g. a public prelude) — exempt the \
+                     module by adding its path pattern to `paradigms.CX.exempt_paths` \
+                     in `locus.lock`, or raise `paradigms.CX.max_public_items`"
+                        .into(),
+                ),
+            });
+        }
+    }
+    out
+}
+
+/// CX008 — high fan-out outside orchestration owners.
+///
+/// For each `AirItem::Function`, count its enclosing `AirItem::CallSite`
+/// items (where `cs.function == Some(func.symbol)`). Fire one diagnostic
+/// per function whose call-site count exceeds `section.max_fan_out` AND
+/// whose enclosing module doesn't match any pattern in
+/// `section.orchestration_paths`.
+///
+/// Severity: Warning by default; Fatal under `--agent-strict`.
+///
+/// Lockfile-driven silence: when `orchestration_paths` is empty the rule
+/// stays silent entirely. The thinking: deciding "where high fan-out is
+/// legitimate" is a deliberate user act (composition roots, CLI dispatch,
+/// runtime orchestrators); without that declaration, every fan-out is
+/// either accepted or noise, so we don't fire pre-onboarding. Mirrors the
+/// DG/MO un-onboarded UX.
+pub fn cx008(air: &AirWorkspace, section: &CxSection, mode: CheckMode) -> Vec<Diagnostic> {
+    if section.orchestration_paths.is_empty() {
+        return Vec::new();
+    }
+
+    // Step 1: count call sites per enclosing-function symbol.
+    let mut fan_out: HashMap<&str, u32> = HashMap::new();
+    for pkg in &air.packages {
+        for file in &pkg.files {
+            for item in &file.items {
+                if let AirItem::CallSite(cs) = item
+                    && let Some(sym) = cs.function.as_deref()
+                {
+                    *fan_out.entry(sym).or_insert(0) += 1;
+                }
+            }
+        }
+    }
+
+    // Step 2: walk every Function, look up its count, fire if it exceeds
+    // the cap AND the enclosing module isn't an orchestration path.
+    let mut out = Vec::new();
+    for pkg in &air.packages {
+        for file in &pkg.files {
+            let module_path = file.module_path.as_deref();
+            for item in &file.items {
+                let AirItem::Function(func) = item else {
+                    continue;
+                };
+                let Some(&count) = fan_out.get(func.symbol.as_str()) else {
+                    continue;
+                };
+                if count <= section.max_fan_out {
+                    continue;
+                }
+
+                let exempt = module_path
+                    .map(|mp| {
+                        section
+                            .orchestration_paths
+                            .iter()
+                            .any(|pat| matches_pattern(pat, mp))
+                    })
+                    .unwrap_or(false);
+                if exempt {
+                    continue;
+                }
+
+                out.push(Diagnostic {
+                    rule_id: "CX008".to_string(),
+                    severity: mode.elevate(Severity::Warning),
+                    span: func.span.clone(),
+                    concept: None,
+                    message: format!(
+                        "function `{}` issues {count} call sites, budget {} \
+                         — high fan-out outside an accepted orchestration module",
+                        func.symbol, section.max_fan_out
+                    ),
+                    why: vec![
+                        format!("function symbol `{}`", func.symbol),
+                        match module_path {
+                            Some(mp) => format!("module path `{mp}`"),
+                            None => "module path unknown".to_string(),
+                        },
+                        format!(
+                            "call-site count {count} > max_fan_out {}",
+                            section.max_fan_out
+                        ),
+                    ],
+                    suggested_fix: Some(
+                        "extract sub-steps into helper functions, or — if this \
+                         function is a legitimate orchestrator — add its module \
+                         path to `paradigms.CX.orchestration_paths` in \
+                         `locus.lock`"
+                            .into(),
+                    ),
+                });
+            }
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::super::lockfile_schema::{CxOverride, CxSection};
     use super::*;
-    use locus_air::{AIR_SCHEMA_VERSION, AirFile, AirFunction, AirPackage, AirSpan, Visibility};
+    use locus_air::{
+        AIR_SCHEMA_VERSION, AirCallSite, AirFile, AirFunction, AirPackage, AirSpan, AirType,
+        CallKind, TypeKind, Visibility,
+    };
 
     fn func(name: &str, line_count: u32) -> AirItem {
         AirItem::Function(AirFunction {
@@ -147,6 +344,7 @@ mod tests {
         CxSection {
             default_max_function_lines: Some(default_budget),
             overrides: Vec::new(),
+            ..CxSection::default()
         }
     }
 
@@ -194,6 +392,7 @@ mod tests {
                 module: "lore::parser::*".into(),
                 max_function_lines: 200,
             }],
+            ..CxSection::default()
         };
         assert!(
             cx001(&air, &section, CheckMode::Human).is_empty(),
@@ -212,6 +411,7 @@ mod tests {
                 module: "lore::convert::*".into(),
                 max_function_lines: 20,
             }],
+            ..CxSection::default()
         };
         let diags = cx001(&air, &section, CheckMode::Human);
         assert_eq!(diags.len(), 1, "override should lower budget below count");
@@ -246,5 +446,245 @@ mod tests {
         let air = air_with(None, vec![func("big", 500)]);
         let section = configured(50);
         assert!(cx001(&air, &section, CheckMode::Human).is_empty());
+    }
+
+    // --- CX007 fixtures + tests ----------------------------------------
+
+    fn pub_type(name: &str) -> AirItem {
+        AirItem::Type(AirType {
+            kind: TypeKind::Struct,
+            name: name.into(),
+            symbol: format!("x::{name}"),
+            visibility: Visibility::Public,
+            fields: Vec::new(),
+            variants: Vec::new(),
+            derives: Vec::new(),
+            attrs: Vec::new(),
+            span: AirSpan::new("t.rs", 1, 1),
+            doc: None,
+        })
+    }
+
+    fn priv_type(name: &str) -> AirItem {
+        AirItem::Type(AirType {
+            kind: TypeKind::Struct,
+            name: name.into(),
+            symbol: format!("x::{name}"),
+            visibility: Visibility::Private,
+            fields: Vec::new(),
+            variants: Vec::new(),
+            derives: Vec::new(),
+            attrs: Vec::new(),
+            span: AirSpan::new("t.rs", 1, 1),
+            doc: None,
+        })
+    }
+
+    fn priv_fn(name: &str) -> AirItem {
+        AirItem::Function(AirFunction {
+            name: name.into(),
+            symbol: format!("x::{name}"),
+            visibility: Visibility::Private,
+            params: Vec::new(),
+            return_type: None,
+            span: AirSpan::new("t.rs", 1, 1),
+            line_count: 1,
+            doc: None,
+        })
+    }
+
+    fn cx007_section(max: u32, exempt: Vec<&str>) -> CxSection {
+        CxSection {
+            max_public_items: max,
+            exempt_paths: exempt.into_iter().map(str::to_string).collect(),
+            ..CxSection::default()
+        }
+    }
+
+    #[test]
+    fn cx007_quiet_when_public_count_at_or_below_budget() {
+        // 3 public items, budget 5 → silent. Both at-budget and under-budget.
+        let air = air_with(
+            Some("x::core"),
+            vec![pub_type("A"), pub_type("B"), pub_type("C")],
+        );
+        let section = cx007_section(5, vec![]);
+        assert!(cx007(&air, &section, CheckMode::Human).is_empty());
+    }
+
+    #[test]
+    fn cx007_fires_when_public_count_exceeds_budget() {
+        // 4 public items vs budget 3 → one diag.
+        let items = vec![
+            pub_type("A"),
+            pub_type("B"),
+            pub_type("C"),
+            func("d", 5), // public by default in our `func` helper
+        ];
+        let air = air_with(Some("x::core"), items);
+        let section = cx007_section(3, vec![]);
+        let diags = cx007(&air, &section, CheckMode::Human);
+        assert_eq!(diags.len(), 1, "got {diags:?}");
+        assert_eq!(diags[0].rule_id, "CX007");
+        assert_eq!(diags[0].severity, Severity::Warning);
+        assert!(diags[0].message.contains("x::core"));
+        assert!(diags[0].message.contains("4"));
+        assert!(diags[0].message.contains("budget 3"));
+    }
+
+    #[test]
+    fn cx007_only_counts_public_items() {
+        // 2 public + 5 private = total 7, but only public counts → silent at budget 3.
+        let items = vec![
+            pub_type("A"),
+            pub_type("B"),
+            priv_type("p1"),
+            priv_type("p2"),
+            priv_type("p3"),
+            priv_fn("hidden1"),
+            priv_fn("hidden2"),
+        ];
+        let air = air_with(Some("x::core"), items);
+        let section = cx007_section(3, vec![]);
+        assert!(cx007(&air, &section, CheckMode::Human).is_empty());
+    }
+
+    #[test]
+    fn cx007_exempt_paths_silence_diagnostic() {
+        // 5 public items, budget 3, but module matches `*::tests::*` exempt → silent.
+        let items = vec![
+            pub_type("A"),
+            pub_type("B"),
+            pub_type("C"),
+            pub_type("D"),
+            pub_type("E"),
+        ];
+        let air = air_with(Some("x::tests::helpers"), items);
+        let section = cx007_section(3, vec!["*::tests::*"]);
+        assert!(cx007(&air, &section, CheckMode::Human).is_empty());
+    }
+
+    #[test]
+    fn cx007_default_exempt_paths_cover_test_modules() {
+        // Default section ships with `*::tests::*` and `*::test::*` exempts.
+        let items = (0..40)
+            .map(|i| pub_type(&format!("T{i}")))
+            .collect::<Vec<_>>();
+        let air = air_with(Some("x::tests::big"), items);
+        let section = CxSection::default();
+        assert!(cx007(&air, &section, CheckMode::Human).is_empty());
+    }
+
+    #[test]
+    fn cx007_agent_strict_elevates_to_fatal() {
+        let items = vec![pub_type("A"), pub_type("B"), pub_type("C"), pub_type("D")];
+        let air = air_with(Some("x::core"), items);
+        let section = cx007_section(3, vec![]);
+        let diags = cx007(&air, &section, CheckMode::AgentStrict);
+        assert_eq!(diags.len(), 1);
+        assert_eq!(diags[0].severity, Severity::Fatal);
+    }
+
+    // --- CX008 fixtures + tests ----------------------------------------
+
+    fn callsite(callee: &str, in_function: &str) -> AirItem {
+        AirItem::CallSite(AirCallSite {
+            callee: callee.into(),
+            kind: CallKind::Function,
+            function: Some(in_function.into()),
+            span: AirSpan::new("t.rs", 5, 5),
+        })
+    }
+
+    fn cx008_section(max: u32, orchestration: Vec<&str>) -> CxSection {
+        CxSection {
+            max_fan_out: max,
+            orchestration_paths: orchestration.into_iter().map(str::to_string).collect(),
+            ..CxSection::default()
+        }
+    }
+
+    #[test]
+    fn cx008_silent_when_orchestration_paths_empty() {
+        // Even with rampant fan-out, no orchestration declaration means silent.
+        // Mirrors DG/MO lockfile-driven convention.
+        let mut items = vec![func("dispatch", 5)];
+        for i in 0..50 {
+            items.push(callsite(&format!("callee{i}"), "x::dispatch"));
+        }
+        let air = air_with(Some("x::core"), items);
+        let section = CxSection::default(); // empty orchestration_paths
+        assert!(cx008(&air, &section, CheckMode::Human).is_empty());
+    }
+
+    #[test]
+    fn cx008_fires_when_count_exceeds_budget_outside_orchestration() {
+        // 6 call sites, budget 5, in `x::core` (not under orchestration) → fires.
+        let mut items = vec![func("dispatch", 5)];
+        for i in 0..6 {
+            items.push(callsite(&format!("callee{i}"), "x::dispatch"));
+        }
+        let air = air_with(Some("x::core"), items);
+        let section = cx008_section(5, vec!["x::cli::*"]);
+        let diags = cx008(&air, &section, CheckMode::Human);
+        assert_eq!(diags.len(), 1, "got {diags:?}");
+        assert_eq!(diags[0].rule_id, "CX008");
+        assert_eq!(diags[0].severity, Severity::Warning);
+        assert!(diags[0].message.contains("x::dispatch"));
+        assert!(diags[0].message.contains("6"));
+        assert!(diags[0].message.contains("budget 5"));
+    }
+
+    #[test]
+    fn cx008_quiet_when_count_at_or_below_budget() {
+        let mut items = vec![func("dispatch", 5)];
+        for i in 0..5 {
+            // exactly at budget
+            items.push(callsite(&format!("c{i}"), "x::dispatch"));
+        }
+        let air = air_with(Some("x::core"), items);
+        let section = cx008_section(5, vec!["x::cli::*"]);
+        assert!(cx008(&air, &section, CheckMode::Human).is_empty());
+    }
+
+    #[test]
+    fn cx008_orchestration_path_silences_diagnostic() {
+        // 10 call sites, budget 3, but module matches orchestration → silent.
+        let mut items = vec![func("dispatch", 5)];
+        for i in 0..10 {
+            items.push(callsite(&format!("c{i}"), "x::dispatch"));
+        }
+        let air = air_with(Some("x::cli::dispatch"), items);
+        let section = cx008_section(3, vec!["x::cli::*"]);
+        assert!(cx008(&air, &section, CheckMode::Human).is_empty());
+    }
+
+    #[test]
+    fn cx008_agent_strict_elevates_to_fatal() {
+        let mut items = vec![func("dispatch", 5)];
+        for i in 0..6 {
+            items.push(callsite(&format!("c{i}"), "x::dispatch"));
+        }
+        let air = air_with(Some("x::core"), items);
+        let section = cx008_section(5, vec!["x::cli::*"]);
+        let diags = cx008(&air, &section, CheckMode::AgentStrict);
+        assert_eq!(diags.len(), 1);
+        assert_eq!(diags[0].severity, Severity::Fatal);
+    }
+
+    #[test]
+    fn cx008_only_counts_call_sites_in_owning_function() {
+        // Two functions; only one issues lots of call sites.
+        let mut items = vec![func("dispatch", 5), func("tiny", 5)];
+        for i in 0..6 {
+            items.push(callsite(&format!("c{i}"), "x::dispatch"));
+        }
+        items.push(callsite("only", "x::tiny"));
+        let air = air_with(Some("x::core"), items);
+        let section = cx008_section(5, vec!["x::cli::*"]);
+        let diags = cx008(&air, &section, CheckMode::Human);
+        assert_eq!(diags.len(), 1, "got {diags:?}");
+        assert!(diags[0].message.contains("x::dispatch"));
+        assert!(!diags[0].message.contains("x::tiny"));
     }
 }

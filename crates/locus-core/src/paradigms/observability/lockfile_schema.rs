@@ -15,12 +15,21 @@
 //! - `forbidden_log_targets`: macro path patterns considered raw/inappropriate
 //!   (the `println!`/`dbg!` family by default). Anything in this list, fired
 //!   from a non-observer file, trips OB001.
+//! - `metric_macro_patterns` / `metric_owner_paths`: macro callee patterns
+//!   that emit metrics (`metrics::counter!`, `metrics::histogram!`,
+//!   `metrics::gauge!` by default) and the modules accepted as the metric
+//!   owner. OB002 fires on a metric emission landing outside the owner.
+//! - `event_macro_patterns` / `event_owner_paths`: matching pair for
+//!   event-emission macros (`event!`, `emit!`, `publish!`,
+//!   `tracing::event!` by default). OB003 fires on an event emission
+//!   landing outside the owner.
 //!
-//! Both fields default to a sensible baseline: `observer_paths` empty (the
+//! All fields default to a sensible baseline: `observer_paths` empty (the
 //! user declares observer modules explicitly), `forbidden_log_targets` to the
-//! print/dbg family. When both end up empty (e.g. the user has explicitly
-//! cleared the defaults to disable OB001) the rule short-circuits — OB stays
-//! silent on un-onboarded code rather than nagging.
+//! print/dbg family, `metric_macro_patterns` and `event_macro_patterns` to
+//! their default seeds. When the relevant pair becomes empty (e.g. the user
+//! has cleared the defaults to disable OB00n) the rule short-circuits — OB
+//! stays silent on un-onboarded code rather than nagging.
 
 // ot: canonical
 
@@ -43,6 +52,29 @@ pub struct ObSection {
     /// user lockfile decision, not a fact-kind taxonomy.
     #[serde(default = "default_forbidden_log_targets")]
     pub forbidden_log_targets: Vec<String>,
+    /// Macro-callee patterns identifying *metric emission* sites
+    /// (`metrics::counter!`, `metrics::histogram!`, `metrics::gauge!`).
+    /// OB002 matches each `AirItem::CallSite` of `CallKind::Macro` against
+    /// these patterns. Default is the `metrics` crate family — the user
+    /// can replace it with whatever macro names their project uses.
+    #[serde(default = "default_metric_macro_patterns")]
+    pub metric_macro_patterns: Vec<String>,
+    /// Module patterns where metric emission is the accepted owner. OB002
+    /// fires when a `metric_macro_patterns` call lands outside any of
+    /// these. Empty keeps OB002 silent.
+    #[serde(default)]
+    pub metric_owner_paths: Vec<String>,
+    /// Macro-callee patterns identifying *event emission* sites — typically
+    /// `event!`, `emit!`, `publish!`, or any project-specific event macro.
+    /// OB003 matches each `AirItem::CallSite` of `CallKind::Macro` against
+    /// these patterns.
+    #[serde(default = "default_event_macro_patterns")]
+    pub event_macro_patterns: Vec<String>,
+    /// Module patterns where event emission is the accepted owner. OB003
+    /// fires when an `event_macro_patterns` call lands outside any of
+    /// these. Empty keeps OB003 silent.
+    #[serde(default)]
+    pub event_owner_paths: Vec<String>,
 }
 
 impl Default for ObSection {
@@ -50,6 +82,10 @@ impl Default for ObSection {
         Self {
             observer_paths: Vec::new(),
             forbidden_log_targets: default_forbidden_log_targets(),
+            metric_macro_patterns: default_metric_macro_patterns(),
+            metric_owner_paths: Vec::new(),
+            event_macro_patterns: default_event_macro_patterns(),
+            event_owner_paths: Vec::new(),
         }
     }
 }
@@ -65,6 +101,31 @@ pub fn default_forbidden_log_targets() -> Vec<String> {
         "print".to_string(),
         "eprint".to_string(),
         "dbg".to_string(),
+    ]
+}
+
+/// Default metric-emission macro patterns. Aligned with the `metrics`
+/// crate family — the most common Rust convention. Pattern shape is the
+/// rendered callee text the visitor records on `AirItem::CallSite` of
+/// `CallKind::Macro`, so `metrics::counter!` is recorded as
+/// `metrics::counter`.
+pub fn default_metric_macro_patterns() -> Vec<String> {
+    vec![
+        "metrics::counter".to_string(),
+        "metrics::histogram".to_string(),
+        "metrics::gauge".to_string(),
+    ]
+}
+
+/// Default event-emission macro patterns. Covers the common bare
+/// `event!`/`emit!`/`publish!` shapes plus `tracing::event!` (the lower
+/// level the higher-level `tracing::info!` etc. desugar through).
+pub fn default_event_macro_patterns() -> Vec<String> {
+    vec![
+        "event".to_string(),
+        "emit".to_string(),
+        "publish".to_string(),
+        "tracing::event".to_string(),
     ]
 }
 
@@ -205,6 +266,7 @@ mod tests {
         let section = ObSection {
             observer_paths: vec!["tests::*".into()],
             forbidden_log_targets: vec!["tracing::info".into()],
+            ..ObSection::default()
         };
         assert_eq!(
             section.effective_forbidden_log_targets(),

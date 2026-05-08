@@ -14,7 +14,7 @@
 
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct CrSection {
     /// Module patterns matching `AirFile.module_path` for files declared as
     /// composition roots. Pattern syntax mirrors DG/UT: simple suffix
@@ -29,6 +29,29 @@ pub struct CrSection {
     /// need to set this when overriding the canonical seven.
     #[serde(default)]
     pub service_suffixes: Vec<String>,
+
+    /// Maximum number of `Construct` actions a single function inside a
+    /// composition-root module may emit before CR002 fires. Even a
+    /// legitimate composition root should be split if one function wires
+    /// 20+ services in a single block. Default: 12.
+    #[serde(default = "default_wiring_density_threshold")]
+    pub wiring_density_threshold: u32,
+}
+
+/// Default wiring-density threshold for CR002. Heuristic — reasonable for
+/// most app shells; override per project.
+pub fn default_wiring_density_threshold() -> u32 {
+    12
+}
+
+impl Default for CrSection {
+    fn default() -> Self {
+        Self {
+            composition_root_paths: Vec::new(),
+            service_suffixes: Vec::new(),
+            wiring_density_threshold: default_wiring_density_threshold(),
+        }
+    }
 }
 
 /// The canonical seven service-shaped suffixes per the spec. Used when the
@@ -138,6 +161,7 @@ mod tests {
         let section = CrSection {
             composition_root_paths: Vec::new(),
             service_suffixes: vec!["Gateway".into(), "Provider".into()],
+            ..Default::default()
         };
         assert_eq!(
             effective_service_suffixes(&section),

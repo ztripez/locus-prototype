@@ -9,10 +9,13 @@
 //!
 //! Phase scope so far:
 //! - AB001: trait declared in the workspace has exactly one impl.
+//! - AB002: type named after a generic role (`*Manager`, `*Service`,
+//!   `*Processor`, …) without an accepted abstraction record.
 //!
 //! `init` returns `Null`: there's no automatic inference for "this
-//! single-impl trait is a real port." Acceptance is a deliberate user
-//! action, mirroring DG/MO/UT.
+//! single-impl trait is a real port" or "this `*Manager` is the right
+//! domain term." Acceptance is a deliberate user action, mirroring
+//! DG/MO/UT.
 
 // ot: canonical
 
@@ -42,6 +45,8 @@ impl Paradigm for AbstractionDiscipline {
     fn check(&self, air: &AirWorkspace, lockfile: &Lockfile, mode: CheckMode) -> Vec<Diagnostic> {
         let section: lockfile_schema::AbSection =
             lockfile.paradigm_section(AB_PREFIX).unwrap_or_default();
-        rules::ab001(air, &section, mode)
+        let mut diags = rules::ab001(air, &section, mode);
+        diags.extend(rules::ab002(air, &section, mode));
+        diags
     }
 }

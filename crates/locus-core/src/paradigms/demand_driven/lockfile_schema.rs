@@ -14,7 +14,7 @@
 
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct DaSection {
     /// Master switch for the paradigm. When `false` (the default), every DA
     /// rule short-circuits to an empty diagnostic list — same lockfile-driven
@@ -31,6 +31,83 @@ pub struct DaSection {
     /// follow-up note in code review, not here).
     #[serde(default)]
     pub accepted_single_impl: Vec<String>,
+
+    /// Function-name globs for DA002 — names that look like factory
+    /// functions (`create_*`, `make_*`, `*_factory`, `build_*`). DA002
+    /// fires when a function whose name matches any pattern only ever
+    /// constructs **one** type (i.e. the abstraction has no variation —
+    /// it's a renamed constructor). Empty list keeps DA002 silent.
+    #[serde(default = "default_factory_name_patterns")]
+    pub factory_name_patterns: Vec<String>,
+
+    /// Type-name globs for DA007 — names that look like strategy /
+    /// policy / mode enums. DA007 fires when an enum whose name matches
+    /// any pattern has **exactly one** variant (a stub abstraction — no
+    /// actual variation, just speculative shape). Empty list keeps DA007
+    /// silent.
+    #[serde(default = "default_strategy_name_patterns")]
+    pub strategy_name_patterns: Vec<String>,
+}
+
+impl Default for DaSection {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            accepted_single_impl: Vec::new(),
+            factory_name_patterns: default_factory_name_patterns(),
+            strategy_name_patterns: default_strategy_name_patterns(),
+        }
+    }
+}
+
+/// Seeded factory-name patterns for DA002 — the canonical "looks like a
+/// constructor" naming conventions. Glob syntax (`*` at either end) per
+/// [`matches_name_glob`].
+pub fn default_factory_name_patterns() -> Vec<String> {
+    vec![
+        "create_*".into(),
+        "make_*".into(),
+        "*_factory".into(),
+        "build_*".into(),
+    ]
+}
+
+/// Seeded strategy-name patterns for DA007 — the canonical "looks like a
+/// pluggable variation" enum-name conventions.
+pub fn default_strategy_name_patterns() -> Vec<String> {
+    vec!["*Strategy".into(), "*Mode".into(), "*Policy".into()]
+}
+
+/// Glob syntax for function/type names: `*` may appear at either end of
+/// the pattern. Mirrors `module_ownership::lockfile_schema::matches_name_glob`,
+/// duplicated locally so DA stays decoupled from MO.
+/// - `foo` — exact name match
+/// - `foo*` — name starts with `foo`
+/// - `*foo` — name ends with `foo`
+/// - `*foo*` — name contains `foo`
+/// - `*` — anything
+pub fn matches_name_glob(pattern: &str, name: &str) -> bool {
+    if pattern == "*" {
+        return true;
+    }
+    let leading = pattern.starts_with('*');
+    let trailing = pattern.ends_with('*');
+    let body = match (leading, trailing) {
+        (true, true) if pattern.len() >= 2 => &pattern[1..pattern.len() - 1],
+        (true, false) => &pattern[1..],
+        (false, true) => &pattern[..pattern.len() - 1],
+        (false, false) => pattern,
+        _ => return false,
+    };
+    if body.is_empty() {
+        return false;
+    }
+    match (leading, trailing) {
+        (true, true) => name.contains(body),
+        (true, false) => name.ends_with(body),
+        (false, true) => name.starts_with(body),
+        (false, false) => name == body,
+    }
 }
 
 /// Pattern syntax: simple suffix wildcard.
@@ -72,6 +149,10 @@ mod tests {
         let s = DaSection::default();
         assert!(!s.enabled);
         assert!(s.accepted_single_impl.is_empty());
+        // Factory/strategy pattern lists default to seeded values so the
+        // opt-in flip is just `enabled = true`.
+        assert!(!s.factory_name_patterns.is_empty());
+        assert!(!s.strategy_name_patterns.is_empty());
     }
 
     #[test]
@@ -83,6 +164,7 @@ mod tests {
                 "my_crate::ports::EmailSender".into(), // by full symbol
                 "my_crate::infra::*".into(),           // by suffix wildcard
             ],
+            ..DaSection::default()
         };
         // Short-name pattern hits short name, regardless of symbol.
         assert!(s.is_accepted("any::module::Clock", "Clock"));
@@ -109,6 +191,7 @@ mod tests {
         let s = DaSection {
             enabled: true,
             accepted_single_impl: vec!["Clock".into(), "my_crate::ports::*".into()],
+            ..DaSection::default()
         };
         let j = serde_json::to_value(&s).unwrap();
         let back: DaSection = serde_json::from_value(j).unwrap();
@@ -117,12 +200,38 @@ mod tests {
 
     #[test]
     fn missing_fields_deserialize_to_default() {
-        // Empty object → default (silent) section.
+        // Empty object → default (silent-ish) section: `enabled` false, but
+        // factory/strategy seed lists populated. The seeds default to a
+        // non-empty list so opting `enabled = true` is the only switch
+        // users need to flip — no extra "now seed the patterns" step.
         let s: DaSection = serde_json::from_str("{}").unwrap();
         assert_eq!(s, DaSection::default());
         // Partial object — only `enabled` set, `accepted_single_impl` defaults.
         let s: DaSection = serde_json::from_str(r#"{"enabled": true}"#).unwrap();
         assert!(s.enabled);
         assert!(s.accepted_single_impl.is_empty());
+        // Seeded patterns survive the partial JSON.
+        assert!(!s.factory_name_patterns.is_empty());
+        assert!(!s.strategy_name_patterns.is_empty());
+    }
+
+    // ---- name-glob helper ----
+
+    #[test]
+    fn name_glob_matches_prefix_and_suffix_shapes() {
+        assert!(matches_name_glob("create_*", "create_widget"));
+        assert!(matches_name_glob("create_*", "create_"));
+        assert!(!matches_name_glob("create_*", "make_widget"));
+
+        assert!(matches_name_glob("*_factory", "widget_factory"));
+        assert!(matches_name_glob("*_factory", "_factory"));
+        assert!(!matches_name_glob("*_factory", "factory_widget"));
+
+        assert!(matches_name_glob("*Strategy", "RetryStrategy"));
+        assert!(matches_name_glob("*Strategy", "Strategy"));
+        assert!(!matches_name_glob("*Strategy", "StrategyRetry"));
+
+        assert!(matches_name_glob("*", "anything"));
+        assert!(!matches_name_glob("**", "anything")); // malformed
     }
 }

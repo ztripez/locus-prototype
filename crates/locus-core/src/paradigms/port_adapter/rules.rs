@@ -3,10 +3,15 @@
 //! Implemented:
 //! - [`pa001`]: trait declared and immediately implemented in the same file
 //!   (co-located port and adapter — the port wasn't actually abstracted).
+//! - [`pa002`]: application/domain file imports a concrete adapter framework
+//!   (`reqwest::*`, `sqlx::*`, …) — that's an adapter detail, not domain
+//!   concern.
+//! - [`pa004`]: an adapter type is constructed outside any composition
+//!   root / bootstrap / composition module.
 
 use std::collections::BTreeMap;
 
-use locus_air::{AirImpl, AirItem, AirWorkspace, TypeKind};
+use locus_air::{ActionKind, AirImpl, AirItem, AirWorkspace, TypeKind};
 
 use super::lockfile_schema::{PaSection, matches_pattern};
 use crate::diagnostics::{CheckMode, Diagnostic, Severity};
@@ -111,6 +116,178 @@ fn build_trait_to_impls(air: &AirWorkspace) -> BTreeMap<&str, Vec<&AirImpl>> {
                 };
                 let short = tp.rsplit("::").next().unwrap_or(tp);
                 out.entry(short).or_default().push(imp);
+            }
+        }
+    }
+    out
+}
+
+/// PA002 — concrete adapter import in application/domain layer.
+///
+/// For each `AirItem::Import` in a file whose `module_path` matches a pattern
+/// in `application_paths`, fire when the import's `path` matches a pattern in
+/// `concrete_adapter_patterns`.
+///
+/// Severity: Fatal — application/domain code reaching directly into a
+/// concrete adapter (`reqwest::Client`, `sqlx::PgPool`, …) breaks the
+/// port/adapter split that PA defends. Same justification as BO001/DG001
+/// for forbidden edges.
+///
+/// Silent until BOTH `application_paths` and `concrete_adapter_patterns`
+/// are populated.
+pub fn pa002(air: &AirWorkspace, section: &PaSection, mode: CheckMode) -> Vec<Diagnostic> {
+    if section.application_paths.is_empty() || section.concrete_adapter_patterns.is_empty() {
+        return Vec::new();
+    }
+    let mut out = Vec::new();
+    for pkg in &air.packages {
+        for file in &pkg.files {
+            let Some(module_path) = file.module_path.as_deref() else {
+                continue;
+            };
+            let Some(application_pattern) = section
+                .application_paths
+                .iter()
+                .find(|pat| matches_pattern(pat, module_path))
+            else {
+                continue;
+            };
+            for item in &file.items {
+                let AirItem::Import(imp) = item else {
+                    continue;
+                };
+                let Some(adapter_pattern) = section
+                    .concrete_adapter_patterns
+                    .iter()
+                    .find(|pat| matches_pattern(pat, &imp.path))
+                else {
+                    continue;
+                };
+                out.push(Diagnostic {
+                    rule_id: "PA002".to_string(),
+                    severity: mode.elevate(Severity::Fatal),
+                    span: imp.span.clone(),
+                    concept: None,
+                    message: format!(
+                        "application/domain module `{module_path}` imports concrete \
+                         adapter `{}`",
+                        imp.path
+                    ),
+                    why: vec![
+                        format!(
+                            "module `{module_path}` matches application_paths \
+                             pattern `{application_pattern}`"
+                        ),
+                        format!(
+                            "import `{}` matches concrete_adapter_patterns \
+                             pattern `{adapter_pattern}`",
+                            imp.path
+                        ),
+                        "application/domain code must depend on ports (traits), \
+                         not concrete adapters; the adapter belongs at the \
+                         boundary"
+                            .into(),
+                    ],
+                    suggested_fix: Some(format!(
+                        "introduce a port (trait) the application depends on, \
+                         move the `{}` usage into an infrastructure adapter \
+                         that implements the port; if the import is genuinely \
+                         a non-adapter utility, narrow \
+                         `paradigms.PA.concrete_adapter_patterns` in `locus.lock`",
+                        imp.path
+                    )),
+                });
+            }
+        }
+    }
+    out
+}
+
+/// PA004 — adapter construction outside composition root.
+///
+/// For each `AirItem::TruthAction { action: Construct, target }`, fire when
+/// `target` matches a pattern in `adapter_type_patterns` AND the action's
+/// enclosing file (`AirFile.module_path`) does NOT match any pattern in
+/// `accepted_construction_paths`.
+///
+/// Severity: Fatal — adapters constructed outside the composition root
+/// undermine the whole point of having one.
+///
+/// Silent when `adapter_type_patterns` is empty. Defaults populate
+/// `accepted_construction_paths` so the user only needs to opt in by listing
+/// adapter types.
+pub fn pa004(air: &AirWorkspace, section: &PaSection, mode: CheckMode) -> Vec<Diagnostic> {
+    if section.adapter_type_patterns.is_empty() {
+        return Vec::new();
+    }
+    let mut out = Vec::new();
+    for pkg in &air.packages {
+        for file in &pkg.files {
+            let module_path = file.module_path.as_deref().unwrap_or("");
+            // If the file itself is an accepted construction path, skip
+            // every action it contains.
+            if section
+                .accepted_construction_paths
+                .iter()
+                .any(|pat| matches_pattern(pat, module_path))
+            {
+                continue;
+            }
+            for item in &file.items {
+                let AirItem::TruthAction(a) = item else {
+                    continue;
+                };
+                if a.action != ActionKind::Construct {
+                    continue;
+                }
+                let Some(adapter_pattern) = section
+                    .adapter_type_patterns
+                    .iter()
+                    .find(|pat| matches_pattern(pat, &a.target))
+                else {
+                    continue;
+                };
+                let function_label = a
+                    .function
+                    .as_deref()
+                    .unwrap_or("(no enclosing function recorded)");
+                let module_label = if module_path.is_empty() {
+                    "(unknown module)"
+                } else {
+                    module_path
+                };
+                out.push(Diagnostic {
+                    rule_id: "PA004".to_string(),
+                    severity: mode.elevate(Severity::Fatal),
+                    span: a.span.clone(),
+                    concept: None,
+                    message: format!(
+                        "adapter `{}` constructed in module `{module_label}` \
+                         outside any accepted construction path",
+                        a.target
+                    ),
+                    why: vec![
+                        format!(
+                            "target `{}` matches adapter_type_patterns pattern \
+                             `{adapter_pattern}`",
+                            a.target
+                        ),
+                        format!(
+                            "module `{module_label}` matches none of the \
+                             `accepted_construction_paths` patterns"
+                        ),
+                        format!("enclosing function: `{function_label}`"),
+                    ],
+                    suggested_fix: Some(format!(
+                        "move the construction of `{}` into a composition \
+                         root (e.g. `main`, a `bootstrap` module, or a \
+                         declared `composition::*` module); if `{module_label}` \
+                         is itself a legitimate composition site, add it to \
+                         `paradigms.PA.accepted_construction_paths` in \
+                         `locus.lock`",
+                        a.target
+                    )),
+                });
             }
         }
     }
@@ -240,6 +417,7 @@ mod tests {
         )]);
         let section = PaSection {
             accepted_colocated_traits: vec!["x::utils::*".into()],
+            ..Default::default()
         };
         assert!(pa001(&air, &section, CheckMode::Human).is_empty());
     }
@@ -257,6 +435,7 @@ mod tests {
         )]);
         let section = PaSection {
             accepted_colocated_traits: vec!["Helper".into()],
+            ..Default::default()
         };
         assert!(pa001(&air, &section, CheckMode::Human).is_empty());
     }
@@ -328,5 +507,275 @@ mod tests {
         let fix = d.suggested_fix.as_deref().unwrap_or("");
         assert!(fix.contains("ports"));
         assert!(fix.contains("accepted_colocated_traits"));
+    }
+
+    // ----- PA002 / PA004 helpers -----
+
+    fn import_item(path: &str, file: &str, line: u32) -> AirItem {
+        use locus_air::AirImport;
+        AirItem::Import(AirImport {
+            path: path.into(),
+            visibility: Visibility::Private,
+            span: AirSpan::new(file, line, line),
+        })
+    }
+
+    fn construct_action(target: &str, function: &str, file: &str, line: u32) -> AirItem {
+        use locus_air::AirTruthAction;
+        AirItem::TruthAction(AirTruthAction {
+            action: ActionKind::Construct,
+            target: target.into(),
+            function: Some(function.into()),
+            span: AirSpan::new(file, line, line),
+            confidence: 0.95,
+            reasons: vec!["struct literal".into()],
+        })
+    }
+
+    fn workspace_with_module(module_path: &str, file: &str, items: Vec<AirItem>) -> AirWorkspace {
+        AirWorkspace {
+            schema_version: AIR_SCHEMA_VERSION,
+            packages: vec![AirPackage {
+                name: "x".into(),
+                version: "0".into(),
+                root_dir: "/".into(),
+                files: vec![AirFile {
+                    path: file.into(),
+                    module_path: Some(module_path.into()),
+                    items,
+                    hints: Vec::new(),
+                    parse_error: None,
+                    line_count: 1,
+                }],
+            }],
+            facts: Vec::new(),
+        }
+    }
+
+    // ----- PA002 -----
+
+    #[test]
+    fn pa002_fires_when_application_imports_concrete_adapter() {
+        let air = workspace_with_module(
+            "crate::application::user",
+            "src/app.rs",
+            vec![import_item("reqwest::Client", "src/app.rs", 4)],
+        );
+        let section = PaSection {
+            application_paths: vec!["crate::application::*".into()],
+            concrete_adapter_patterns: vec!["reqwest::*".into()],
+            ..Default::default()
+        };
+        let diags = pa002(&air, &section, CheckMode::Human);
+        assert_eq!(diags.len(), 1);
+        assert_eq!(diags[0].rule_id, "PA002");
+        assert_eq!(diags[0].severity, Severity::Fatal);
+        assert!(diags[0].message.contains("reqwest::Client"));
+        assert!(
+            diags[0]
+                .why
+                .iter()
+                .any(|w| w.contains("crate::application::*"))
+        );
+    }
+
+    #[test]
+    fn pa002_quiet_when_import_outside_application_layer() {
+        // Infrastructure layer is allowed to import concrete adapters.
+        let air = workspace_with_module(
+            "crate::infrastructure::http_client",
+            "src/inf.rs",
+            vec![import_item("reqwest::Client", "src/inf.rs", 1)],
+        );
+        let section = PaSection {
+            application_paths: vec!["crate::application::*".into()],
+            concrete_adapter_patterns: vec!["reqwest::*".into()],
+            ..Default::default()
+        };
+        assert!(pa002(&air, &section, CheckMode::Human).is_empty());
+    }
+
+    #[test]
+    fn pa002_silent_when_application_paths_empty() {
+        let air = workspace_with_module(
+            "crate::application::user",
+            "src/app.rs",
+            vec![import_item("reqwest::Client", "src/app.rs", 1)],
+        );
+        let section = PaSection {
+            application_paths: vec![],
+            concrete_adapter_patterns: vec!["reqwest::*".into()],
+            ..Default::default()
+        };
+        assert!(pa002(&air, &section, CheckMode::Human).is_empty());
+    }
+
+    #[test]
+    fn pa002_silent_when_concrete_adapter_patterns_empty() {
+        let air = workspace_with_module(
+            "crate::application::user",
+            "src/app.rs",
+            vec![import_item("reqwest::Client", "src/app.rs", 1)],
+        );
+        let section = PaSection {
+            application_paths: vec!["crate::application::*".into()],
+            concrete_adapter_patterns: vec![],
+            ..Default::default()
+        };
+        assert!(pa002(&air, &section, CheckMode::Human).is_empty());
+    }
+
+    #[test]
+    fn pa002_quiet_when_application_imports_non_adapter_path() {
+        let air = workspace_with_module(
+            "crate::application::user",
+            "src/app.rs",
+            vec![import_item("crate::domain::User", "src/app.rs", 1)],
+        );
+        let section = PaSection {
+            application_paths: vec!["crate::application::*".into()],
+            concrete_adapter_patterns: vec!["sqlx::*".into(), "reqwest::*".into()],
+            ..Default::default()
+        };
+        assert!(pa002(&air, &section, CheckMode::Human).is_empty());
+    }
+
+    #[test]
+    fn pa002_agent_strict_keeps_fatal() {
+        let air = workspace_with_module(
+            "crate::application::user",
+            "src/app.rs",
+            vec![import_item("sqlx::PgPool", "src/app.rs", 1)],
+        );
+        let section = PaSection {
+            application_paths: vec!["crate::application::*".into()],
+            concrete_adapter_patterns: vec!["sqlx::*".into()],
+            ..Default::default()
+        };
+        let diags = pa002(&air, &section, CheckMode::AgentStrict);
+        assert_eq!(diags.len(), 1);
+        assert_eq!(diags[0].severity, Severity::Fatal);
+    }
+
+    // ----- PA004 -----
+
+    #[test]
+    fn pa004_fires_when_adapter_constructed_outside_root() {
+        let air = workspace_with_module(
+            "crate::handler",
+            "src/handler.rs",
+            vec![construct_action(
+                "PgUserRepository",
+                "crate::handler::create_user",
+                "src/handler.rs",
+                12,
+            )],
+        );
+        let section = PaSection {
+            adapter_type_patterns: vec!["*::PgUserRepository".into()],
+            ..Default::default()
+        };
+        let diags = pa004(&air, &section, CheckMode::Human);
+        assert_eq!(diags.len(), 1);
+        assert_eq!(diags[0].rule_id, "PA004");
+        assert_eq!(diags[0].severity, Severity::Fatal);
+        assert!(diags[0].message.contains("PgUserRepository"));
+        assert!(diags[0].message.contains("crate::handler"));
+    }
+
+    #[test]
+    fn pa004_quiet_when_constructed_inside_default_main() {
+        let air = workspace_with_module(
+            "crate::main",
+            "src/main.rs",
+            vec![construct_action(
+                "PgUserRepository",
+                "crate::main::main",
+                "src/main.rs",
+                3,
+            )],
+        );
+        let section = PaSection {
+            adapter_type_patterns: vec!["*::PgUserRepository".into()],
+            ..Default::default()
+        };
+        assert!(pa004(&air, &section, CheckMode::Human).is_empty());
+    }
+
+    #[test]
+    fn pa004_quiet_inside_bootstrap_module() {
+        let air = workspace_with_module(
+            "crate::bootstrap::wire",
+            "src/bootstrap/wire.rs",
+            vec![construct_action(
+                "PgUserRepository",
+                "crate::bootstrap::wire::build",
+                "src/bootstrap/wire.rs",
+                4,
+            )],
+        );
+        let section = PaSection {
+            adapter_type_patterns: vec!["*::PgUserRepository".into()],
+            ..Default::default()
+        };
+        assert!(pa004(&air, &section, CheckMode::Human).is_empty());
+    }
+
+    #[test]
+    fn pa004_silent_when_adapter_type_patterns_empty() {
+        let air = workspace_with_module(
+            "crate::handler",
+            "src/handler.rs",
+            vec![construct_action(
+                "PgUserRepository",
+                "crate::handler::create_user",
+                "src/handler.rs",
+                12,
+            )],
+        );
+        let section = PaSection::default();
+        assert!(pa004(&air, &section, CheckMode::Human).is_empty());
+    }
+
+    #[test]
+    fn pa004_user_supplied_construction_paths_override_default() {
+        // Override the default `*::main` etc. with `crate::wire` only;
+        // construction in `main` should now fire.
+        let air = workspace_with_module(
+            "crate::main",
+            "src/main.rs",
+            vec![construct_action(
+                "PgUserRepository",
+                "crate::main::main",
+                "src/main.rs",
+                3,
+            )],
+        );
+        let section = PaSection {
+            adapter_type_patterns: vec!["*::PgUserRepository".into()],
+            accepted_construction_paths: vec!["crate::wire".into()],
+            ..Default::default()
+        };
+        let diags = pa004(&air, &section, CheckMode::Human);
+        assert_eq!(diags.len(), 1);
+    }
+
+    #[test]
+    fn pa004_quiet_when_target_does_not_match_adapter_pattern() {
+        let air = workspace_with_module(
+            "crate::handler",
+            "src/handler.rs",
+            vec![construct_action(
+                "User",
+                "crate::handler::create_user",
+                "src/handler.rs",
+                7,
+            )],
+        );
+        let section = PaSection {
+            adapter_type_patterns: vec!["*::PgUserRepository".into()],
+            ..Default::default()
+        };
+        assert!(pa004(&air, &section, CheckMode::Human).is_empty());
     }
 }

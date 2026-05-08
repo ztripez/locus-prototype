@@ -13,7 +13,7 @@
 
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct BoSection {
     /// Module patterns identifying domain/application files. Matched against
     /// `AirFile.module_path`. Examples: `"crate::domain::*"`,
@@ -25,6 +25,46 @@ pub struct BoSection {
     /// `"reqwest::*"`, `"tonic::*"`.
     #[serde(default)]
     pub forbidden_in_domain: Vec<String>,
+    /// Persistence-shaped type-text patterns that must not appear in the
+    /// signature of a function defined inside a `domain_paths` file. Matched
+    /// against `AirFunction.params` type texts and `AirFunction.return_type`.
+    /// Examples: `"sqlx::PgRow"`, `"diesel::*"`, `"sea_orm::*"`. BO002's
+    /// signal — silent until populated.
+    #[serde(default)]
+    pub persistence_type_patterns: Vec<String>,
+    /// Module patterns identifying canonical (domain) types. Matched against
+    /// `AirType.span`'s containing `AirFile.module_path`. BO004's gate — fires
+    /// when one of these types carries a derive listed in
+    /// `forbidden_canonical_derives`. Silent until populated.
+    #[serde(default)]
+    pub canonical_paths: Vec<String>,
+    /// Derive names that must NOT appear on canonical types. Defaults to the
+    /// serde-shaped trio + utoipa's `ToSchema` because canonical domain types
+    /// shouldn't depend on serialization/schema frameworks.
+    #[serde(default = "default_forbidden_canonical_derives")]
+    pub forbidden_canonical_derives: Vec<String>,
+}
+
+/// Default derive list for [`BoSection::forbidden_canonical_derives`]. Used by
+/// BO004 to fire on canonical types annotated with serialization/schema
+/// derives. Override via the lockfile if you accept these on domain types.
+pub fn default_forbidden_canonical_derives() -> Vec<String> {
+    ["Serialize", "Deserialize", "Schema", "ToSchema"]
+        .iter()
+        .map(|s| (*s).to_string())
+        .collect()
+}
+
+impl Default for BoSection {
+    fn default() -> Self {
+        Self {
+            domain_paths: Vec::new(),
+            forbidden_in_domain: Vec::new(),
+            persistence_type_patterns: Vec::new(),
+            canonical_paths: Vec::new(),
+            forbidden_canonical_derives: default_forbidden_canonical_derives(),
+        }
+    }
 }
 
 /// Pattern syntax: segment-aligned wildcards.

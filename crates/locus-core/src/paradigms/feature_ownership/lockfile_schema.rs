@@ -18,6 +18,15 @@ pub struct FoSection {
     /// keeps every FO rule silent.
     #[serde(default)]
     pub features: Vec<FoFeature>,
+
+    /// Module patterns identifying *shared* (cross-feature) regions of the
+    /// workspace — DTO crates, normalized-event payloads, common utility
+    /// types. FO004 fires when a type defined inside one of these regions
+    /// has a field whose `type_text` mentions a symbol owned by a declared
+    /// feature: a shared module that knows about feature internals stops
+    /// being shared. Empty list keeps FO004 silent.
+    #[serde(default)]
+    pub shared_paths: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

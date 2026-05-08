@@ -10,6 +10,12 @@
 //!   "string-shaped" / catch-all pattern. Lockfile-driven via
 //!   [`lockfile_schema::ErSection::forbidden_error_types`]; silent until
 //!   that list is populated.
+//! - ER003: a domain enum embeds a boundary error type as a variant field.
+//!   Lockfile-driven via [`lockfile_schema::ErSection::domain_paths`] plus
+//!   [`lockfile_schema::ErSection::boundary_error_patterns`]; silent until
+//!   both are populated.
+//! - ER007: a variant name appears on two or more `*Error*` enums in the
+//!   workspace (taxonomy drift). Heuristic and lockfile-free.
 
 // ot: canonical
 
@@ -42,6 +48,8 @@ impl Paradigm for ErrorTaxonomy {
             lockfile.paradigm_section(ER_PREFIX).unwrap_or_default();
         let mut diags = rules::er001(air, &section, mode);
         diags.extend(rules::er002(air, &section, mode));
+        diags.extend(rules::er003(air, &section, mode));
+        diags.extend(rules::er007(air, mode));
         diags
     }
 }

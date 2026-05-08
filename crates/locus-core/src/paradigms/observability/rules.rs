@@ -7,8 +7,17 @@
 //!   `eprintln!`, `print!`, `eprint!`, `dbg!` — but the lockfile decides.
 //!   The raw-vs-structured distinction is a *user policy* (encoded as
 //!   patterns), not a fact taxonomy.
+//! - [`ob002`]: a metric-emission macro (`metrics::counter!`,
+//!   `metrics::histogram!`, `metrics::gauge!` by default) called from a
+//!   file outside `metric_owner_paths`. The signal is "metrics emission
+//!   landing outside the accepted owner module."
+//! - [`ob003`]: same shape for event-emission macros — `event!`, `emit!`,
+//!   `publish!`, `tracing::event!` by default — gated by
+//!   `event_owner_paths`.
 
-use locus_air::{AirFact, AirItem, AirSpan, AirWorkspace, FactKind, FactTarget};
+use locus_air::{
+    AirCallSite, AirFact, AirItem, AirSpan, AirWorkspace, CallKind, FactKind, FactTarget,
+};
 
 use super::lockfile_schema::{ObSection, matches_pattern};
 use crate::diagnostics::{CheckMode, Diagnostic, Severity};
@@ -150,9 +159,156 @@ fn diagnostic_for(
     }
 }
 
+/// OB002 — metric emission outside the accepted owner module.
+///
+/// For every `AirItem::CallSite` of `CallKind::Macro` whose `callee` matches
+/// any pattern in `metric_macro_patterns`, fire when the enclosing file's
+/// `module_path` does NOT match any pattern in `metric_owner_paths`. The
+/// shape mirrors OB001 but skips the fact-tier — there's no normalized
+/// `MetricEmission` fact yet, so we read call-sites directly.
+///
+/// Severity: Warning by default; Fatal under `--agent-strict`.
+///
+/// Silent until `metric_owner_paths` is populated — same lockfile-driven
+/// posture as OB001 / FL002 / DG001 / etc.
+pub fn ob002(air: &AirWorkspace, section: &ObSection, mode: CheckMode) -> Vec<Diagnostic> {
+    if section.metric_owner_paths.is_empty() || section.metric_macro_patterns.is_empty() {
+        return Vec::new();
+    }
+    macro_emission_diagnostics(
+        air,
+        &section.metric_macro_patterns,
+        &section.metric_owner_paths,
+        "OB002",
+        "metric emission",
+        "paradigms.OB.metric_macro_patterns",
+        "paradigms.OB.metric_owner_paths",
+        mode,
+    )
+}
+
+/// OB003 — event emission outside the accepted owner module.
+///
+/// Same shape as [`ob002`] but for event-emission macros. Defaults cover
+/// the bare `event!` / `emit!` / `publish!` macros plus `tracing::event!`.
+///
+/// Silent until `event_owner_paths` is populated.
+pub fn ob003(air: &AirWorkspace, section: &ObSection, mode: CheckMode) -> Vec<Diagnostic> {
+    if section.event_owner_paths.is_empty() || section.event_macro_patterns.is_empty() {
+        return Vec::new();
+    }
+    macro_emission_diagnostics(
+        air,
+        &section.event_macro_patterns,
+        &section.event_owner_paths,
+        "OB003",
+        "event emission",
+        "paradigms.OB.event_macro_patterns",
+        "paradigms.OB.event_owner_paths",
+        mode,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn macro_emission_diagnostics(
+    air: &AirWorkspace,
+    macro_patterns: &[String],
+    owner_paths: &[String],
+    rule_id: &str,
+    kind_label: &str,
+    macro_lockfile_path: &str,
+    owner_lockfile_path: &str,
+    mode: CheckMode,
+) -> Vec<Diagnostic> {
+    let mut out = Vec::new();
+    for pkg in &air.packages {
+        for file in &pkg.files {
+            let Some(module_path) = file.module_path.as_deref() else {
+                continue;
+            };
+            if owner_paths
+                .iter()
+                .any(|pat| matches_pattern(pat, module_path))
+            {
+                continue;
+            }
+            for item in &file.items {
+                let AirItem::CallSite(cs) = item else {
+                    continue;
+                };
+                if cs.kind != CallKind::Macro {
+                    continue;
+                }
+                let Some(matched_pattern) = macro_patterns
+                    .iter()
+                    .find(|pat| matches_pattern(pat, &cs.callee))
+                else {
+                    continue;
+                };
+                out.push(diagnostic_for_macro_emission(
+                    cs,
+                    module_path,
+                    matched_pattern,
+                    rule_id,
+                    kind_label,
+                    macro_lockfile_path,
+                    owner_lockfile_path,
+                    mode,
+                ));
+            }
+        }
+    }
+    out
+}
+
+#[allow(clippy::too_many_arguments)]
+fn diagnostic_for_macro_emission(
+    cs: &AirCallSite,
+    module_path: &str,
+    matched_pattern: &str,
+    rule_id: &str,
+    kind_label: &str,
+    macro_lockfile_path: &str,
+    owner_lockfile_path: &str,
+    mode: CheckMode,
+) -> Diagnostic {
+    let function_label = cs
+        .function
+        .as_deref()
+        .unwrap_or("<unknown enclosing function>");
+    Diagnostic {
+        rule_id: rule_id.to_string(),
+        severity: mode.elevate(Severity::Warning),
+        span: cs.span.clone(),
+        concept: None,
+        message: format!(
+            "{kind_label} `{}!` in `{module_path}` (fn `{function_label}`) — \
+             matches `{macro_lockfile_path}` pattern `{matched_pattern}` \
+             but module isn't in `{owner_lockfile_path}`",
+            cs.callee,
+        ),
+        why: vec![
+            format!("callee `{}!` (CallKind::Macro)", cs.callee),
+            format!("matches `{macro_lockfile_path}` pattern `{matched_pattern}`"),
+            format!("module `{module_path}` does not match any `{owner_lockfile_path}` pattern"),
+            format!("enclosing function: `{function_label}`"),
+        ],
+        suggested_fix: Some(format!(
+            "route this {kind_label} through the accepted owner module \
+             (e.g. an observability facade in `{owner_lockfile_path}`), or, \
+             if `{module_path}` is the legitimate owner, add it to \
+             `{owner_lockfile_path}` in `locus.lock`. To stop treating \
+             `{matched_pattern}` as a {kind_label} site, remove it from \
+             `{macro_lockfile_path}`."
+        )),
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::super::lockfile_schema::default_forbidden_log_targets;
+    use super::super::lockfile_schema::{
+        default_event_macro_patterns, default_forbidden_log_targets, default_metric_macro_patterns,
+    };
     use super::*;
     use locus_air::{
         AIR_SCHEMA_VERSION, AirFile, AirFunction, AirPackage, AirSpan, AirWorkspace, Visibility,
@@ -212,6 +368,7 @@ mod tests {
         ObSection {
             observer_paths: vec!["x::cli::*".into()],
             forbidden_log_targets: default_forbidden_log_targets(),
+            ..ObSection::default()
         }
     }
 
@@ -278,6 +435,7 @@ mod tests {
         let section = ObSection {
             observer_paths: vec!["x::cli::*".into()],
             forbidden_log_targets: default_forbidden_log_targets(),
+            ..ObSection::default()
         };
         assert!(ob001(&air, &section, CheckMode::Human).is_empty());
     }
@@ -338,7 +496,223 @@ mod tests {
         let section = ObSection {
             observer_paths: Vec::new(),
             forbidden_log_targets: default_forbidden_log_targets(),
+            ..ObSection::default()
         };
         assert!(ob001(&air, &section, CheckMode::Human).is_empty());
+    }
+
+    fn macro_call(callee: &str, function: Option<&str>, line: u32) -> AirItem {
+        AirItem::CallSite(AirCallSite {
+            callee: callee.into(),
+            kind: CallKind::Macro,
+            function: function.map(|s| s.to_string()),
+            span: AirSpan::new("t.rs", line, line),
+        })
+    }
+
+    fn fn_call(callee: &str, function: Option<&str>, line: u32) -> AirItem {
+        AirItem::CallSite(AirCallSite {
+            callee: callee.into(),
+            kind: CallKind::Function,
+            function: function.map(|s| s.to_string()),
+            span: AirSpan::new("t.rs", line, line),
+        })
+    }
+
+    fn air_with_calls(module: &str, items: Vec<AirItem>) -> AirWorkspace {
+        air_with(Some(module), items, Vec::new())
+    }
+
+    // ─── OB002 ───────────────────────────────────────────────────────────
+
+    #[test]
+    fn ob002_fires_on_metrics_macro_outside_owner_path() {
+        let air = air_with_calls(
+            "x::domain::user",
+            vec![macro_call(
+                "metrics::counter",
+                Some("x::domain::user::tick"),
+                7,
+            )],
+        );
+        let section = ObSection {
+            metric_owner_paths: vec!["x::observability::*".into()],
+            metric_macro_patterns: default_metric_macro_patterns(),
+            ..ObSection::default()
+        };
+        let diags = ob002(&air, &section, CheckMode::Human);
+        assert_eq!(diags.len(), 1);
+        assert_eq!(diags[0].rule_id, "OB002");
+        assert!(diags[0].message.contains("metrics::counter"));
+        assert!(diags[0].message.contains("x::domain::user"));
+    }
+
+    #[test]
+    fn ob002_quiet_inside_metric_owner_path() {
+        let air = air_with_calls(
+            "x::observability::metrics",
+            vec![macro_call(
+                "metrics::counter",
+                Some("x::observability::metrics::bump"),
+                3,
+            )],
+        );
+        let section = ObSection {
+            metric_owner_paths: vec!["x::observability::*".into()],
+            metric_macro_patterns: default_metric_macro_patterns(),
+            ..ObSection::default()
+        };
+        assert!(ob002(&air, &section, CheckMode::Human).is_empty());
+    }
+
+    #[test]
+    fn ob002_silent_when_metric_owner_paths_empty() {
+        let air = air_with_calls(
+            "x::domain::user",
+            vec![macro_call(
+                "metrics::counter",
+                Some("x::domain::user::tick"),
+                7,
+            )],
+        );
+        let section = ObSection::default();
+        assert!(ob002(&air, &section, CheckMode::Human).is_empty());
+    }
+
+    #[test]
+    fn ob002_skips_function_calls() {
+        // Function-shaped calls aren't macro emissions even if their text
+        // matches a metric macro pattern.
+        let air = air_with_calls(
+            "x::domain::user",
+            vec![fn_call(
+                "metrics::counter",
+                Some("x::domain::user::tick"),
+                7,
+            )],
+        );
+        let section = ObSection {
+            metric_owner_paths: vec!["x::observability::*".into()],
+            metric_macro_patterns: default_metric_macro_patterns(),
+            ..ObSection::default()
+        };
+        assert!(ob002(&air, &section, CheckMode::Human).is_empty());
+    }
+
+    #[test]
+    fn ob002_quiet_when_callee_does_not_match_pattern() {
+        let air = air_with_calls(
+            "x::domain::user",
+            vec![macro_call("println", Some("x::domain::user::tick"), 7)],
+        );
+        let section = ObSection {
+            metric_owner_paths: vec!["x::observability::*".into()],
+            metric_macro_patterns: default_metric_macro_patterns(),
+            ..ObSection::default()
+        };
+        assert!(ob002(&air, &section, CheckMode::Human).is_empty());
+    }
+
+    #[test]
+    fn ob002_agent_strict_elevates_to_fatal() {
+        let air = air_with_calls(
+            "x::domain::user",
+            vec![macro_call(
+                "metrics::histogram",
+                Some("x::domain::user::tick"),
+                7,
+            )],
+        );
+        let section = ObSection {
+            metric_owner_paths: vec!["x::observability::*".into()],
+            metric_macro_patterns: default_metric_macro_patterns(),
+            ..ObSection::default()
+        };
+        let diags = ob002(&air, &section, CheckMode::AgentStrict);
+        assert_eq!(diags.len(), 1);
+        assert_eq!(diags[0].severity, Severity::Fatal);
+    }
+
+    // ─── OB003 ───────────────────────────────────────────────────────────
+
+    #[test]
+    fn ob003_fires_on_event_macro_outside_owner_path() {
+        let air = air_with_calls(
+            "x::domain::user",
+            vec![macro_call("event", Some("x::domain::user::publish"), 7)],
+        );
+        let section = ObSection {
+            event_owner_paths: vec!["x::observability::events::*".into()],
+            event_macro_patterns: default_event_macro_patterns(),
+            ..ObSection::default()
+        };
+        let diags = ob003(&air, &section, CheckMode::Human);
+        assert_eq!(diags.len(), 1);
+        assert_eq!(diags[0].rule_id, "OB003");
+        assert!(diags[0].message.contains("event"));
+    }
+
+    #[test]
+    fn ob003_quiet_inside_event_owner_path() {
+        let air = air_with_calls(
+            "x::observability::events::user",
+            vec![macro_call(
+                "publish",
+                Some("x::observability::events::user::send"),
+                3,
+            )],
+        );
+        let section = ObSection {
+            event_owner_paths: vec!["x::observability::events::*".into()],
+            event_macro_patterns: default_event_macro_patterns(),
+            ..ObSection::default()
+        };
+        assert!(ob003(&air, &section, CheckMode::Human).is_empty());
+    }
+
+    #[test]
+    fn ob003_silent_when_event_owner_paths_empty() {
+        let air = air_with_calls(
+            "x::domain::user",
+            vec![macro_call("event", Some("x::domain::user::publish"), 7)],
+        );
+        let section = ObSection::default();
+        assert!(ob003(&air, &section, CheckMode::Human).is_empty());
+    }
+
+    #[test]
+    fn ob003_matches_tracing_event_pattern() {
+        let air = air_with_calls(
+            "x::domain::user",
+            vec![macro_call(
+                "tracing::event",
+                Some("x::domain::user::span"),
+                9,
+            )],
+        );
+        let section = ObSection {
+            event_owner_paths: vec!["x::observability::events::*".into()],
+            event_macro_patterns: default_event_macro_patterns(),
+            ..ObSection::default()
+        };
+        let diags = ob003(&air, &section, CheckMode::Human);
+        assert_eq!(diags.len(), 1);
+        assert!(diags[0].message.contains("tracing::event"));
+    }
+
+    #[test]
+    fn ob003_agent_strict_elevates_to_fatal() {
+        let air = air_with_calls(
+            "x::domain::user",
+            vec![macro_call("emit", Some("x::domain::user::publish"), 7)],
+        );
+        let section = ObSection {
+            event_owner_paths: vec!["x::observability::events::*".into()],
+            event_macro_patterns: default_event_macro_patterns(),
+            ..ObSection::default()
+        };
+        let diags = ob003(&air, &section, CheckMode::AgentStrict);
+        assert_eq!(diags.len(), 1);
+        assert_eq!(diags[0].severity, Severity::Fatal);
     }
 }

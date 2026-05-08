@@ -4,11 +4,18 @@
 //! module patterns that identify *test* code. TA001 fires on public types
 //! defined inside any module whose `module_path` matches one of these
 //! patterns — test modules duplicating domain concepts as public types is the
-//! "we made our own User struct in tests" smell the spec calls out.
+//! "we made our own User struct in tests" smell the spec calls out. TA002
+//! and TA003 widen the surface to *named-shadow* and *shape-shadow* tests
+//! using the lockfile's `canonical_name_patterns` and `canonical_field_sets`.
+//! TA004 catches port adapters living inside test code that hasn't been
+//! declared a legitimate test-adapter home.
 //!
 //! No paths are inferred at `init` time: test status is a user assertion,
 //! not a guess. An empty `test_paths` keeps the rule silent — same UX as UT
-//! and DG's lockfile-driven rules.
+//! and DG's lockfile-driven rules. Each TA00N rule additionally short-circuits
+//! when its own list (`canonical_name_patterns`, `canonical_field_sets`,
+//! `port_trait_patterns`) is empty, so the per-rule onboarding gate is
+//! independent.
 
 // ot: canonical
 
@@ -21,6 +28,34 @@ pub struct TaSection {
     /// and DG: simple suffix wildcards.
     #[serde(default)]
     pub test_paths: Vec<String>,
+    /// Names (or name patterns) of accepted canonical types — typically the
+    /// short names of types the user has accepted as canonical concepts in
+    /// OT (e.g. `User`, `Email`, `Order`). TA002 fires when a type defined
+    /// inside `test_paths` has a name matching any of these patterns. Empty
+    /// keeps TA002 silent.
+    #[serde(default)]
+    pub canonical_name_patterns: Vec<String>,
+    /// Field-name sets of accepted canonical concepts. Each inner `Vec` is
+    /// the field-name set of one canonical concept (e.g.
+    /// `["id", "email", "name"]` for `User`). TA003 computes Jaccard overlap
+    /// between a test type's field-name set and each entry; an overlap of
+    /// >= 0.5 against any entry trips the rule. Empty keeps TA003 silent.
+    #[serde(default)]
+    pub canonical_field_sets: Vec<Vec<String>>,
+    /// Trait-path patterns identifying *port* traits (the abstraction side
+    /// of the port/adapter split, typically suffixed `Repository`,
+    /// `Gateway`, `Port`). TA004 fires when an `impl Port for Type` lands
+    /// inside a `test_paths`-matching file unless the file also matches
+    /// `accepted_test_adapter_paths`. Empty keeps TA004 silent.
+    #[serde(default)]
+    pub port_trait_patterns: Vec<String>,
+    /// Module patterns where test-side port adapters are explicitly
+    /// accepted (in-memory repositories, fake gateways, etc.). When a
+    /// `test_paths` file is also covered by one of these, TA004 stays
+    /// silent — the user has declared this is the right home for the
+    /// test adapter.
+    #[serde(default)]
+    pub accepted_test_adapter_paths: Vec<String>,
 }
 
 /// Pattern syntax: segment-aligned wildcards.

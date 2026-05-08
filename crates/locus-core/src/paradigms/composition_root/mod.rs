@@ -5,6 +5,9 @@
 //! Phase scope:
 //! - CR001: service-shaped construction outside any declared composition
 //!   root.
+//! - CR002: high-density wiring — a single function inside a composition
+//!   root constructs more services than `wiring_density_threshold` (default
+//!   12).
 //!
 //! `init` returns an empty section: composition-root locations are a user
 //! declaration, not an inference. The rule stays silent until the user
@@ -38,6 +41,8 @@ impl Paradigm for CompositionRoot {
     fn check(&self, air: &AirWorkspace, lockfile: &Lockfile, mode: CheckMode) -> Vec<Diagnostic> {
         let section: lockfile_schema::CrSection =
             lockfile.paradigm_section(CR_PREFIX).unwrap_or_default();
-        rules::cr001(air, &section, mode)
+        let mut diags = rules::cr001(air, &section, mode);
+        diags.extend(rules::cr002(air, &section, mode));
+        diags
     }
 }

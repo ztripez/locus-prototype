@@ -7,6 +7,10 @@
 //!
 //! Phase scope so far:
 //! - BO001: domain layer imports a transport/persistence dependency.
+//! - BO002: domain function exposes a persistence-shaped type in its
+//!   parameter or return signature.
+//! - BO004: canonical type carries a forbidden derive
+//!   (e.g. `Serialize`/`Deserialize`/`ToSchema`).
 
 // ot: canonical
 
@@ -39,6 +43,9 @@ impl Paradigm for BoundaryOwnership {
     fn check(&self, air: &AirWorkspace, lockfile: &Lockfile, mode: CheckMode) -> Vec<Diagnostic> {
         let section: lockfile_schema::BoSection =
             lockfile.paradigm_section(BO_PREFIX).unwrap_or_default();
-        rules::bo001(air, &section, mode)
+        let mut diags = rules::bo001(air, &section, mode);
+        diags.extend(rules::bo002(air, &section, mode));
+        diags.extend(rules::bo004(air, &section, mode));
+        diags
     }
 }

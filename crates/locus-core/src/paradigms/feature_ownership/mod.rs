@@ -4,6 +4,9 @@
 //!
 //! Phase scope:
 //! - FO001: same concept defined in two different features.
+//! - FO004: a type defined inside a `shared_paths` module has a field whose
+//!   `type_text` references a declared feature's module — i.e. shared
+//!   structures secretly knowing about feature internals.
 //!
 //! FO is conceptually adjacent to DG003 — DG003 forbids feature A *reaching
 //! into* feature B's internals through imports; FO001 forbids feature A and
@@ -41,6 +44,8 @@ impl Paradigm for FeatureOwnership {
     fn check(&self, air: &AirWorkspace, lockfile: &Lockfile, mode: CheckMode) -> Vec<Diagnostic> {
         let section: lockfile_schema::FoSection =
             lockfile.paradigm_section(FO_PREFIX).unwrap_or_default();
-        rules::fo001(air, &section, mode)
+        let mut diags = rules::fo001(air, &section, mode);
+        diags.extend(rules::fo004(air, &section, mode));
+        diags
     }
 }

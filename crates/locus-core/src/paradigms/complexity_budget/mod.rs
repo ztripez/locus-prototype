@@ -5,13 +5,18 @@
 //! Reads `AirItem::Function` items from each file and compares each
 //! function's `line_count` against a per-module budget held in the
 //! lockfile's CX section. The first CX rule (`CX001`) flags functions
-//! whose line count exceeds the configured budget.
+//! whose line count exceeds the configured budget. CX007 caps the public
+//! API surface a single file may expose; CX008 caps the number of call
+//! sites a single function may issue outside an accepted orchestration
+//! module.
 //!
 //! `init` returns `Null`: there's no automatic inference for "this
 //! function is allowed to be long" — the user has to declare the
 //! override (or the default) deliberately, same as DG/MO. Without a CX
 //! section, CX001 stays silent so un-onboarded code isn't bombarded
-//! with line-budget warnings.
+//! with line-budget warnings. CX007 ships with sensible defaults and
+//! fires immediately; CX008 stays silent until `orchestration_paths` is
+//! populated.
 
 // ot: canonical
 
@@ -42,6 +47,9 @@ impl Paradigm for ComplexityBudget {
     fn check(&self, air: &AirWorkspace, lockfile: &Lockfile, mode: CheckMode) -> Vec<Diagnostic> {
         let section: lockfile_schema::CxSection =
             lockfile.paradigm_section(CX_PREFIX).unwrap_or_default();
-        rules::cx001(air, &section, mode)
+        let mut diags = rules::cx001(air, &section, mode);
+        diags.extend(rules::cx007(air, &section, mode));
+        diags.extend(rules::cx008(air, &section, mode));
+        diags
     }
 }

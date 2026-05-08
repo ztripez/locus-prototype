@@ -5,8 +5,11 @@
 //!   "manager / processor / DataHandler" pattern from the spec — a trait
 //!   added "in case other implementations exist someday" but in fact only
 //!   ever points at one concrete type. Speculative abstraction.
+//! - [`ab002`]: type (trait or struct) named after a generic role
+//!   (`*Manager`, `*Service`, `*Processor`, …) without an accepted
+//!   single-impl trait or accepted-abstraction-name mapping.
 //!
-//! Counting rules:
+//! Counting rules (AB001):
 //! - 0 impls: skip (likely a library API surface, an unimplemented port, or
 //!   an associated-type-only trait). The signal is too weak to fire on.
 //! - 1 impl: fire AB001 unless the trait is exempted by
@@ -26,7 +29,7 @@ use std::collections::HashMap;
 
 use locus_air::{AirItem, AirSpan, AirWorkspace, TypeKind};
 
-use super::lockfile_schema::{AbSection, matches_pattern};
+use super::lockfile_schema::{AbSection, matches_name_pattern, matches_pattern};
 use crate::diagnostics::{CheckMode, Diagnostic, Severity};
 
 /// AB001 — trait declared in the workspace has exactly one impl.
@@ -195,6 +198,112 @@ pub fn ab001(air: &AirWorkspace, section: &AbSection, mode: CheckMode) -> Vec<Di
     out
 }
 
+/// AB002 — manager/processor abstraction without accepted role.
+///
+/// For each `AirItem::Type` with `TypeKind::Trait` or `TypeKind::Struct`,
+/// fire when the type's short name matches any pattern in
+/// `section.suspect_abstraction_patterns` AND the type is NOT exempted by
+/// either:
+/// - `section.accepted_single_impl_traits` — the existing AB001 acceptance
+///   list, reused so a port trait already accepted as legitimately
+///   single-impl (`Clock`, etc.) doesn't re-fire under AB002, OR
+/// - `section.accepted_abstraction_names` — the new AB002-specific
+///   acceptance list, for cases where a `*Service` / `*Manager` name is
+///   genuinely the right domain term (rare, but real).
+///
+/// Match semantics: each acceptance pattern is checked against both the
+/// type's full symbol (`crate::core::UserManager`) and its short name
+/// (`UserManager`), mirroring AB001's exemption shape.
+///
+/// Severity: Warning by default; Fatal under `--agent-strict`.
+///
+/// Lockfile-driven defaults: the section ships with a non-empty
+/// `suspect_abstraction_patterns` (the spec's seeded role-name list), so
+/// AB002 fires immediately on un-onboarded code. Users curate the
+/// patterns or accept individual names rather than starting from silence
+/// — abstraction discipline is the spec's "examine and decide
+/// deliberately" paradigm, not a paradigm where un-configured means
+/// silent.
+pub fn ab002(air: &AirWorkspace, section: &AbSection, mode: CheckMode) -> Vec<Diagnostic> {
+    if section.suspect_abstraction_patterns.is_empty() {
+        // User explicitly emptied the list → silent. Same convention as
+        // disabling a paradigm via empty configuration.
+        return Vec::new();
+    }
+    let mut out = Vec::new();
+    for pkg in &air.packages {
+        for file in &pkg.files {
+            for item in &file.items {
+                let AirItem::Type(ty) = item else { continue };
+                if !matches!(ty.kind, TypeKind::Trait | TypeKind::Struct) {
+                    continue;
+                }
+
+                // Find the first matching suspect pattern; recording it
+                // gives the diagnostic a useful "why" anchor.
+                let Some(matched_pattern) = section
+                    .suspect_abstraction_patterns
+                    .iter()
+                    .find(|pat| matches_name_pattern(pat, &ty.name))
+                else {
+                    continue;
+                };
+
+                // Exemption check: full symbol or short name, against
+                // either the AB001 single-impl-traits list or the AB002
+                // accepted-names list.
+                let exempted_by_single_impl = section
+                    .accepted_single_impl_traits
+                    .iter()
+                    .any(|pat| matches_pattern(pat, &ty.symbol) || matches_pattern(pat, &ty.name));
+                let exempted_by_name = section
+                    .accepted_abstraction_names
+                    .iter()
+                    .any(|pat| matches_pattern(pat, &ty.symbol) || matches_pattern(pat, &ty.name));
+                if exempted_by_single_impl || exempted_by_name {
+                    continue;
+                }
+
+                let kind_word = match ty.kind {
+                    TypeKind::Trait => "trait",
+                    TypeKind::Struct => "struct",
+                    _ => unreachable!(),
+                };
+
+                out.push(Diagnostic {
+                    rule_id: "AB002".to_string(),
+                    severity: mode.elevate(Severity::Warning),
+                    span: ty.span.clone(),
+                    concept: None,
+                    message: format!(
+                        "{kind_word} `{}` is named after a generic role (`{matched_pattern}`) \
+                         without an accepted abstraction record — likely \
+                         manager/processor/coordinator anti-pattern",
+                        ty.symbol
+                    ),
+                    why: vec![
+                        format!("{kind_word} symbol `{}`", ty.symbol),
+                        format!(
+                            "short name `{}` matches suspect pattern `{matched_pattern}`",
+                            ty.name
+                        ),
+                        "neither `accepted_single_impl_traits` nor `accepted_abstraction_names` \
+                         covers this symbol"
+                            .into(),
+                    ],
+                    suggested_fix: Some(format!(
+                        "rename the type after the *domain concept it owns* (e.g. `UserManager` \
+                         → `UserDirectory`), or — if this name is genuinely the right one — \
+                         add `{}` to `paradigms.AB.accepted_abstraction_names` in `locus.lock`",
+                        ty.symbol
+                    )),
+                });
+            }
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -315,6 +424,7 @@ mod tests {
         ]);
         let section = AbSection {
             accepted_single_impl_traits: vec!["x::ports::*".into()],
+            ..AbSection::default()
         };
         assert!(ab001(&air, &section, CheckMode::Human).is_empty());
     }
@@ -327,6 +437,7 @@ mod tests {
         ]);
         let section = AbSection {
             accepted_single_impl_traits: vec!["Manager".into()],
+            ..AbSection::default()
         };
         assert!(ab001(&air, &section, CheckMode::Human).is_empty());
     }
@@ -427,5 +538,91 @@ mod tests {
         assert!(msgs.iter().any(|m| m.contains("x::core::A")));
         assert!(msgs.iter().any(|m| m.contains("x::core::C")));
         assert!(!msgs.iter().any(|m| m.contains("x::core::B")));
+    }
+
+    // --- AB002 tests ---------------------------------------------------
+
+    #[test]
+    fn ab002_fires_on_struct_named_with_suspect_suffix() {
+        // `UserManager` matches the seeded `*Manager` pattern.
+        let air = air_with(vec![struct_decl("x::core::UserManager", "UserManager")]);
+        let section = AbSection::default();
+        let diags = ab002(&air, &section, CheckMode::Human);
+        assert_eq!(diags.len(), 1, "got {diags:?}");
+        assert_eq!(diags[0].rule_id, "AB002");
+        assert_eq!(diags[0].severity, Severity::Warning);
+        assert!(diags[0].message.contains("x::core::UserManager"));
+        assert!(diags[0].message.contains("*Manager"));
+    }
+
+    #[test]
+    fn ab002_fires_on_trait_named_with_suspect_suffix() {
+        // Trait variant of the same suspect pattern.
+        let air = air_with(vec![trait_decl(
+            "x::core::OrderProcessor",
+            "OrderProcessor",
+        )]);
+        let section = AbSection::default();
+        let diags = ab002(&air, &section, CheckMode::Human);
+        assert_eq!(diags.len(), 1, "got {diags:?}");
+        assert!(diags[0].message.contains("trait `x::core::OrderProcessor`"));
+    }
+
+    #[test]
+    fn ab002_quiet_on_domain_named_types() {
+        // Names that don't match any seeded pattern → silent.
+        let air = air_with(vec![
+            struct_decl("x::core::User", "User"),
+            struct_decl("x::core::OrderBook", "OrderBook"),
+            trait_decl("x::ports::Clock", "Clock"),
+        ]);
+        let section = AbSection::default();
+        assert!(ab002(&air, &section, CheckMode::Human).is_empty());
+    }
+
+    #[test]
+    fn ab002_exempted_by_accepted_abstraction_names() {
+        // Suspect name but accepted via `accepted_abstraction_names`.
+        let air = air_with(vec![struct_decl("x::core::AuthService", "AuthService")]);
+        let section = AbSection {
+            accepted_abstraction_names: vec!["x::core::AuthService".into()],
+            ..AbSection::default()
+        };
+        assert!(ab002(&air, &section, CheckMode::Human).is_empty());
+    }
+
+    #[test]
+    fn ab002_exempted_by_accepted_single_impl_traits() {
+        // AB001's exemption list is also honored by AB002 — a port trait
+        // already accepted as legitimately single-impl shouldn't double-fire.
+        let air = air_with(vec![trait_decl("x::ports::Clock", "Clock")]);
+        // Clock isn't a seeded suspect name; force a suspect pattern that
+        // matches it via `*lock` → simulate a custom seeded list.
+        let section = AbSection {
+            suspect_abstraction_patterns: vec!["*Clock".into()],
+            accepted_single_impl_traits: vec!["x::ports::*".into()],
+            ..AbSection::default()
+        };
+        assert!(ab002(&air, &section, CheckMode::Human).is_empty());
+    }
+
+    #[test]
+    fn ab002_silent_when_suspect_patterns_emptied() {
+        // User explicitly empties the seeded list → silent regardless of names.
+        let air = air_with(vec![struct_decl("x::core::UserManager", "UserManager")]);
+        let section = AbSection {
+            suspect_abstraction_patterns: Vec::new(),
+            ..AbSection::default()
+        };
+        assert!(ab002(&air, &section, CheckMode::Human).is_empty());
+    }
+
+    #[test]
+    fn ab002_agent_strict_elevates_to_fatal() {
+        let air = air_with(vec![struct_decl("x::core::PaymentEngine", "PaymentEngine")]);
+        let section = AbSection::default();
+        let diags = ab002(&air, &section, CheckMode::AgentStrict);
+        assert_eq!(diags.len(), 1);
+        assert_eq!(diags[0].severity, Severity::Fatal);
     }
 }

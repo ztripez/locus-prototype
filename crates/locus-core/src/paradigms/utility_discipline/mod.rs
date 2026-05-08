@@ -10,6 +10,11 @@
 //! Phase scope so far:
 //! - UT001: utility module defines a public type.
 //! - UT002: utility module imports a forbidden feature/domain path.
+//! - UT003: new generic-utility-named module without acceptance.
+//! - UT004: domain-concept logic (canonical construction or
+//!   validation/normalization) inside a utility module.
+//! - UT005: validation/normalization inside a utility module —
+//!   target-agnostic counterpart to UT004.
 
 // ot: canonical
 
@@ -43,6 +48,9 @@ impl Paradigm for UtilityDiscipline {
             lockfile.paradigm_section(UT_PREFIX).unwrap_or_default();
         let mut diags = rules::ut001(air, &section, mode);
         diags.extend(rules::ut002(air, &section, mode));
+        diags.extend(rules::ut003(air, &section, mode));
+        diags.extend(rules::ut004(air, &section, mode));
+        diags.extend(rules::ut005(air, &section, mode));
         diags
     }
 }

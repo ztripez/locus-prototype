@@ -5,6 +5,9 @@
 //! Phase-2 scope:
 //! - PA001: trait declared and immediately implemented in the same file
 //!   (port and adapter co-located — physical separation never happened).
+//! - PA002: application/domain file imports a concrete adapter framework.
+//! - PA004: adapter type constructed outside any composition root /
+//!   bootstrap / composition module.
 //!
 //! `init` returns an empty section: there's nothing to infer up front. The
 //! lockfile starts empty so PA001 fires on every co-located trait+impl pair;
@@ -41,6 +44,9 @@ impl Paradigm for PortAdapter {
     fn check(&self, air: &AirWorkspace, lockfile: &Lockfile, mode: CheckMode) -> Vec<Diagnostic> {
         let section: lockfile_schema::PaSection =
             lockfile.paradigm_section(PA_PREFIX).unwrap_or_default();
-        rules::pa001(air, &section, mode)
+        let mut diags = rules::pa001(air, &section, mode);
+        diags.extend(rules::pa002(air, &section, mode));
+        diags.extend(rules::pa004(air, &section, mode));
+        diags
     }
 }
