@@ -600,6 +600,8 @@ enum RmCommand {
     SetDefault(RmSetDefaultArgs),
     /// Add a module pattern exempt from RM checks.
     AddExemptPath(RmAddExemptPathArgs),
+    /// Add a module pattern declaring the domain layer (RM006).
+    AddDomainPath(RmAddDomainPathArgs),
 }
 
 // ot: boundary cli.rm-set-default cli
@@ -616,6 +618,15 @@ struct RmSetDefaultArgs {
 #[derive(clap::Args, Debug)]
 struct RmAddExemptPathArgs {
     /// Module pattern exempt from RM checks.
+    pattern: String,
+    #[arg(long, default_value = ".")]
+    workspace: PathBuf,
+}
+
+// ot: boundary cli.rm-add-domain-path cli
+#[derive(clap::Args, Debug)]
+struct RmAddDomainPathArgs {
+    /// Module path glob, e.g. `"crate::domain::*"`.
     pattern: String,
     #[arg(long, default_value = ".")]
     workspace: PathBuf,
@@ -1270,6 +1281,7 @@ fn rm(cmd: RmCommand) -> Result<()> {
     match cmd {
         RmCommand::SetDefault(args) => rm_set_default_cli(args),
         RmCommand::AddExemptPath(args) => rm_add_exempt_path_cli(args),
+        RmCommand::AddDomainPath(args) => rm_add_domain_path_cli(args),
     }
 }
 
@@ -1310,6 +1322,30 @@ fn rm_add_exempt_path_cli(args: RmAddExemptPathArgs) -> Result<()> {
         .with_context(|| format!("write lockfile to {}", args.workspace.display()))?;
 
     println!("added exempt path pattern `{}`", args.pattern);
+    println!("updated {}", written.display());
+    Ok(())
+}
+
+fn rm_add_domain_path_cli(args: RmAddDomainPathArgs) -> Result<()> {
+    use locus_core::paradigms::responsibility::edit::add_domain_path;
+    use locus_core::paradigms::responsibility::lockfile_schema::RmSection;
+
+    let mut lockfile = Lockfile::load_or_empty(&args.workspace)
+        .with_context(|| format!("load lockfile from {}", args.workspace.display()))?;
+    let mut section: RmSection = lockfile
+        .paradigm_section("RM")
+        .context("RM lockfile section is malformed")?;
+
+    add_domain_path(&mut section, &args.pattern)
+        .with_context(|| format!("add RM domain path `{}`", args.pattern))?;
+
+    let value = serde_json::to_value(&section).context("serialize RM section")?;
+    lockfile.paradigms.insert("RM".to_string(), value);
+    let written = lockfile
+        .save(&args.workspace)
+        .with_context(|| format!("write lockfile to {}", args.workspace.display()))?;
+
+    println!("added RM domain path pattern `{}`", args.pattern);
     println!("updated {}", written.display());
     Ok(())
 }

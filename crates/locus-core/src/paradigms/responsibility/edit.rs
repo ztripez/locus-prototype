@@ -10,6 +10,8 @@ use super::lockfile_schema::RmSection;
 pub enum RmEditError {
     #[error("exempt path pattern must not be empty")]
     EmptyExemptPath,
+    #[error("domain path pattern must not be empty")]
+    EmptyDomainPath,
 }
 
 /// Set the workspace-wide default per-function action-kind cap. Overwrites
@@ -25,6 +27,18 @@ pub fn add_exempt_path(section: &mut RmSection, pattern: &str) -> Result<(), RmE
     }
     if !section.exempt_paths.iter().any(|p| p == pattern) {
         section.exempt_paths.push(pattern.to_string());
+    }
+    Ok(())
+}
+
+/// Append a `domain_paths_rm` pattern declaring a module as part of the
+/// domain layer (consumed by RM006). Duplicates are silently deduped.
+pub fn add_domain_path(section: &mut RmSection, pattern: &str) -> Result<(), RmEditError> {
+    if pattern.is_empty() {
+        return Err(RmEditError::EmptyDomainPath);
+    }
+    if !section.domain_paths_rm.iter().any(|p| p == pattern) {
+        section.domain_paths_rm.push(pattern.to_string());
     }
     Ok(())
 }
@@ -59,5 +73,26 @@ mod tests {
             RmEditError::EmptyExemptPath
         );
         assert!(section.exempt_paths.is_empty());
+    }
+
+    #[test]
+    fn add_domain_path_appends_and_dedupes() {
+        let mut s = RmSection::default();
+        add_domain_path(&mut s, "crate::domain::*").unwrap();
+        add_domain_path(&mut s, "crate::other::*").unwrap();
+        add_domain_path(&mut s, "crate::domain::*").unwrap();
+        assert_eq!(
+            s.domain_paths_rm,
+            vec!["crate::domain::*", "crate::other::*"]
+        );
+    }
+
+    #[test]
+    fn add_domain_path_rejects_empty() {
+        let mut s = RmSection::default();
+        assert_eq!(
+            add_domain_path(&mut s, "").unwrap_err(),
+            RmEditError::EmptyDomainPath
+        );
     }
 }
