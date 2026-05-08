@@ -67,6 +67,17 @@ impl Default for RwSection {
     }
 }
 
+impl RwSection {
+    /// True when the user hasn't declared any runtime owners — RW001/002/
+    /// 003/004 all need that declaration. RW005/006 use the marker
+    /// mechanism (`// ot: marks hot_path`) which is independent of this
+    /// section, so the paradigm-level vacancy diagnostic specifically
+    /// targets the lockfile-driven rules.
+    pub fn is_vacant(&self) -> bool {
+        self.runtime_owner_paths.is_empty()
+    }
+}
+
 fn default_runtime_state_type_patterns() -> Vec<String> {
     DEFAULT_RUNTIME_STATE_TYPE_PATTERNS
         .iter()

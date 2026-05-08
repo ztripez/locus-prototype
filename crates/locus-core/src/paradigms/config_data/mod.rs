@@ -22,7 +22,7 @@
 // ot: canonical
 
 use super::Paradigm;
-use crate::diagnostics::{CheckMode, Diagnostic};
+use crate::diagnostics::{CheckMode, Diagnostic, vacant_paradigm_diagnostic};
 use crate::lockfile::Lockfile;
 use locus_air::AirWorkspace;
 
@@ -50,6 +50,16 @@ impl Paradigm for ConfigData {
     fn check(&self, air: &AirWorkspace, lockfile: &Lockfile, mode: CheckMode) -> Vec<Diagnostic> {
         let section: lockfile_schema::CfSection =
             lockfile.paradigm_section(CF_PREFIX).unwrap_or_default();
+        if section.is_vacant() && !lockfile.is_acknowledged_empty(CF_PREFIX) {
+            return vec![vacant_paradigm_diagnostic(
+                CF_PREFIX,
+                "Config/Data Ownership",
+                &[(
+                    "config_paths",
+                    "module patterns identifying the config layer (where env reads / decision constants legitimately live)",
+                )],
+            )];
+        }
         let mut out = rules::cf001(air, &section, mode);
         out.extend(rules::cf002(air, &section, mode));
         out.extend(rules::cf003(air, &section, mode));

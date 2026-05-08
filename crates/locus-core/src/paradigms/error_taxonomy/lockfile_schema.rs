@@ -26,6 +26,21 @@
 
 use serde::{Deserialize, Serialize};
 
+impl ErSection {
+    /// True when none of the user-declarative lists are populated. ER001
+    /// (multiple error types in one file) and ER007 (duplicate variants
+    /// across `*Error*` enums) are heuristic and lockfile-free, so they
+    /// fire even when the section is fully vacant — but the rest of ER
+    /// (002 forbidden types, 003 boundary in domain, 005 catch-all
+    /// arms) needs declarations to mean anything.
+    pub fn is_vacant(&self) -> bool {
+        self.forbidden_error_types.is_empty()
+            && self.domain_paths.is_empty()
+            && self.boundary_error_patterns.is_empty()
+            && self.error_collapse_owner_paths.is_empty()
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
 pub struct ErSection {
     /// Patterns matching the `E` in a function's `Result<T, E>` return when

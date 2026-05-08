@@ -31,6 +31,23 @@ pub const DEFAULT_MAX_HANDLER_DECISIONS: u32 = 3;
 /// guards, more start to look like domain policy hiding inside data access.
 pub const DEFAULT_MAX_REPOSITORY_DECISIONS: u32 = 3;
 
+impl RmSection {
+    /// True when the user hasn't declared any per-rule scope. RM001 needs
+    /// `default_max_action_kinds`, RM002 needs `converter_paths`, RM003
+    /// needs `handler_paths`, RM004 needs `repository_paths`, RM005
+    /// needs `validator_paths`, RM006 needs `domain_paths_rm`. None of
+    /// these have built-in defaults that would let any rule fire — RM
+    /// is fully vacant when all are empty / `None`.
+    pub fn is_vacant(&self) -> bool {
+        self.default_max_action_kinds.is_none()
+            && self.converter_paths.is_empty()
+            && self.handler_paths.is_empty()
+            && self.repository_paths.is_empty()
+            && self.validator_paths.is_empty()
+            && self.domain_paths_rm.is_empty()
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
 pub struct RmSection {
     /// Maximum number of distinct `ActionKind` values a single function's

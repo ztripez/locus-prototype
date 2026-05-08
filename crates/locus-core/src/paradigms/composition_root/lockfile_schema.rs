@@ -54,6 +54,15 @@ impl Default for CrSection {
     }
 }
 
+impl CrSection {
+    /// True when the user hasn't declared any composition roots — neither
+    /// CR001 (construction outside roots) nor CR002 (high-density wiring
+    /// inside roots) can fire without that declaration.
+    pub fn is_vacant(&self) -> bool {
+        self.composition_root_paths.is_empty()
+    }
+}
+
 /// The canonical seven service-shaped suffixes per the spec. Used when the
 /// user-supplied `service_suffixes` is empty.
 pub fn default_service_suffixes() -> Vec<String> {

@@ -70,6 +70,54 @@ impl Severity {
     }
 }
 
+/// Rule ID for the cross-paradigm "paradigm has no definitions" diagnostic.
+/// Emitted by vacant-by-definition paradigms (BO/PA/CR/RW/DA/UT/ER/FL/CF/…)
+/// when their declaration lists are empty AND the prefix is not in
+/// `Lockfile.acknowledged_empty`. Severity defaults to `Advisory` so it
+/// surfaces but doesn't block CI; users either populate the section or
+/// explicitly ack the empty state.
+pub const VACANT_PARADIGM_RULE: &str = "LOCUS002";
+
+/// Build a `LOCUS002` diagnostic for a paradigm whose declaration lists are
+/// empty. `prefix` is the rule prefix (`"BO"`, `"PA"`, …); `name` is the
+/// human-readable paradigm name; `missing` lists the empty declaration
+/// fields the user is expected to populate (lockfile field name + a short
+/// description for the `why` line).
+///
+/// The diagnostic is anchored at `locus.lock:1` since the violation is the
+/// lockfile's responsibility, not any source file.
+pub fn vacant_paradigm_diagnostic(
+    prefix: &str,
+    name: &str,
+    missing: &[(&str, &str)],
+) -> Diagnostic {
+    let mut why: Vec<String> = missing
+        .iter()
+        .map(|(field, desc)| format!("`paradigms.{prefix}.{field}` is empty — {desc}"))
+        .collect();
+    why.push(format!(
+        "vacant-by-definition: rules under {prefix} cannot fire until at \
+         least one declaration list is populated"
+    ));
+    Diagnostic {
+        rule_id: VACANT_PARADIGM_RULE.to_string(),
+        severity: Severity::Advisory,
+        span: AirSpan::new("locus.lock", 1, 1),
+        concept: Some(prefix.to_string()),
+        message: format!(
+            "paradigm {prefix} ({name}) has no definitions; rules cannot fire \
+             until you declare its concepts"
+        ),
+        why,
+        suggested_fix: Some(format!(
+            "populate `paradigms.{prefix}` in `locus.lock` (use the matching `locus \
+             {} ...` mutators, or hand-edit), or add `\"{prefix}\"` to \
+             `acknowledged_empty` in `locus.lock` to silence this paradigm",
+            prefix.to_lowercase()
+        )),
+    }
+}
+
 /// Whether a paradigm should treat warnings as fatal. Set by the CLI's
 /// `--agent-strict` flag; passed into each paradigm's `check`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

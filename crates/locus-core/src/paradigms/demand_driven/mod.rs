@@ -18,7 +18,7 @@
 // ot: canonical
 
 use super::Paradigm;
-use crate::diagnostics::{CheckMode, Diagnostic};
+use crate::diagnostics::{CheckMode, Diagnostic, vacant_paradigm_diagnostic};
 use crate::lockfile::Lockfile;
 use locus_air::AirWorkspace;
 
@@ -44,6 +44,16 @@ impl Paradigm for DemandDriven {
     fn check(&self, air: &AirWorkspace, lockfile: &Lockfile, mode: CheckMode) -> Vec<Diagnostic> {
         let section: lockfile_schema::DaSection =
             lockfile.paradigm_section(DA_PREFIX).unwrap_or_default();
+        if section.is_vacant() && !lockfile.is_acknowledged_empty(DA_PREFIX) {
+            return vec![vacant_paradigm_diagnostic(
+                DA_PREFIX,
+                "Demand-Driven Architecture",
+                &[(
+                    "enabled",
+                    "master switch — set to `true` to opt in to DA001/002/007",
+                )],
+            )];
+        }
         let mut diags = rules::da001(air, &section, mode);
         diags.extend(rules::da002(air, &section, mode));
         diags.extend(rules::da007(air, &section, mode));

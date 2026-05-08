@@ -20,7 +20,7 @@
 // ot: canonical
 
 use super::Paradigm;
-use crate::diagnostics::{CheckMode, Diagnostic};
+use crate::diagnostics::{CheckMode, Diagnostic, vacant_paradigm_diagnostic};
 use crate::lockfile::Lockfile;
 use locus_air::AirWorkspace;
 
@@ -46,7 +46,30 @@ impl Paradigm for PortAdapter {
     fn check(&self, air: &AirWorkspace, lockfile: &Lockfile, mode: CheckMode) -> Vec<Diagnostic> {
         let section: lockfile_schema::PaSection =
             lockfile.paradigm_section(PA_PREFIX).unwrap_or_default();
+        // PA001 is structural and fires without user lists — keep it on
+        // even when the rest of the paradigm is vacant.
         let mut diags = rules::pa001(air, &section, mode);
+        if section.is_vacant() && !lockfile.is_acknowledged_empty(PA_PREFIX) {
+            diags.push(vacant_paradigm_diagnostic(
+                PA_PREFIX,
+                "Port/Adapter Ownership",
+                &[
+                    (
+                        "application_paths",
+                        "module patterns identifying application/domain code",
+                    ),
+                    (
+                        "concrete_adapter_patterns",
+                        "import paths application/domain code must not reach",
+                    ),
+                    (
+                        "adapter_type_patterns",
+                        "type patterns identifying concrete adapters",
+                    ),
+                ],
+            ));
+            return diags;
+        }
         diags.extend(rules::pa002(air, &section, mode));
         diags.extend(rules::pa003(air, &section, mode));
         diags.extend(rules::pa004(air, &section, mode));

@@ -77,6 +77,16 @@ impl Default for CfSection {
     }
 }
 
+impl CfSection {
+    /// True when no `config_paths` are declared. Every CF rule (CF001 env
+    /// reads, CF002 magic constants, CF003 hardcoded IDs) is anchored on
+    /// the config layer's location — without `config_paths` there's
+    /// nothing to compare against.
+    pub fn is_vacant(&self) -> bool {
+        self.config_paths.is_empty()
+    }
+}
+
 /// Seeded filename globs covering the four common config formats. Used
 /// today only as a pre-population default for a future filesystem-aware
 /// CF rule. (CF002 used to be the placeholder for that filesystem-walk;

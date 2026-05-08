@@ -32,15 +32,12 @@ use crate::diagnostics::{CheckMode, Diagnostic, Severity};
 /// Severity: Warning by default. `--agent-strict` elevates to Fatal via
 /// [`CheckMode::elevate`].
 ///
-/// Lockfile-driven silence: when the section is fully default (no
-/// `default_max_public_types` set AND no overrides), MO001 emits nothing.
-/// Same convention as the other lockfile-driven rules — pre-onboarding,
-/// we don't have the user's intent and shouldn't fire on un-configured
-/// projects.
+/// Fires by default — the section's built-in fallback budget is treated
+/// as real configuration. Configuration narrows: users raise the budget
+/// on legitimately-broad modules via `paradigms.MO.overrides`, or replace
+/// the workspace default via `default_max_public_types`. Add the prefix
+/// to `acknowledged_empty` to silence the paradigm entirely.
 pub fn mo001(air: &AirWorkspace, section: &MoSection, mode: CheckMode) -> Vec<Diagnostic> {
-    if section.default_max_public_types.is_none() && section.overrides.is_empty() {
-        return Vec::new();
-    }
     let default_budget = section.effective_default();
     let mut out = Vec::new();
     for pkg in &air.packages {
@@ -213,19 +210,12 @@ fn has_io_call_site(file: &AirFile) -> bool {
 ///
 /// Severity: Warning by default; `--agent-strict` elevates to Fatal.
 ///
-/// Lockfile-driven silence: when the section is fully default (none of
-/// `default_max_public_types`, `entropy_threshold`, `handler_name_patterns`,
-/// `persistence_import_patterns`, or `overrides` configured), MO002 emits
-/// nothing — same convention as MO001 and the DG/UT lockfile-driven rules.
+/// Fires by default — the section's built-in fallback threshold and
+/// pattern lists are treated as real configuration. Configuration
+/// narrows: users widen the entropy budget via `entropy_threshold`,
+/// override per-module via `overrides`, or add the prefix to
+/// `acknowledged_empty` to silence the paradigm entirely.
 pub fn mo002(air: &AirWorkspace, section: &MoSection, mode: CheckMode) -> Vec<Diagnostic> {
-    if section.default_max_public_types.is_none()
-        && section.entropy_threshold.is_none()
-        && section.handler_name_patterns.is_empty()
-        && section.persistence_import_patterns.is_empty()
-        && section.overrides.is_empty()
-    {
-        return Vec::new();
-    }
     let threshold = section.effective_entropy_threshold();
     let handler_patterns = section.effective_handler_name_patterns();
     let persistence_patterns = section.effective_persistence_import_patterns();
@@ -490,10 +480,25 @@ mod tests {
     }
 
     #[test]
-    fn mo001_silent_on_default_section() {
-        // No fields configured — must stay silent regardless of file shape.
-        // Mirrors the DG/OT lockfile-driven convention.
+    fn mo001_fires_with_built_in_fallback_on_default_section() {
+        // Default section uses DEFAULT_MAX_PUBLIC_TYPES (5) as the budget.
+        // 50 public types trip it without any user configuration — rule
+        // fires by default per the "noisy-by-default" convention.
         let air = air_with(Some("foo::bar"), n_pub_types(50));
+        let section = MoSection::default();
+        let diags = mo001(&air, &section, CheckMode::Human);
+        assert_eq!(diags.len(), 1, "expected one diag, got {diags:?}");
+        assert!(
+            diags[0].why.iter().any(|w| w.contains("built-in fallback")),
+            "expected built-in fallback explanation in why; got {:?}",
+            diags[0].why,
+        );
+    }
+
+    #[test]
+    fn mo001_quiet_when_count_within_built_in_fallback() {
+        // 3 public types under the 5-type built-in fallback → no diag.
+        let air = air_with(Some("foo::bar"), n_pub_types(3));
         let section = MoSection::default();
         assert!(mo001(&air, &section, CheckMode::Human).is_empty());
     }
@@ -784,16 +789,19 @@ mod tests {
     // ---- MO002 tests ----
 
     #[test]
-    fn mo002_silent_on_default_section() {
-        // Even if a file is a clear blob (canonical+boundary+converter+handler),
-        // MO002 stays silent until the lockfile section is configured.
+    fn mo002_fires_with_built_in_fallback_on_default_section() {
+        // Default section uses entropy_threshold built-in fallback (3).
+        // A clear blob (canonical+boundary+converter+handler+persistence)
+        // trips it without any user configuration — rule fires by default
+        // per the "noisy-by-default" convention.
         let air = air_with_full(
             Some("foo::bar"),
             vec![func("user_handler", 10), import("crate::sqlx::query")],
             vec![canonical_hint(), boundary_hint(), converter_hint()],
         );
         let section = MoSection::default();
-        assert!(mo002(&air, &section, CheckMode::Human).is_empty());
+        let diags = mo002(&air, &section, CheckMode::Human);
+        assert_eq!(diags.len(), 1, "expected one diag, got {diags:?}");
     }
 
     #[test]

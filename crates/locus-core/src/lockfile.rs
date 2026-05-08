@@ -27,6 +27,13 @@ pub struct Lockfile {
     pub paradigms: BTreeMap<String, serde_json::Value>,
     #[serde(default)]
     pub exceptions: Vec<Exception>,
+    /// Paradigms the user has explicitly acknowledged as having no definitions.
+    /// Vacant-by-definition paradigms (BO/PA/CR/RW/DA/UT/ER/FL/DG/CF/…) emit
+    /// `LOCUS002` when their declaration lists are empty unless the prefix
+    /// appears in this list. Empty list = full nag mode; populated list =
+    /// "I really don't intend to use these paradigms."
+    #[serde(default)]
+    pub acknowledged_empty: Vec<String>,
 }
 
 impl Lockfile {
@@ -35,7 +42,15 @@ impl Lockfile {
             version: LOCKFILE_VERSION,
             paradigms: BTreeMap::new(),
             exceptions: Vec::new(),
+            acknowledged_empty: Vec::new(),
         }
+    }
+
+    /// True if the user has explicitly acknowledged the named paradigm as
+    /// having no definitions. Used by vacant-by-definition paradigms to
+    /// suppress the LOCUS002 "missing definitions" diagnostic.
+    pub fn is_acknowledged_empty(&self, prefix: &str) -> bool {
+        self.acknowledged_empty.iter().any(|p| p == prefix)
     }
 
     /// Load `locus.lock` from a workspace root. Returns `Lockfile::empty()` if

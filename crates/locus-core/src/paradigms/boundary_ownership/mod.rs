@@ -18,7 +18,7 @@
 // ot: canonical
 
 use super::Paradigm;
-use crate::diagnostics::{CheckMode, Diagnostic};
+use crate::diagnostics::{CheckMode, Diagnostic, vacant_paradigm_diagnostic};
 use crate::lockfile::Lockfile;
 use locus_air::AirWorkspace;
 
@@ -46,6 +46,27 @@ impl Paradigm for BoundaryOwnership {
     fn check(&self, air: &AirWorkspace, lockfile: &Lockfile, mode: CheckMode) -> Vec<Diagnostic> {
         let section: lockfile_schema::BoSection =
             lockfile.paradigm_section(BO_PREFIX).unwrap_or_default();
+        if section.is_vacant() && !lockfile.is_acknowledged_empty(BO_PREFIX) {
+            return vec![vacant_paradigm_diagnostic(
+                BO_PREFIX,
+                "Boundary Ownership",
+                &[
+                    ("domain_paths", "module patterns identifying domain code"),
+                    (
+                        "forbidden_in_domain",
+                        "import paths domain code must not reach",
+                    ),
+                    (
+                        "persistence_type_patterns",
+                        "persistence-shaped types forbidden in domain signatures",
+                    ),
+                    (
+                        "canonical_paths",
+                        "module patterns identifying canonical types (BO004)",
+                    ),
+                ],
+            )];
+        }
         let mut diags = rules::bo001(air, &section, mode);
         diags.extend(rules::bo002(air, &section, mode));
         diags.extend(rules::bo004(air, &section, mode));

@@ -67,6 +67,18 @@ impl Default for BoSection {
     }
 }
 
+impl BoSection {
+    /// True when no user declarations are populated. BO is vacant-by-
+    /// definition: rules need either `domain_paths` (BO001/002/005) or
+    /// `canonical_paths` (BO004) to fire on anything specific.
+    pub fn is_vacant(&self) -> bool {
+        self.domain_paths.is_empty()
+            && self.forbidden_in_domain.is_empty()
+            && self.persistence_type_patterns.is_empty()
+            && self.canonical_paths.is_empty()
+    }
+}
+
 /// Pattern syntax: segment-aligned wildcards.
 /// - `foo::bar` — exact match
 /// - `foo::*` — `foo` itself or any descendant (`foo::bar`, `foo::bar::baz`)

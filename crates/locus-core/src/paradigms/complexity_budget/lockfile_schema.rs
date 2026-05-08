@@ -25,6 +25,14 @@ use serde::{Deserialize, Serialize};
 /// trail or a refactor into smaller pieces.
 pub const DEFAULT_MAX_FUNCTION_LINES: u32 = 50;
 
+/// Default budget for `default_max_module_lines` (CX002). Four hundred
+/// lines is "this file is starting to take on a lot." Rule-table files,
+/// lockfile schemas, and similar pattern-dense modules legitimately
+/// approach or exceed this — those want a per-pattern override raising
+/// the budget. CLI dispatcher modules, kitchen-sink utility files, and
+/// drift-grown handler files almost always trip the default.
+pub const DEFAULT_MAX_MODULE_LINES: u32 = 400;
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct CxSection {
     /// Workspace-wide budget for the line count of any single function.
@@ -39,6 +47,19 @@ pub struct CxSection {
     /// patterns above broader ones by ordering the vec.
     #[serde(default)]
     pub overrides: Vec<CxOverride>,
+    /// CX002 — workspace-wide budget for the line count of any single
+    /// file/module. `None` means "fall back to [`DEFAULT_MAX_MODULE_LINES`]".
+    /// Independent of `default_max_function_lines`: a file might hold many
+    /// short functions (CX002 fires) or one giant function (CX001 fires)
+    /// or both.
+    #[serde(default)]
+    pub default_max_module_lines: Option<u32>,
+    /// CX002 — per-module overrides for `default_max_module_lines`. Same
+    /// pattern syntax as `overrides`. Kept as a separate list because the
+    /// per-function and per-module budgets answer different questions and
+    /// are usually adjusted independently.
+    #[serde(default)]
+    pub module_overrides: Vec<CxModuleOverride>,
     /// CX007 — cap on public `AirItem` count per file (anything exposing
     /// API: `Type` or `Function` with `Visibility::Public`). Defaults to
     /// [`default_max_public_items`].
@@ -67,6 +88,8 @@ impl Default for CxSection {
         Self {
             default_max_function_lines: None,
             overrides: Vec::new(),
+            default_max_module_lines: None,
+            module_overrides: Vec::new(),
             max_public_items: default_max_public_items(),
             exempt_paths: default_exempt_paths(),
             max_fan_out: default_max_fan_out(),
@@ -97,17 +120,31 @@ pub fn default_max_fan_out() -> u32 {
 }
 
 impl CxSection {
-    /// Effective default budget — returns the configured value or the
-    /// constant fallback when the section is empty/default.
+    /// Effective default function-line budget — returns the configured
+    /// value or the constant fallback when the section is empty/default.
     pub fn effective_default(&self) -> u32 {
         self.default_max_function_lines
             .unwrap_or(DEFAULT_MAX_FUNCTION_LINES)
+    }
+
+    /// Effective default module-line budget (CX002).
+    pub fn effective_default_module(&self) -> u32 {
+        self.default_max_module_lines
+            .unwrap_or(DEFAULT_MAX_MODULE_LINES)
     }
 
     /// Find the first override whose `module` pattern matches `module_path`,
     /// if any.
     pub fn matching_override(&self, module_path: &str) -> Option<&CxOverride> {
         self.overrides
+            .iter()
+            .find(|o| matches_pattern(&o.module, module_path))
+    }
+
+    /// Find the first module-line override whose `module` pattern matches
+    /// `module_path`, if any.
+    pub fn matching_module_override(&self, module_path: &str) -> Option<&CxModuleOverride> {
+        self.module_overrides
             .iter()
             .find(|o| matches_pattern(&o.module, module_path))
     }
@@ -123,6 +160,15 @@ pub struct CxOverride {
     /// Replacement budget for any function in a file whose `module_path`
     /// matches `module`.
     pub max_function_lines: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct CxModuleOverride {
+    /// Module pattern. Same syntax as `CxOverride.module`.
+    pub module: String,
+    /// Replacement module-line budget for any file whose `module_path`
+    /// matches `module`.
+    pub max_module_lines: u32,
 }
 
 /// Pattern syntax: segment-aligned wildcards.

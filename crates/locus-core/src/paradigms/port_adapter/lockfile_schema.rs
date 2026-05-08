@@ -78,6 +78,18 @@ impl Default for PaSection {
     }
 }
 
+impl PaSection {
+    /// True when no user declarations are populated. PA001 is structural
+    /// (no list needed), so `accepted_colocated_traits` being empty isn't
+    /// itself vacancy. The other three rules (PA002/003/004) need
+    /// declarations.
+    pub fn is_vacant(&self) -> bool {
+        self.application_paths.is_empty()
+            && self.concrete_adapter_patterns.is_empty()
+            && self.adapter_type_patterns.is_empty()
+    }
+}
+
 /// Pattern syntax: segment-aligned wildcards, matching BO/CR.
 /// - `foo::bar` — exact match
 /// - `foo::*` — `foo` itself or any descendant (`foo::bar`, `foo::bar::baz`)

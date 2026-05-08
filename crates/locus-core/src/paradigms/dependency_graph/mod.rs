@@ -17,7 +17,7 @@
 // ot: canonical
 
 use super::Paradigm;
-use crate::diagnostics::{CheckMode, Diagnostic};
+use crate::diagnostics::{CheckMode, Diagnostic, vacant_paradigm_diagnostic};
 use crate::lockfile::Lockfile;
 use locus_air::AirWorkspace;
 
@@ -45,8 +45,31 @@ impl Paradigm for DependencyGraph {
     fn check(&self, air: &AirWorkspace, lockfile: &Lockfile, mode: CheckMode) -> Vec<Diagnostic> {
         let section: lockfile_schema::DgSection =
             lockfile.paradigm_section(DG_PREFIX).unwrap_or_default();
-        let mut out = rules::dg001(air, &section, mode);
-        out.extend(rules::dg002(air, mode));
+        // DG002 (cycle detection) is structural — keep it on regardless
+        // of vacancy.
+        let mut out = rules::dg002(air, mode);
+        if section.is_vacant() && !lockfile.is_acknowledged_empty(DG_PREFIX) {
+            out.push(vacant_paradigm_diagnostic(
+                DG_PREFIX,
+                "Dependency Graph / Direction",
+                &[
+                    (
+                        "forbidden_edges",
+                        "edges the workspace forbids (DG001)",
+                    ),
+                    (
+                        "features",
+                        "named feature regions with `public_api` patterns (DG003)",
+                    ),
+                    (
+                        "shared_paths",
+                        "module patterns for shared infrastructure (DG004)",
+                    ),
+                ],
+            ));
+            return out;
+        }
+        out.extend(rules::dg001(air, &section, mode));
         out.extend(rules::dg003(air, &section, mode));
         out.extend(rules::dg004(air, &section, mode));
         out

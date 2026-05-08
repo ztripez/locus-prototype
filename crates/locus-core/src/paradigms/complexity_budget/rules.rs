@@ -2,21 +2,23 @@
 //!
 //! Implemented:
 //! - [`cx001`]: function exceeds its line budget.
+//! - [`cx002`]: file/module exceeds its line budget.
 //! - [`cx007`]: file exposes more public API items than `max_public_items`.
 //! - [`cx008`]: function issues more call sites than `max_fan_out` and
 //!   doesn't live under an accepted `orchestration_paths` module.
 //!
 //! Future CX rules will cover the spec's broader complexity story
-//! (responsibility entropy, branchy converters, …). CX001 is the simplest,
-//! most useful complexity check: line count per function vs a configurable
-//! budget. CX007/CX008 add per-file API surface and per-function fan-out
-//! caps so the budget story covers shape, not just length.
+//! (responsibility entropy, branchy converters, …). CX001 caps function
+//! length, CX002 caps module length, CX007 caps a file's public API
+//! surface, CX008 caps a function's outbound fan-out — together they
+//! cover the major shape-overrun cases without a deep AST audit.
 
 use std::collections::HashMap;
 
 use locus_air::{AirItem, AirWorkspace, Visibility};
 
 use super::lockfile_schema::{CxSection, matches_pattern};
+use locus_air::AirSpan;
 use crate::diagnostics::{CheckMode, Diagnostic, Severity};
 
 /// CX001 — function exceeds its line budget.
@@ -33,15 +35,13 @@ use crate::diagnostics::{CheckMode, Diagnostic, Severity};
 /// Severity: Warning by default. `--agent-strict` elevates to Fatal via
 /// [`CheckMode::elevate`].
 ///
-/// Lockfile-driven silence: when the section is fully default (no
-/// `default_max_function_lines` set AND no overrides), CX001 emits
-/// nothing. Same convention as the other lockfile-driven rules — pre-
-/// onboarding, we don't have the user's intent and shouldn't fire on
-/// un-configured projects.
+/// Fires by default — the section's built-in fallback budget
+/// ([`super::lockfile_schema::DEFAULT_MAX_FUNCTION_LINES`]) is treated as
+/// real configuration. Configuration narrows: users raise the budget on
+/// dense modules via `paradigms.CX.overrides`, or replace the workspace
+/// default via `default_max_function_lines`. Add the prefix to
+/// `acknowledged_empty` to silence the paradigm entirely.
 pub fn cx001(air: &AirWorkspace, section: &CxSection, mode: CheckMode) -> Vec<Diagnostic> {
-    if section.default_max_function_lines.is_none() && section.overrides.is_empty() {
-        return Vec::new();
-    }
     let default_budget = section.effective_default();
     let mut out = Vec::new();
     for pkg in &air.packages {
@@ -105,6 +105,90 @@ pub fn cx001(air: &AirWorkspace, section: &CxSection, mode: CheckMode) -> Vec<Di
                     ),
                 });
             }
+        }
+    }
+    out
+}
+
+/// CX002 — module exceeds its line budget.
+///
+/// For each `AirFile` with a `module_path`, compare the file's
+/// `line_count` against the file's effective module budget:
+/// - if the file's `module_path` matches a `module_overrides` entry, the
+///   override's `max_module_lines` wins (first match);
+/// - otherwise the section's `default_max_module_lines` (or the constant
+///   fallback [`super::lockfile_schema::DEFAULT_MAX_MODULE_LINES`]) is used.
+///
+/// One diagnostic per oversized file. Anchored at line 1 of the file (the
+/// violation is the file's responsibility, not any specific item).
+///
+/// Severity: Warning by default. `--agent-strict` elevates to Fatal via
+/// [`CheckMode::elevate`].
+///
+/// Fires by default — the section's built-in fallback is treated as
+/// real configuration so un-onboarded code isn't a CX002 blind spot.
+/// Once a project starts hitting CX002 noise on legitimately-dense
+/// modules (rule tables, large lockfile schemas), the user raises the
+/// budget via `paradigms.CX.module_overrides` or
+/// `paradigms.CX.default_max_module_lines`.
+pub fn cx002(air: &AirWorkspace, section: &CxSection, mode: CheckMode) -> Vec<Diagnostic> {
+    let default_budget = section.effective_default_module();
+    let mut out = Vec::new();
+    for pkg in &air.packages {
+        for file in &pkg.files {
+            let Some(module_path) = file.module_path.as_deref() else {
+                continue;
+            };
+            let matched_override = section.matching_module_override(module_path);
+            let budget = matched_override
+                .map(|o| o.max_module_lines)
+                .unwrap_or(default_budget);
+
+            if file.line_count <= budget {
+                continue;
+            }
+
+            let mut why = vec![
+                format!(
+                    "file `{}` spans {} line(s)",
+                    file.path, file.line_count
+                ),
+                if let Some(o) = matched_override {
+                    format!("budget {budget} from override `module = {}`", o.module)
+                } else {
+                    format!("budget {budget} (workspace default)")
+                },
+            ];
+            if matched_override.is_none() && section.default_max_module_lines.is_none() {
+                why.push(format!(
+                    "no `default_max_module_lines` configured; using built-in fallback {}",
+                    default_budget
+                ));
+            }
+
+            out.push(Diagnostic {
+                rule_id: "CX002".to_string(),
+                severity: mode.elevate(Severity::Warning),
+                span: AirSpan::new(file.path.clone(), 1, 1),
+                concept: None,
+                message: format!(
+                    "module `{module_path}` is {} lines, budget {} ({})",
+                    file.line_count,
+                    budget,
+                    match matched_override {
+                        Some(o) => format!("override `{}`", o.module),
+                        None => "workspace default".to_string(),
+                    }
+                ),
+                why,
+                suggested_fix: Some(
+                    "split the module into smaller, more focused files each owning one \
+                     responsibility, or — if this density is intended (e.g. a rule table, \
+                     a lockfile schema, a state machine) — raise the budget by adding an \
+                     override to `paradigms.CX.module_overrides` in `locus.lock`"
+                        .into(),
+                ),
+            });
         }
     }
     out
@@ -351,10 +435,26 @@ mod tests {
     }
 
     #[test]
-    fn cx001_silent_on_default_section() {
-        // No fields configured — must stay silent regardless of function shape.
-        // Mirrors the DG/MO lockfile-driven convention.
+    fn cx001_fires_with_built_in_fallback_on_default_section() {
+        // Default section uses DEFAULT_MAX_FUNCTION_LINES (50) as the
+        // budget. A 500-line function trips it without any user
+        // configuration — the rule fires by default per the
+        // "noisy-by-default, configuration narrows" convention.
         let air = air_with(Some("foo::bar"), vec![func("big", 500)]);
+        let section = CxSection::default();
+        let diags = cx001(&air, &section, CheckMode::Human);
+        assert_eq!(diags.len(), 1, "expected one diag, got {diags:?}");
+        assert!(
+            diags[0].why.iter().any(|w| w.contains("built-in fallback")),
+            "expected built-in fallback explanation in why; got {:?}",
+            diags[0].why,
+        );
+    }
+
+    #[test]
+    fn cx001_quiet_when_function_within_built_in_fallback() {
+        // 30-line function under the 50-line built-in fallback → no diag.
+        let air = air_with(Some("foo::bar"), vec![func("small", 30)]);
         let section = CxSection::default();
         assert!(cx001(&air, &section, CheckMode::Human).is_empty());
     }

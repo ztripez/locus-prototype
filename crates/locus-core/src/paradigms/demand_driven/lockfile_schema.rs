@@ -49,6 +49,16 @@ pub struct DaSection {
     pub strategy_name_patterns: Vec<String>,
 }
 
+impl DaSection {
+    /// True when DA is opted out (the master switch is `false`). All DA
+    /// rules gate on `enabled`, so without it the paradigm produces no
+    /// signal — LOCUS002 nudges users to either flip the switch or ack
+    /// the paradigm.
+    pub fn is_vacant(&self) -> bool {
+        !self.enabled
+    }
+}
+
 impl Default for DaSection {
     fn default() -> Self {
         Self {

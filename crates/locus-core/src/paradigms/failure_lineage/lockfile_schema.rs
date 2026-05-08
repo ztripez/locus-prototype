@@ -126,6 +126,24 @@ impl Default for FlSection {
     }
 }
 
+impl FlSection {
+    /// True when none of the user-declarative lists are populated. FL002
+    /// (panic-shaped) / FL003 (silent discard) / FL004 (`let _ =`) /
+    /// FL005-007 / FL011 / FL013 all fire on seeded callee patterns but
+    /// rely on `invariant_owner_paths` to carve out tests and other
+    /// invariant-owner modules — without it, every test's `unwrap()`
+    /// trips FL002. FL001 needs `domain_paths` + `boundary_error_patterns`,
+    /// FL012 needs `retry_policy_owner_paths`. The vacancy diagnostic
+    /// nudges users to populate at least the `invariant_owner_paths`
+    /// list so the noise becomes targeted.
+    pub fn is_vacant(&self) -> bool {
+        self.domain_paths.is_empty()
+            && self.boundary_error_patterns.is_empty()
+            && self.invariant_owner_paths.is_empty()
+            && self.retry_policy_owner_paths.is_empty()
+    }
+}
+
 /// Default forbidden callees for FL002: the standard agent-introduced
 /// "make it compile by unwrapping" family. Matched against
 /// `AirCallSite.callee` (last `::` segment for path-qualified macros), so

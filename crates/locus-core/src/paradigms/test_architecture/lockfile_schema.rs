@@ -21,6 +21,15 @@
 
 use serde::{Deserialize, Serialize};
 
+impl TaSection {
+    /// True when no `test_paths` are declared. Every TA rule (TA001
+    /// public types in tests, TA002/003 canonical-shadow checks, TA004
+    /// port-impl in tests) is anchored on which files are tests.
+    pub fn is_vacant(&self) -> bool {
+        self.test_paths.is_empty()
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
 pub struct TaSection {
     /// Module patterns matching `AirFile.module_path` for files declared as

@@ -15,6 +15,16 @@
 
 use serde::{Deserialize, Serialize};
 
+impl UtSection {
+    /// True when neither `utility_paths` nor `generic_utility_patterns`
+    /// are populated. UT001/002/004/005 all need `utility_paths`; UT003
+    /// needs `generic_utility_patterns` (which has no built-in default —
+    /// users seed via `init`).
+    pub fn is_vacant(&self) -> bool {
+        self.utility_paths.is_empty() && self.generic_utility_patterns.is_empty()
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
 pub struct UtSection {
     /// Module patterns matching `AirFile.module_path` for files declared as

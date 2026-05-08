@@ -4,19 +4,21 @@
 //!
 //! Reads `AirItem::Function` items from each file and compares each
 //! function's `line_count` against a per-module budget held in the
-//! lockfile's CX section. The first CX rule (`CX001`) flags functions
-//! whose line count exceeds the configured budget. CX007 caps the public
-//! API surface a single file may expose; CX008 caps the number of call
-//! sites a single function may issue outside an accepted orchestration
-//! module.
+//! lockfile's CX section. CX001 flags long functions (default 50);
+//! CX002 flags long files (default 400); CX007 caps the per-file
+//! public-API surface (default 30); CX008 caps the per-function call-site
+//! fan-out outside an accepted orchestration module.
 //!
 //! `init` returns `Null`: there's no automatic inference for "this
 //! function is allowed to be long" — the user has to declare the
-//! override (or the default) deliberately, same as DG/MO. Without a CX
-//! section, CX001 stays silent so un-onboarded code isn't bombarded
-//! with line-budget warnings. CX007 ships with sensible defaults and
-//! fires immediately; CX008 stays silent until `orchestration_paths` is
-//! populated.
+//! override deliberately. CX is **noisy by default**: built-in fallback
+//! budgets fire on un-onboarded code (CX001/CX002/CX007 fire immediately
+//! with their defaults); CX008 stays vacant-on-empty because deciding
+//! where high fan-out is legitimate is a deliberate user act. Users
+//! widen budgets via `paradigms.CX.overrides` / `module_overrides`,
+//! `default_max_function_lines`, `default_max_module_lines`,
+//! `max_public_items`, `exempt_paths`, or silence the paradigm wholesale
+//! by adding `"CX"` to `Lockfile.acknowledged_empty`.
 
 // ot: canonical
 
@@ -48,6 +50,7 @@ impl Paradigm for ComplexityBudget {
         let section: lockfile_schema::CxSection =
             lockfile.paradigm_section(CX_PREFIX).unwrap_or_default();
         let mut diags = rules::cx001(air, &section, mode);
+        diags.extend(rules::cx002(air, &section, mode));
         diags.extend(rules::cx007(air, &section, mode));
         diags.extend(rules::cx008(air, &section, mode));
         diags

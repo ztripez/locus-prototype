@@ -11,6 +11,15 @@
 
 use serde::{Deserialize, Serialize};
 
+impl FoSection {
+    /// True when no features and no shared paths are declared. FO001
+    /// (cross-feature concept duplication) needs `features`; FO004
+    /// (shared knowing about features) needs both lists.
+    pub fn is_vacant(&self) -> bool {
+        self.features.is_empty() && self.shared_paths.is_empty()
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
 pub struct FoSection {
     /// Named feature regions of the workspace. FO001 fires when the same
