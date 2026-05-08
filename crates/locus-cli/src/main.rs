@@ -164,6 +164,9 @@ enum Command {
     /// Manage RM (Responsibility Mixing) declarations in `locus.lock`.
     #[command(subcommand)]
     Rm(RmCommand),
+    /// Manage RW (Runtime Work Ownership) declarations in `locus.lock`.
+    #[command(subcommand)]
+    Rw(RwCommand),
     /// Manage TA (Test Architecture Ownership) declarations in `locus.lock`.
     #[command(subcommand)]
     Ta(TaCommand),
@@ -663,6 +666,22 @@ struct RmAddDomainPathArgs {
     workspace: PathBuf,
 }
 
+// ot: boundary cli.rw cli
+#[derive(Subcommand, Debug)]
+enum RwCommand {
+    /// Mark a module pattern as a runtime owner (RW001).
+    AcceptRuntimeOwner(RwAcceptRuntimeOwnerArgs),
+}
+
+// ot: boundary cli.rw-accept-runtime-owner cli
+#[derive(clap::Args, Debug)]
+struct RwAcceptRuntimeOwnerArgs {
+    /// Module path glob.
+    pattern: String,
+    #[arg(long, default_value = ".")]
+    workspace: PathBuf,
+}
+
 // ot: boundary cli.ta cli
 #[derive(Subcommand, Debug)]
 enum TaCommand {
@@ -758,6 +777,7 @@ fn main() -> Result<()> {
         Command::Ob(cmd) => ob(cmd),
         Command::Pa(cmd) => pa(cmd),
         Command::Rm(cmd) => rm(cmd),
+        Command::Rw(cmd) => rw(cmd),
         Command::Ta(cmd) => ta(cmd),
         Command::Ut(cmd) => ut(cmd),
     }
@@ -1402,6 +1422,36 @@ fn rm_add_domain_path_cli(args: RmAddDomainPathArgs) -> Result<()> {
         .with_context(|| format!("write lockfile to {}", args.workspace.display()))?;
 
     println!("added RM domain path pattern `{}`", args.pattern);
+    println!("updated {}", written.display());
+    Ok(())
+}
+
+fn rw(cmd: RwCommand) -> Result<()> {
+    match cmd {
+        RwCommand::AcceptRuntimeOwner(args) => rw_accept_runtime_owner_cli(args),
+    }
+}
+
+fn rw_accept_runtime_owner_cli(args: RwAcceptRuntimeOwnerArgs) -> Result<()> {
+    use locus_core::paradigms::runtime_work::edit::add_runtime_owner_path;
+    use locus_core::paradigms::runtime_work::lockfile_schema::RwSection;
+
+    let mut lockfile = Lockfile::load_or_empty(&args.workspace)
+        .with_context(|| format!("load lockfile from {}", args.workspace.display()))?;
+    let mut section: RwSection = lockfile
+        .paradigm_section("RW")
+        .context("RW lockfile section is malformed")?;
+
+    add_runtime_owner_path(&mut section, &args.pattern)
+        .with_context(|| format!("add RW runtime owner path `{}`", args.pattern))?;
+
+    let value = serde_json::to_value(&section).context("serialize RW section")?;
+    lockfile.paradigms.insert("RW".to_string(), value);
+    let written = lockfile
+        .save(&args.workspace)
+        .with_context(|| format!("write lockfile to {}", args.workspace.display()))?;
+
+    println!("added RW runtime owner pattern `{}`", args.pattern);
     println!("updated {}", written.display());
     Ok(())
 }
