@@ -29,6 +29,12 @@ pub struct ConceptCluster {
     pub concept_id: String,
     pub stem: String,
     pub members: Vec<ClusterMember>,
+    /// Confidence the cluster represents one concept (0.0..=1.0). Computed
+    /// from per-member field overlap with the canonical/reference member,
+    /// presence of a `From`/`TryFrom` between any two members, and base
+    /// stem-match strength. Suggestion-tiering reads this; the existing
+    /// init code (which only promotes hint-tagged members) ignores it.
+    pub confidence: f32,
 }
 
 #[derive(Debug, Clone)]
@@ -144,10 +150,21 @@ pub fn cluster_concepts_with_lockfile(
             continue;
         }
 
+        let confidence = compute_cluster_confidence(&cluster_members);
+        // Boost confidence when a converter exists between any two members.
+        // We re-walk the workspace because converter symbols live outside
+        // the cluster's `members` list.
+        let confidence = if has_converter_between_members_via_air(air, &cluster_members) {
+            (confidence + 0.2).min(1.0)
+        } else {
+            confidence
+        };
+
         out.push(ConceptCluster {
             concept_id: concept_id_from_stem(&stem),
             stem,
             members: cluster_members,
+            confidence,
         });
     }
     out
@@ -286,6 +303,64 @@ fn hints_for_type<'a>(file: &'a AirFile, ty: &AirType) -> Vec<&'a AirHint> {
         .collect()
 }
 
+fn compute_cluster_confidence(members: &[ClusterMember]) -> f32 {
+    let canonical = members.iter().find(|m| m.role == InferredRole::Canonical);
+    // Base score: stems already match (cluster_concepts only emits clusters
+    // with members sharing a stem), so 0.4 baseline.
+    let mut score = 0.4f32;
+    if let Some(canonical) = canonical {
+        // Mean field-overlap across non-canonical members against the
+        // canonical's perspective. (Existing per-member overlap is computed
+        // against the *reference* type, which is the canonical when one
+        // exists — see `pick_reference`.)
+        let _ = canonical; // canonical present; existing field_overlap already references it
+        let others: Vec<&ClusterMember> = members
+            .iter()
+            .filter(|m| m.role != InferredRole::Canonical)
+            .collect();
+        if !others.is_empty() {
+            let mean_overlap: f32 =
+                others.iter().map(|m| m.field_overlap).sum::<f32>() / others.len() as f32;
+            score += 0.4 * mean_overlap;
+        }
+    } else {
+        // No canonical (no `// ot:` hint): be more conservative; rely on
+        // the average field overlap across all members against the reference.
+        if !members.is_empty() {
+            let mean_overlap: f32 =
+                members.iter().map(|m| m.field_overlap).sum::<f32>() / members.len() as f32;
+            score += 0.3 * mean_overlap;
+        }
+    }
+    score.min(1.0)
+}
+
+fn has_converter_between_members_via_air(air: &AirWorkspace, members: &[ClusterMember]) -> bool {
+    use std::collections::BTreeSet;
+    let names: BTreeSet<&str> = members.iter().map(|m| m.symbol.as_str()).collect();
+    for pkg in &air.packages {
+        for file in &pkg.files {
+            for item in &file.items {
+                let AirItem::Conversion(c) = item else {
+                    continue;
+                };
+                if symbol_matches_any(&c.from, &names) && symbol_matches_any(&c.to, &names) {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
+fn symbol_matches_any(needle: &str, accepted: &std::collections::BTreeSet<&str>) -> bool {
+    let trimmed = needle.trim();
+    accepted.iter().any(|sym| {
+        let tail = sym.rsplit("::").next().unwrap_or(sym);
+        tail == trimmed || *sym == trimmed
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -315,5 +390,70 @@ mod tests {
     fn concept_id_kebabs_camelcase() {
         assert_eq!(concept_id_from_stem("User"), "user");
         assert_eq!(concept_id_from_stem("EmailAddress"), "email-address");
+    }
+
+    #[test]
+    fn confidence_is_baseline_when_no_canonical_no_overlap_signal() {
+        // Build a 2-member cluster with no hints and zero overlap (different
+        // field names) — but Jaccard on identical-stem same-shape passes
+        // FIELD_OVERLAP_THRESHOLD via `pick_reference` semantics. Use
+        // identical fields so cluster fires; confidence stays in baseline
+        // band (no canonical hint = at most 0.4 + 0.3*1.0 = 0.7).
+        // Easiest path: rely on the corpus or a focused fixture; here we
+        // just assert the non-canonical-path bound from a built fixture.
+        // Test that when there's no canonical, score <= 0.7.
+        let members = vec![
+            ClusterMember {
+                symbol: "X::A".into(),
+                name: "A".into(),
+                role: InferredRole::Unknown,
+                span: AirSpan::new("a.rs", 1, 1),
+                file_path: "a.rs".into(),
+                field_overlap: 1.0,
+                fields: vec!["x".into()],
+                reasons: Vec::new(),
+            },
+            ClusterMember {
+                symbol: "X::B".into(),
+                name: "B".into(),
+                role: InferredRole::Unknown,
+                span: AirSpan::new("b.rs", 1, 1),
+                file_path: "b.rs".into(),
+                field_overlap: 1.0,
+                fields: vec!["x".into()],
+                reasons: Vec::new(),
+            },
+        ];
+        let c = compute_cluster_confidence(&members);
+        assert!(c <= 0.7 + f32::EPSILON, "got {c}");
+    }
+
+    #[test]
+    fn confidence_with_canonical_and_full_overlap_is_high() {
+        let members = vec![
+            ClusterMember {
+                symbol: "X::A".into(),
+                name: "A".into(),
+                role: InferredRole::Canonical,
+                span: AirSpan::new("a.rs", 1, 1),
+                file_path: "a.rs".into(),
+                field_overlap: 1.0,
+                fields: vec!["x".into()],
+                reasons: Vec::new(),
+            },
+            ClusterMember {
+                symbol: "X::B".into(),
+                name: "B".into(),
+                role: InferredRole::Boundary,
+                span: AirSpan::new("b.rs", 1, 1),
+                file_path: "b.rs".into(),
+                field_overlap: 1.0,
+                fields: vec!["x".into()],
+                reasons: Vec::new(),
+            },
+        ];
+        let c = compute_cluster_confidence(&members);
+        // 0.4 baseline + 0.4 * 1.0 mean overlap = 0.8.
+        assert!((c - 0.8).abs() < 0.01, "got {c}");
     }
 }

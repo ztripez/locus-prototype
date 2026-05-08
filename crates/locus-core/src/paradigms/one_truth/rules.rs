@@ -1245,6 +1245,7 @@ mod tests {
                     vec!["name suffix `Model`".into()],
                 ),
             ],
+            confidence: 0.0,
         };
         let diags = ot002(&[cluster], CheckMode::Human);
         assert_eq!(diags.len(), 1);
@@ -1274,6 +1275,7 @@ mod tests {
                     vec![],
                 ),
             ],
+            confidence: 0.0,
         };
         let diags = ot002(&[cluster], CheckMode::Human);
         assert!(diags.is_empty(), "no canonical anchor → no OT002");
@@ -1294,6 +1296,7 @@ mod tests {
                     vec![],
                 ),
             ],
+            confidence: 0.0,
         };
         assert!(ot002(&[cluster], CheckMode::Human).is_empty());
     }
@@ -1313,6 +1316,7 @@ mod tests {
                     vec![],
                 ),
             ],
+            confidence: 0.0,
         };
         let diags = ot002(&[cluster], CheckMode::AgentStrict);
         assert_eq!(diags[0].severity, Severity::Fatal);
@@ -1333,6 +1337,7 @@ mod tests {
                     vec![],
                 ),
             ],
+            confidence: 0.0,
         };
         assert!(ot002(&[cluster], CheckMode::Human).is_empty());
     }
@@ -1360,6 +1365,7 @@ mod tests {
                     vec![],
                 ),
             ],
+            confidence: 0.0,
         };
         let diags = ot001(&[cluster], CheckMode::Human);
         assert_eq!(diags.len(), 1, "one extra canonical → one diagnostic");
@@ -1387,6 +1393,7 @@ mod tests {
                 member("U2", "crate::U2", InferredRole::Canonical, 1.0, vec![]),
                 member("U3", "crate::U3", InferredRole::Canonical, 1.0, vec![]),
             ],
+            confidence: 0.0,
         };
         let diags = ot001(&[cluster], CheckMode::Human);
         assert_eq!(
@@ -1411,6 +1418,7 @@ mod tests {
                     vec![],
                 ),
             ],
+            confidence: 0.0,
         };
         assert!(ot001(&[cluster], CheckMode::Human).is_empty());
     }
