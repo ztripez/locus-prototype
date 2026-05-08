@@ -53,10 +53,7 @@ impl Paradigm for DependencyGraph {
                 DG_PREFIX,
                 "Dependency Graph / Direction",
                 &[
-                    (
-                        "forbidden_edges",
-                        "edges the workspace forbids (DG001)",
-                    ),
+                    ("forbidden_edges", "edges the workspace forbids (DG001)"),
                     (
                         "features",
                         "named feature regions with `public_api` patterns (DG003)",

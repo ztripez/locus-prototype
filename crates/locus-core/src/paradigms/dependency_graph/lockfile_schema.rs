@@ -14,9 +14,7 @@ impl DgSection {
     /// detection) is structural and fires regardless; DG001/003/004 need
     /// `forbidden_edges`, `features`, or `shared_paths`.
     pub fn is_vacant(&self) -> bool {
-        self.forbidden_edges.is_empty()
-            && self.features.is_empty()
-            && self.shared_paths.is_empty()
+        self.forbidden_edges.is_empty() && self.features.is_empty() && self.shared_paths.is_empty()
     }
 }
 

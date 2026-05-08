@@ -49,7 +49,10 @@ impl Paradigm for FeatureOwnership {
                 FO_PREFIX,
                 "Feature Ownership",
                 &[
-                    ("features", "named feature regions (`name` + `module` pattern)"),
+                    (
+                        "features",
+                        "named feature regions (`name` + `module` pattern)",
+                    ),
                     (
                         "shared_paths",
                         "module patterns identifying shared cross-feature regions (FO004)",

@@ -18,8 +18,8 @@ use std::collections::HashMap;
 use locus_air::{AirItem, AirWorkspace, Visibility};
 
 use super::lockfile_schema::{CxSection, matches_pattern};
-use locus_air::AirSpan;
 use crate::diagnostics::{CheckMode, Diagnostic, Severity};
+use locus_air::AirSpan;
 
 /// CX001 — function exceeds its line budget.
 ///
@@ -149,10 +149,7 @@ pub fn cx002(air: &AirWorkspace, section: &CxSection, mode: CheckMode) -> Vec<Di
             }
 
             let mut why = vec![
-                format!(
-                    "file `{}` spans {} line(s)",
-                    file.path, file.line_count
-                ),
+                format!("file `{}` spans {} line(s)", file.path, file.line_count),
                 if let Some(o) = matched_override {
                     format!("budget {budget} from override `module = {}`", o.module)
                 } else {
