@@ -11,13 +11,13 @@ This file is the per-repo dev-handoff for Claude Code (and other agents — `CLA
 
 ## Project status
 
-19 paradigms registered; 32 rules implemented. Highlight set:
+19 paradigms registered; **72 rules implemented** (up from 41 — see `docs/PARADIGMS.md` "Implementation status (snapshot)" for the per-paradigm rule list). Highlight set:
 
 - **OT** (Canonical Domain Ownership) — OT001–OT012 implemented. End-to-end wiring: AIR emission, paradigm host, lockfile, `locus init / accept canonical|boundary / check` CLI.
 - **DG** (Dependency Graph / Direction) — DG001 (forbidden import), DG002 (dependency cycle via Tarjan SCC), DG003 (cross-feature internals reach), DG004 (shared module reaching feature). Lockfile carries `forbidden_edges`, `features` (with `public_api` patterns), and `shared_paths`. CLI mutators: `locus dg forbid-edge`, `locus dg define-feature`, `locus dg add-shared-path`.
 - **FL** (Failure Lineage) — FL001 (boundary error in domain signature), FL002 (panic-shaped callees), FL003 (silent-discard `.ok()` / `.err()` / `.unwrap_or_else()`), FL004 (`let _ = call(...);` discarded bindings), FL005 (partial `if let Ok/Err = ...` without `else`). All four heuristic rules share `invariant_owner_paths`; FL's matcher accepts the richer `*::tests::*` segment-anywhere wildcard so inline `mod tests {}` blocks are correctly carved out.
-- **DC**, **ER**, **UT**, **RM** — each has a second rule beyond XX001 (DC002 doc-residue phrases, ER002 string-shaped errors, UT002 forbidden imports, RM002 converter side-effects).
-- The remaining 13 paradigms (AB, BO, CF, CR, CX, DA, DC←already listed, ER←already listed, FO, MO, OB, PA, RW, TA, UT←already listed) ship one rule each at XX001.
+- **Every paradigm now ships at least 2 rules.** Largest expansions: MO (4 rules), UT (5), FL (6), TA (4), RM (4), ER (4), DA (3), BO (3), PA (3), CX (3), OB (3), DC (3), RW (3), AB (2), CR (2), FO (2), CF (1+stub).
+- **CF002 is a stub** — lockfile fields ship today; rule body deferred until a filesystem-aware loader lands (consumes `AirWorkspace`, not the filesystem directly).
 
 **Cross-paradigm infrastructure shipped:**
 - `Severity::from_confidence(c, mode)` — spec's 0.50/0.70/0.90 tier helper, used by inference-shaped rules.
@@ -126,7 +126,8 @@ locus check --workspace . --agent-strict # warnings → fatal
 - ✅ Cross-paradigm: `Severity::from_confidence` tier helper; `// ot: allow` + lockfile exceptions wired through the CLI's `check` pipeline.
 - ✅ Second rules for DC, ER, UT, RM (DC002 doc-residue phrases, ER002 string-shaped errors, UT002 forbidden imports, RM002 converter side-effects).
 - 🔜 **Residual silent-error coverage gap** — `let _ = result;` and partial `if let Ok/Err = ...` are now covered (FL004 / FL005, AIR v9). Still missing: `match result { ... Err(_) => () }` (silent arm body), `result.unwrap_or(default)` chains, spawned-task failures with no sink. Each requires either richer arm-body inspection in the visitor or new `FactKind` producers. Spec coverage in `docs/PARADIGMS.md` §"Paradigm 12: Failure Lineage Ownership" → "Coverage gaps".
-- 🔜 Second rules for the remaining 13 paradigms (AB, BO, CF, CR, CX, DA, FO, MO, OB, PA, RW, TA + the implementation-already-listed ones for completeness).
+- ✅ Second rules for every paradigm (16 paradigms beyond OT/DG now each ship 2–6 rules; see `docs/PARADIGMS.md` snapshot).
+- 🔜 Remaining ~21 spec patterns require new visitor work (`match` arm bodies, literal capture, `unwrap_or` chains, closure-arg shape) or new loader output (`BlockingCall`, `HotPath`, `PersistenceWrite`, `ExternalIo`, `RuntimeStateOwner`, `BackgroundWorker`).
 - 🔜 CLI oracle commands: `locus explain`, `locus query <kind>`, `locus debt` (lists active + expired exceptions), `locus graph`, `locus prune`, `locus add adapter`. Spec: `docs/PARADIGMS.md` §"Locus as an Architectural Oracle".
 - 🔜 `--changed` / `--patch` modes for diff-aware checking — without these, agent-strict elevates *all* warnings, not just new ones.
 - 🔜 SARIF / JSON formatters in `locus-report` (currently a stub; CLI hand-rolls output).

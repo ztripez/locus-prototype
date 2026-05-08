@@ -113,24 +113,24 @@ This document is the *target* spec — the full set of paradigms Locus is design
 | Paradigm | Rules shipped | Total in spec | Notes |
 |----------|---------------|---------------|-------|
 | OT (1) | OT001–OT012 | OT001–OT012 | Complete. End-to-end CLI: `init` / `accept canonical|boundary` / `check`. |
-| CF (2) | CF001 | many — see chapter | env-read outside `config_paths`. Magic-constant / inline-policy detection awaits literal-capture. |
-| DA (3) | DA001 | many | single-impl traits without accepted port role. |
+| CF (2) | CF001, CF002 (stub) | many — see chapter | env-read outside `config_paths`. CF002 lockfile fields ship today; rule body deferred until filesystem-aware loader lands. |
+| DA (3) | DA001, DA002, DA007 | many | single-impl traits, single-construct factories, single-variant strategy enums. |
 | DG (4) | DG001–DG004 | DG001–DG004+ | Forbidden imports, cycles (Tarjan SCC), cross-feature internals reach, shared-module reaching feature. |
-| BO (5) | BO001 | many | forbidden import in domain module. |
-| PA (6) | PA001 | many | port + adapter in same file. |
-| CR (7) | CR001 | many | service-shaped construction outside composition root. |
-| RM (8) | RM001, RM002 | many | RM002 (NEW): converter performs side-effect fact (`spawned_work` / `logging` / `config_read`). |
-| MO (9) | MO001 | many | too many public types per file. |
-| CX (10) | CX001 | several | function exceeds line budget. |
-| UT (11) | UT001, UT002 | many | UT002: utility module imports a forbidden feature/domain path. |
-| FL (12) | FL001, FL002, FL003, **FL004**, **FL005** | many | **FL004/FL005 (NEW, AIR v9)**: silent `let _ = call(...)` discards (FL004) and partial `if let Ok/Err = ...` without `else` (FL005). See FL chapter for the residual coverage gap (`match` arm bodies, `unwrap_or` chains, spawned-task no-sink). |
-| ER (13) | ER001, ER002 | several | ER002: string-shaped error in `Result<_, E>` return type. |
-| RW (14) | RW001 | many | spawn outside runtime owner module. |
-| FO (15) | FO001 | many | same type name across two features. |
-| AB (16) | AB001 | many | speculative single-impl trait. |
-| DC (17) | DC001, DC002 | several | DC002: LLM-residue phrases in public doc comments. |
-| OB (18) | OB001 | many | forbidden log target in non-observer file. |
-| TA (19) | TA001 | many | public type in test module. |
+| BO (5) | BO001, BO002, BO004 | many | forbidden imports, persistence types in domain signatures, forbidden derives on canonical types. |
+| PA (6) | PA001, PA002, PA004 | many | port+impl colocation, concrete adapter import in app, adapter construction outside composition root. |
+| CR (7) | CR001, CR002 | many | service-shaped construction outside CR; high-density wiring inside CR. |
+| RM (8) | RM001, RM002, RM003, RM004 | many | action-kind density; converter side-effects; handler policy density; repository branch density. |
+| MO (9) | MO001, MO002, MO003, MO004 | many | public-type budget; responsibility entropy; canonical+boundary colocation; canonical+handler colocation. |
+| CX (10) | CX001, CX007, CX008 | several | function line budget; public-surface budget; fan-out budget. |
+| UT (11) | UT001–UT005 | many | public type in utility; forbidden import; generic-utility module; domain logic in utility; validate/normalize in utility. |
+| FL (12) | FL001–FL005, FL013 | many | Boundary error in domain; panic-shaped callee; silent `.ok()`; `let _ = call`; partial `if let`; lossy stringification. Residual gaps: `match` arm bodies, `unwrap_or` chains, spawned-task no-sink. |
+| ER (13) | ER001, ER002, ER003, ER007 | several | error-type fork; string-shaped error; boundary error in domain enum; duplicate variant across `*Error*` enums. |
+| RW (14) | RW001, RW003, RW004 | many | spawn outside runtime owner; Mutex/RwLock fields outside owner; singleton-shape outside owner. |
+| FO (15) | FO001, FO004 | many | concept name across features; shared type referencing feature internals. |
+| AB (16) | AB001, AB002 | many | speculative single-impl trait; manager/processor abstraction without accepted role. |
+| DC (17) | DC001, DC002, DC004 | several | missing public docs; LLM-residue phrases (with curated alias list); owner-less TODO/FIXME markers. |
+| OB (18) | OB001, OB002, OB003 | many | forbidden log target; unregistered metric emission; unregistered event emission. |
+| TA (19) | TA001, TA002, TA003, TA004 | many | public test type; name-shadow canonical; field-shadow canonical; port impl in tests outside adapter paths. |
 
 **Cross-paradigm infrastructure:**
 - `Severity::from_confidence(c, mode)` implements the spec's 0.50 / 0.70 / 0.90 inference tier table.
