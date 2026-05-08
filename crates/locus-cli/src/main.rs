@@ -582,12 +582,23 @@ struct ObAddForbiddenLogTargetArgs {
 enum PaCommand {
     /// Mark a trait pattern as an accepted co-located trait (PA001).
     AcceptColocated(PaAcceptColocatedArgs),
+    /// Add a module pattern declaring the application layer (PA002).
+    AddApplicationPath(PaAddApplicationPathArgs),
 }
 
 // ot: boundary cli.pa-accept-colocated cli
 #[derive(clap::Args, Debug)]
 struct PaAcceptColocatedArgs {
     /// Trait symbol pattern (full path or short name).
+    pattern: String,
+    #[arg(long, default_value = ".")]
+    workspace: PathBuf,
+}
+
+// ot: boundary cli.pa-add-application-path cli
+#[derive(clap::Args, Debug)]
+struct PaAddApplicationPathArgs {
+    /// Module path glob, e.g. `"crate::application::*"`.
     pattern: String,
     #[arg(long, default_value = ".")]
     workspace: PathBuf,
@@ -1253,6 +1264,7 @@ fn ob_add_forbidden_log_target_cli(args: ObAddForbiddenLogTargetArgs) -> Result<
 fn pa(cmd: PaCommand) -> Result<()> {
     match cmd {
         PaCommand::AcceptColocated(args) => pa_accept_colocated_cli(args),
+        PaCommand::AddApplicationPath(args) => pa_add_application_path_cli(args),
     }
 }
 
@@ -1273,6 +1285,30 @@ fn pa_accept_colocated_cli(args: PaAcceptColocatedArgs) -> Result<()> {
         .with_context(|| format!("write lockfile to {}", args.workspace.display()))?;
 
     println!("accepted co-located trait pattern `{}`", args.pattern);
+    println!("updated {}", written.display());
+    Ok(())
+}
+
+fn pa_add_application_path_cli(args: PaAddApplicationPathArgs) -> Result<()> {
+    use locus_core::paradigms::port_adapter::edit::add_application_path;
+    use locus_core::paradigms::port_adapter::lockfile_schema::PaSection;
+
+    let mut lockfile = Lockfile::load_or_empty(&args.workspace)
+        .with_context(|| format!("load lockfile from {}", args.workspace.display()))?;
+    let mut section: PaSection = lockfile
+        .paradigm_section("PA")
+        .context("PA lockfile section is malformed")?;
+
+    add_application_path(&mut section, &args.pattern)
+        .with_context(|| format!("add PA application path `{}`", args.pattern))?;
+
+    let value = serde_json::to_value(&section).context("serialize PA section")?;
+    lockfile.paradigms.insert("PA".to_string(), value);
+    let written = lockfile
+        .save(&args.workspace)
+        .with_context(|| format!("write lockfile to {}", args.workspace.display()))?;
+
+    println!("added PA application path pattern `{}`", args.pattern);
     println!("updated {}", written.display());
     Ok(())
 }
