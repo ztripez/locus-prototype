@@ -662,6 +662,48 @@ mod cross_paradigm_feature_tests {
     }
 }
 
+/// `(prefix, human-readable name, &[seed commands])`
+pub type VacantSeed<'a> = (&'a str, &'a str, &'a [&'a str]);
+
+pub fn vacancy_seeds(
+    _air: &AirWorkspace,
+    lockfile: &Lockfile,
+    seeds: &[VacantSeed<'_>],
+    specific: &[Suggestion],
+) -> Vec<Suggestion> {
+    let already_covered: std::collections::BTreeSet<String> = specific
+        .iter()
+        .flat_map(|s| s.prefixes.iter().cloned())
+        .collect();
+    seeds
+        .iter()
+        .filter_map(|(prefix, name, cmds)| {
+            if lockfile.is_acknowledged_empty(prefix) {
+                return None;
+            }
+            if already_covered.contains(*prefix) {
+                return None;
+            }
+            Some(Suggestion {
+                category: SuggestionCategory::ParadigmVacant,
+                headline: format!("{prefix} ({name}) has no definitions"),
+                why: Vec::new(),
+                options: vec![
+                    CommandOption {
+                        label: "onboard".into(),
+                        commands: cmds.iter().map(|c| (*c).to_string()).collect(),
+                    },
+                    CommandOption {
+                        label: "or skip".into(),
+                        commands: vec![format!("locus init --acknowledge-empty {prefix}")],
+                    },
+                ],
+                prefixes: vec![(*prefix).to_string()],
+            })
+        })
+        .collect()
+}
+
 /// Compute a percentile of a `u32`-convertible slice. `q` is in `0.0..=1.0`.
 /// Returns `None` if the slice is empty. Uses ceiling-rank: position
 /// `n*q` rounded up, mapped to a 1-based index.
@@ -697,5 +739,77 @@ mod stats_tests {
     #[test]
     fn p50_of_empty_is_none() {
         assert_eq!(percentile::<u32>(&[], 0.50), None);
+    }
+}
+
+#[cfg(test)]
+mod vacancy_tests {
+    use super::*;
+    use crate::lockfile::Lockfile;
+    use locus_air::AirWorkspace;
+
+    #[test]
+    fn vacancy_seed_for_paradigms_with_no_specific_suggestion() {
+        let air = AirWorkspace::new(Vec::new());
+        let lf = Lockfile::empty();
+        let seeds = vacancy_seeds(
+            &air,
+            &lf,
+            &[(
+                "RW",
+                "Runtime Work",
+                &["locus rw accept-runtime-owner \"<glob>\""],
+            )],
+            &[],
+        );
+        assert_eq!(seeds.len(), 1);
+        assert_eq!(seeds[0].category, SuggestionCategory::ParadigmVacant);
+        let cmds = seeds[0].options[0].commands.join("\n");
+        assert!(cmds.contains("locus rw accept-runtime-owner"));
+    }
+
+    #[test]
+    fn vacancy_seed_suppressed_when_specific_suggestion_already_present() {
+        let air = AirWorkspace::new(Vec::new());
+        let lf = Lockfile::empty();
+        let specific = vec![Suggestion {
+            category: SuggestionCategory::Layer,
+            headline: "RW-specific suggestion".into(),
+            why: Vec::new(),
+            options: vec![CommandOption {
+                label: "x".into(),
+                commands: vec!["a".into()],
+            }],
+            prefixes: vec!["RW".into()],
+        }];
+        let seeds = vacancy_seeds(
+            &air,
+            &lf,
+            &[(
+                "RW",
+                "Runtime Work",
+                &["locus rw accept-runtime-owner \"<glob>\""],
+            )],
+            &specific,
+        );
+        assert!(seeds.is_empty());
+    }
+
+    #[test]
+    fn vacancy_seed_suppressed_when_acknowledged_empty() {
+        let air = AirWorkspace::new(Vec::new());
+        let mut lf = Lockfile::empty();
+        lf.acknowledged_empty.push("RW".into());
+        let seeds = vacancy_seeds(
+            &air,
+            &lf,
+            &[(
+                "RW",
+                "Runtime Work",
+                &["locus rw accept-runtime-owner \"<glob>\""],
+            )],
+            &[],
+        );
+        assert!(seeds.is_empty());
     }
 }

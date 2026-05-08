@@ -1666,6 +1666,35 @@ fn init(args: InitArgs) -> Result<()> {
     suggestions.extend(locus_core::init::cross_paradigm_suggestions(
         &air, &lockfile,
     ));
+    let seeds: &[(&str, &str, &[&str])] = &[
+        (
+            "RW",
+            "Runtime Work",
+            &["locus rw accept-runtime-owner \"<glob>\""],
+        ),
+        (
+            "OB",
+            "Observability",
+            &["locus ob add-observer-path \"<glob>\""],
+        ),
+        (
+            "AB",
+            "Abstraction Discipline",
+            &["locus ab accept-single-impl \"<symbol>\""],
+        ),
+        ("DA", "Demand-Driven", &["locus da toggle --enabled true"]),
+        (
+            "DC",
+            "Documentation",
+            &["locus dc toggle --require-public-docs true"],
+        ),
+    ];
+    suggestions.extend(locus_core::init::vacancy_seeds(
+        &air,
+        &lockfile,
+        seeds,
+        &suggestions,
+    ));
     let suggestions = locus_core::init::aggregate(suggestions);
 
     let hints_promoted = count_hint_promotions(&lockfile);
@@ -1907,16 +1936,20 @@ mod init_acknowledge_empty_tests {
         std::fs::create_dir_all(dir.join("src")).unwrap();
         std::fs::write(dir.join("src/lib.rs"), "").unwrap();
 
+        // Ack every paradigm that emits a vacancy seed in `init`; otherwise
+        // `init` calls `process::exit(1)` and aborts the test runner. The
+        // assertion below still verifies the user-supplied `rw, da` round-
+        // trips through the lockfile.
         let args = InitArgs {
             workspace: dir.to_path_buf(),
             no_overwrite: false,
-            acknowledge_empty: Some("rw, da".into()),
+            acknowledge_empty: Some("rw, da, ab, ob, dc".into()),
         };
         init(args).unwrap();
 
         let lockfile_bytes = std::fs::read(dir.join(LOCKFILE_NAME)).unwrap();
         let lf: Lockfile = serde_json::from_slice(&lockfile_bytes).unwrap();
-        assert_eq!(lf.acknowledged_empty, vec!["RW", "DA"]);
+        assert_eq!(lf.acknowledged_empty, vec!["RW", "DA", "AB", "OB", "DC"]);
     }
 }
 
