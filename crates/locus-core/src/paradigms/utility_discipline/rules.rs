@@ -281,28 +281,30 @@ pub fn ut004(air: &AirWorkspace, section: &UtSection, mode: CheckMode) -> Vec<Di
             else {
                 continue;
             };
+            // UT004 only fires on actions whose `target` matches one of the
+            // user's `canonical_construct_patterns` — i.e. the file is doing
+            // *concept-aware* logic, not just generic helper work. UT005
+            // fires on the broader "any Validate/Normalize" shape so it can
+            // catch validation that hasn't been canonicalized yet. The two
+            // rules deliberately don't overlap on the same action: an
+            // action either targets a known concept (UT004) or it doesn't
+            // (UT005's territory).
             for item in &file.items {
                 let AirItem::TruthAction(action) = item else {
                     continue;
                 };
-                let trigger = match action.action {
-                    ActionKind::Validate => Some("validation"),
-                    ActionKind::Normalize => Some("normalization"),
-                    ActionKind::Construct => {
-                        if section
-                            .canonical_construct_patterns
-                            .iter()
-                            .any(|p| matches_pattern(p, &action.target))
-                        {
-                            Some("construction of a canonical concept")
-                        } else {
-                            None
-                        }
-                    }
-                    _ => None,
-                };
-                let Some(label) = trigger else {
+                let target_is_canonical = section
+                    .canonical_construct_patterns
+                    .iter()
+                    .any(|p| matches_pattern(p, &action.target));
+                if !target_is_canonical {
                     continue;
+                }
+                let label = match action.action {
+                    ActionKind::Validate => "validation of a canonical concept",
+                    ActionKind::Normalize => "normalization of a canonical concept",
+                    ActionKind::Construct => "construction of a canonical concept",
+                    _ => continue,
                 };
                 out.push(Diagnostic {
                     rule_id: "UT004".to_string(),
@@ -380,6 +382,19 @@ pub fn ut005(air: &AirWorkspace, section: &UtSection, mode: CheckMode) -> Vec<Di
                     ActionKind::Normalize => "normalization",
                     _ => continue,
                 };
+                // UT004 owns the canonical-target case; UT005 covers the
+                // non-canonical residual so the two rules don't double-fire
+                // on the same action. If the user hasn't populated
+                // `canonical_construct_patterns`, the canonical check is
+                // vacuously false — UT005 fires on every Validate/Normalize
+                // (the broadest posture, matching the rule's intent).
+                let target_is_canonical = section
+                    .canonical_construct_patterns
+                    .iter()
+                    .any(|p| matches_pattern(p, &action.target));
+                if target_is_canonical {
+                    continue;
+                }
                 out.push(Diagnostic {
                     rule_id: "UT005".to_string(),
                     severity: mode.elevate(Severity::Warning),
@@ -778,12 +793,15 @@ mod tests {
 
     #[test]
     fn ut004_fires_on_validate_action_in_utility_module() {
+        // UT004 requires the action target to match a canonical pattern —
+        // otherwise UT005 would handle it.
         let air = air_with_module(
             "x::utils",
-            vec![truth_action(ActionKind::Validate, "email", 5)],
+            vec![truth_action(ActionKind::Validate, "Email", 5)],
         );
         let section = UtSection {
             utility_paths: vec!["x::utils::*".into()],
+            canonical_construct_patterns: vec!["Email".into()],
             ..Default::default()
         };
         let diags = ut004(&air, &section, CheckMode::Human);
@@ -791,17 +809,18 @@ mod tests {
         assert_eq!(diags[0].rule_id, "UT004");
         assert_eq!(diags[0].severity, Severity::Warning);
         assert!(diags[0].message.contains("validation"));
-        assert!(diags[0].message.contains("email"));
+        assert!(diags[0].message.contains("Email"));
     }
 
     #[test]
     fn ut004_fires_on_normalize_action_in_utility_module() {
         let air = air_with_module(
             "x::utils",
-            vec![truth_action(ActionKind::Normalize, "name", 7)],
+            vec![truth_action(ActionKind::Normalize, "UserName", 7)],
         );
         let section = UtSection {
             utility_paths: vec!["x::utils::*".into()],
+            canonical_construct_patterns: vec!["UserName".into()],
             ..Default::default()
         };
         let diags = ut004(&air, &section, CheckMode::Human);
@@ -855,10 +874,11 @@ mod tests {
     fn ut004_agent_strict_elevates_to_fatal() {
         let air = air_with_module(
             "x::utils",
-            vec![truth_action(ActionKind::Validate, "email", 5)],
+            vec![truth_action(ActionKind::Validate, "Email", 5)],
         );
         let section = UtSection {
             utility_paths: vec!["x::utils::*".into()],
+            canonical_construct_patterns: vec!["Email".into()],
             ..Default::default()
         };
         let diags = ut004(&air, &section, CheckMode::AgentStrict);
