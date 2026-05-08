@@ -26,12 +26,27 @@
 //!   `format` / `display`. The error is being lossily collapsed to a string
 //!   on its way out of the function, erasing the failure lineage at the
 //!   source. Lockfile-driven silence via the existing `invariant_owner_paths`.
+//! - [`fl006`]: a `.map_err(|_| ...)` call that discards the closure's
+//!   error argument outside `invariant_owner_paths`. Reads
+//!   [`AirItem::ClosureMethodCall`] (AIR v10) — the source error is
+//!   dropped before being mapped to the new type, so failure lineage is
+//!   broken at the conversion site.
+//! - [`fl007`]: a catch-all `Err(_) => <silent>` match arm whose body is
+//!   `Empty`, `Literal`, or `Call` outside `invariant_owner_paths`. Reads
+//!   [`AirItem::MatchArm`] — every `Err` variant is matched by `_` and
+//!   the failure is silently routed to a default-producing body.
+//! - [`fl011`]: a bare `_ => <silent>` arm whose body is `Empty`,
+//!   `Literal`, or `Call` outside `invariant_owner_paths`. The
+//!   "unknown enum variant routed to a default" anti-pattern — distinct
+//!   from FL007 because the pattern is the bare wildcard, not an `Err`
+//!   variant.
 //!
-//! Future FL rules will tackle the patterns AIR still can't see: `match
-//! result { ..., Err(_) => () }` (arm-body inspection), spawned-task
+//! Future FL rules will tackle the patterns AIR still can't see: spawned-task
 //! failures with no sink (richer fact production).
 
-use locus_air::{AirCallSite, AirItem, AirWorkspace, CallKind};
+use locus_air::{
+    AirCallSite, AirClosureMethodCall, AirItem, AirMatchArm, AirWorkspace, ArmBodyShape, CallKind,
+};
 
 use super::lockfile_schema::{FlSection, containing_module_of, matches_pattern};
 
@@ -803,6 +818,312 @@ fn capitalize_first_fl013(s: &str) -> String {
             out
         }
         _ => s.to_string(),
+    }
+}
+
+/// Render an [`ArmBodyShape`] for diagnostic messages.
+fn body_shape_label(shape: ArmBodyShape) -> &'static str {
+    match shape {
+        ArmBodyShape::Empty => "empty body",
+        ArmBodyShape::Literal => "literal default",
+        ArmBodyShape::Call => "call expression",
+        ArmBodyShape::Return => "return",
+        ArmBodyShape::Propagate => "?-propagation",
+        ArmBodyShape::Block => "block",
+        ArmBodyShape::Other => "other",
+    }
+}
+
+/// True when an arm body is one of the silent / default-producing shapes
+/// FL007 and FL011 fire on.
+fn is_silent_body_shape(shape: ArmBodyShape) -> bool {
+    matches!(
+        shape,
+        ArmBodyShape::Empty | ArmBodyShape::Literal | ArmBodyShape::Call
+    )
+}
+
+/// FL006 — `map_err(|_| ...)` losing source context.
+///
+/// Reads [`AirItem::ClosureMethodCall`] items (AIR v10). Fires on a
+/// `.map_err(...)` call whose closure discards its argument
+/// (`closure_discards_arg == true`, i.e. `|_|` / `||` / `|_, x|`)
+/// outside `invariant_owner_paths`. The original `Err` value is dropped
+/// before it can be wrapped in the new error type, so failure lineage
+/// is broken at the conversion site.
+///
+/// Severity: `mode.elevate(Severity::Warning)` — Warning in human, Fatal
+/// under `--agent-strict`. Same posture as FL002–FL005.
+///
+/// Lockfile-driven silence: stays quiet until `invariant_owner_paths`
+/// is populated.
+pub fn fl006(air: &AirWorkspace, section: &FlSection, mode: CheckMode) -> Vec<Diagnostic> {
+    if section.invariant_owner_paths.is_empty() {
+        return Vec::new();
+    }
+
+    let mut out = Vec::new();
+    for pkg in &air.packages {
+        for file in &pkg.files {
+            let Some(module_path) = file.module_path.as_deref() else {
+                continue;
+            };
+            for item in &file.items {
+                let AirItem::ClosureMethodCall(cmc) = item else {
+                    continue;
+                };
+                if cmc.callee != "map_err" {
+                    continue;
+                }
+                if !cmc.closure_discards_arg {
+                    continue;
+                }
+                if callsite_in_invariant_owner(
+                    module_path,
+                    cmc.function.as_deref(),
+                    &section.invariant_owner_paths,
+                ) {
+                    continue;
+                }
+                out.push(diagnostic_for_fl006(cmc, module_path, mode));
+            }
+        }
+    }
+    out
+}
+
+fn diagnostic_for_fl006(
+    cmc: &AirClosureMethodCall,
+    module_path: &str,
+    mode: CheckMode,
+) -> Diagnostic {
+    let function_label = cmc
+        .function
+        .as_deref()
+        .unwrap_or("<unknown enclosing function>");
+    Diagnostic {
+        rule_id: "FL006".to_string(),
+        severity: mode.elevate(Severity::Warning),
+        span: cmc.span.clone(),
+        concept: None,
+        message: format!(
+            "map_err(|_| ...) in `{module_path}` (fn `{function_label}`) discards \
+             the original error — failure lineage broken at the conversion site"
+        ),
+        why: vec![
+            format!("module `{module_path}`"),
+            format!("enclosing function: `{function_label}`"),
+            "closure pattern is `_` — original `Err` value is dropped".into(),
+            "`map_err` should preserve or transform the source error, not erase it".into(),
+        ],
+        suggested_fix: Some(
+            "replace |_| with |e| <transform>(e) so the source error is wrapped or \
+             logged before being mapped to the new type; or accept the file via \
+             `paradigms.FL.invariant_owner_paths` if this is a legitimate adapter \
+             boundary that has already logged the source. For a one-off, suppress \
+             with `// ot: allow FL006 reason=\"…\" expires=\"YYYY-MM-DD\"`"
+                .into(),
+        ),
+    }
+}
+
+/// FL007 — catch-all `Err(_) =>` arm body silently swallows.
+///
+/// Reads [`AirItem::MatchArm`] items (AIR v10). Fires on an arm whose
+/// pattern matches an `Err` variant *and* contains a wildcard binder
+/// (`Err(_) => …`) AND whose body shape is one of `Empty`, `Literal`,
+/// `Call` — the silent default-producing shapes. Arms that `Return`,
+/// `Propagate` (use `?`), or run a multi-statement `Block` are not
+/// flagged: their author has already taken explicit action.
+///
+/// Pattern detection is text-based: the visitor records the arm's
+/// pattern as rendered text, so we look for the `Err` prefix /
+/// `Err(` substring in combination with the boolean
+/// `pattern_has_wildcard`. This intentionally accepts both the bare
+/// `Err(_)` form and qualified shapes like `MyError::Err(_)` or
+/// `Result::Err(_)`.
+///
+/// Severity: `mode.elevate(Severity::Warning)`.
+///
+/// Lockfile-driven silence: stays quiet until `invariant_owner_paths`
+/// is populated.
+pub fn fl007(air: &AirWorkspace, section: &FlSection, mode: CheckMode) -> Vec<Diagnostic> {
+    if section.invariant_owner_paths.is_empty() {
+        return Vec::new();
+    }
+
+    let mut out = Vec::new();
+    for pkg in &air.packages {
+        for file in &pkg.files {
+            let Some(module_path) = file.module_path.as_deref() else {
+                continue;
+            };
+            for item in &file.items {
+                let AirItem::MatchArm(arm) = item else {
+                    continue;
+                };
+                if !arm.pattern_has_wildcard {
+                    continue;
+                }
+                if !pattern_targets_err_variant(&arm.pattern) {
+                    continue;
+                }
+                if !is_silent_body_shape(arm.body_shape) {
+                    continue;
+                }
+                if callsite_in_invariant_owner(
+                    module_path,
+                    arm.function.as_deref(),
+                    &section.invariant_owner_paths,
+                ) {
+                    continue;
+                }
+                out.push(diagnostic_for_fl007(arm, module_path, mode));
+            }
+        }
+    }
+    out
+}
+
+/// Is the arm pattern an `Err` variant — bare `Err(...)` or path-qualified
+/// (`Result::Err(...)`, `MyEnum::Err(...)`)? FL007 fires on these; FL011
+/// is the bare-`_` complement.
+fn pattern_targets_err_variant(pattern: &str) -> bool {
+    let p = pattern.trim();
+    p == "Err"
+        || p.starts_with("Err(")
+        || p.contains("::Err(")
+        || p.contains("::Err ")
+        || p.ends_with("::Err")
+}
+
+fn diagnostic_for_fl007(arm: &AirMatchArm, module_path: &str, mode: CheckMode) -> Diagnostic {
+    let function_label = arm
+        .function
+        .as_deref()
+        .unwrap_or("<unknown enclosing function>");
+    let body_label = body_shape_label(arm.body_shape);
+    Diagnostic {
+        rule_id: "FL007".to_string(),
+        severity: mode.elevate(Severity::Warning),
+        span: arm.span.clone(),
+        concept: None,
+        message: format!(
+            "catch-all `Err(_) => {body_label}` arm in `{module_path}` (fn `{function_label}`) \
+             silently swallows the failure"
+        ),
+        why: vec![
+            format!("module `{module_path}`"),
+            format!("enclosing function: `{function_label}`"),
+            format!("arm pattern `{}` matches every `Err` variant", arm.pattern),
+            format!("arm body is a `{body_label}` (silent default)"),
+            "the failure has no owner — caller can't tell anything went wrong".into(),
+        ],
+        suggested_fix: Some(format!(
+            "rewrite to bind the error and either log/wrap it or propagate via `?` — \
+             e.g. `Err(e) => return Err(MyError::from(e))`. If `{module_path}` is a \
+             legitimate invariant owner (supervisor, test-support module), add it \
+             to `paradigms.FL.invariant_owner_paths`. For a one-off accepted \
+             swallow, suppress with `// ot: allow FL007 reason=\"…\" \
+             expires=\"YYYY-MM-DD\"`"
+        )),
+    }
+}
+
+/// FL011 — default-variant arm as failure sink.
+///
+/// Reads [`AirItem::MatchArm`] items. Fires on an arm whose pattern is
+/// the bare wildcard `_` (or `_ if guard` — anything that trims to `_`
+/// at the head) AND whose body shape is `Empty`, `Literal`, or `Call`.
+/// The "I don't know what to do here so I'll just default" anti-pattern
+/// on enum scrutinees: an unknown variant should be an explicit error
+/// or explicit ignore, not a silent fall-through.
+///
+/// Distinct from FL007: FL007 fires on `Err(_)` shapes (any pattern
+/// targeting the `Err` variant); FL011 fires only on the bare `_`
+/// pattern. They never overlap.
+///
+/// Severity: `mode.elevate(Severity::Warning)`.
+///
+/// Lockfile-driven silence: stays quiet until `invariant_owner_paths`
+/// is populated.
+pub fn fl011(air: &AirWorkspace, section: &FlSection, mode: CheckMode) -> Vec<Diagnostic> {
+    if section.invariant_owner_paths.is_empty() {
+        return Vec::new();
+    }
+
+    let mut out = Vec::new();
+    for pkg in &air.packages {
+        for file in &pkg.files {
+            let Some(module_path) = file.module_path.as_deref() else {
+                continue;
+            };
+            for item in &file.items {
+                let AirItem::MatchArm(arm) = item else {
+                    continue;
+                };
+                if !is_bare_wildcard_pattern(&arm.pattern) {
+                    continue;
+                }
+                if !is_silent_body_shape(arm.body_shape) {
+                    continue;
+                }
+                if callsite_in_invariant_owner(
+                    module_path,
+                    arm.function.as_deref(),
+                    &section.invariant_owner_paths,
+                ) {
+                    continue;
+                }
+                out.push(diagnostic_for_fl011(arm, module_path, mode));
+            }
+        }
+    }
+    out
+}
+
+/// True when the arm pattern is a bare wildcard — `_` or `_ if guard`.
+/// We deliberately accept the guard form so `_ if cond => 0` still
+/// trips FL011: a guarded silent default is the same anti-pattern.
+fn is_bare_wildcard_pattern(pattern: &str) -> bool {
+    let p = pattern.trim();
+    p == "_" || p.starts_with("_ if ") || p.starts_with("_ @ ")
+}
+
+fn diagnostic_for_fl011(arm: &AirMatchArm, module_path: &str, mode: CheckMode) -> Diagnostic {
+    let function_label = arm
+        .function
+        .as_deref()
+        .unwrap_or("<unknown enclosing function>");
+    let body_label = body_shape_label(arm.body_shape);
+    Diagnostic {
+        rule_id: "FL011".to_string(),
+        severity: mode.elevate(Severity::Warning),
+        span: arm.span.clone(),
+        concept: None,
+        message: format!(
+            "bare `_` arm in `{module_path}` (fn `{function_label}`) returns a \
+             `{body_label}` default — unknown variants silently routed to a sink"
+        ),
+        why: vec![
+            format!("scrutinee `{}`", arm.scrutinee),
+            format!("module `{module_path}`"),
+            format!("enclosing function: `{function_label}`"),
+            "arm pattern is `_`".into(),
+            format!("arm body is a `{body_label}` (silent default)"),
+            "an unknown enum variant should be an error or explicit ignore, \
+             not a default-value fall-through"
+                .into(),
+        ],
+        suggested_fix: Some(format!(
+            "enumerate the missing variants explicitly so the compiler enforces \
+             exhaustiveness; or, if the catch-all is intentional, rewrite as \
+             `_ => Err(SomeError::Unknown)` so the failure has an owner. If \
+             `{module_path}` is a legitimate invariant owner, add it to \
+             `paradigms.FL.invariant_owner_paths`. For a one-off accepted \
+             default, suppress with `// ot: allow FL011 reason=\"…\" \
+             expires=\"YYYY-MM-DD\"`"
+        )),
     }
 }
 
@@ -1812,6 +2133,495 @@ mod tests {
             ],
         );
         let diags = fl013(&air, &fl013_section(), CheckMode::AgentStrict);
+        assert_eq!(diags.len(), 1);
+        assert_eq!(diags[0].severity, Severity::Fatal);
+    }
+
+    // ---- fl006 / fl007 / fl011 helpers ----
+
+    fn closure_method_call(
+        callee: &str,
+        discards: bool,
+        body_shape: ArmBodyShape,
+        function: Option<&str>,
+        line: u32,
+    ) -> AirItem {
+        AirItem::ClosureMethodCall(AirClosureMethodCall {
+            callee: callee.to_string(),
+            closure_discards_arg: discards,
+            body_shape,
+            function: function.map(|s| s.to_string()),
+            span: AirSpan::new("src/domain/user.rs", line, line),
+        })
+    }
+
+    fn match_arm(
+        scrutinee: &str,
+        pattern: &str,
+        has_wildcard: bool,
+        body_shape: ArmBodyShape,
+        function: Option<&str>,
+        line: u32,
+    ) -> AirItem {
+        AirItem::MatchArm(AirMatchArm {
+            scrutinee: scrutinee.to_string(),
+            pattern: pattern.to_string(),
+            pattern_has_wildcard: has_wildcard,
+            body_shape,
+            function: function.map(|s| s.to_string()),
+            span: AirSpan::new("src/domain/user.rs", line, line),
+        })
+    }
+
+    /// Onboarded baseline — same shape as fl003/fl004/fl005 baselines;
+    /// FL006/FL007/FL011 all consult `invariant_owner_paths` only.
+    fn fl_arm_section() -> FlSection {
+        FlSection {
+            invariant_owner_paths: vec!["x::supervisor::*".into()],
+            ..Default::default()
+        }
+    }
+
+    // ---- fl006 behavioural tests ----
+
+    #[test]
+    fn fl006_fires_on_map_err_with_underscore_closure_in_non_invariant_owner_module() {
+        let air = air_with_module(
+            "x::domain::user",
+            vec![closure_method_call(
+                "map_err",
+                true,
+                ArmBodyShape::Call,
+                Some("x::domain::user::greet"),
+                42,
+            )],
+        );
+        let diags = fl006(&air, &fl_arm_section(), CheckMode::Human);
+        assert_eq!(diags.len(), 1, "expected one FL006 diag, got {diags:?}");
+        assert_eq!(diags[0].rule_id, "FL006");
+        assert_eq!(diags[0].severity, Severity::Warning);
+        assert!(diags[0].concept.is_none());
+        assert_eq!(diags[0].span.line_start, 42);
+        assert!(
+            diags[0].message.contains("map_err"),
+            "message should surface the callee; got: {}",
+            diags[0].message,
+        );
+        assert!(diags[0].message.contains("x::domain::user"));
+        assert!(diags[0].message.contains("x::domain::user::greet"));
+        assert!(
+            diags[0]
+                .why
+                .iter()
+                .any(|w| w.contains("closure pattern is `_`")),
+            "why list should call out the discarded closure arg; got: {:?}",
+            diags[0].why,
+        );
+    }
+
+    #[test]
+    fn fl006_fires_inside_inline_test_module_when_test_paths_not_in_invariant_owners() {
+        // Inline `mod tests { fn x() { result.map_err(|_| ()); } }` —
+        // file `module_path` is `x::domain::user`, function symbol is
+        // `x::domain::user::tests::it_works`. `containing_module_of`
+        // strips the last segment → `x::domain::user::tests`, which
+        // doesn't match the supervisor-only baseline → FL006 still fires.
+        let air = air_with_module(
+            "x::domain::user",
+            vec![closure_method_call(
+                "map_err",
+                true,
+                ArmBodyShape::Call,
+                Some("x::domain::user::tests::it_works"),
+                7,
+            )],
+        );
+        let diags = fl006(&air, &fl_arm_section(), CheckMode::Human);
+        assert_eq!(diags.len(), 1);
+        // Now make the test module an invariant owner — diagnostic disappears.
+        let owner_section = FlSection {
+            invariant_owner_paths: vec!["*::tests".into()],
+            ..Default::default()
+        };
+        assert!(fl006(&air, &owner_section, CheckMode::Human).is_empty());
+    }
+
+    #[test]
+    fn fl006_quiet_when_closure_uses_its_arg() {
+        // `result.map_err(|e| MyError::from(e))` — `closure_discards_arg`
+        // is false. No FL006.
+        let air = air_with_module(
+            "x::domain::user",
+            vec![closure_method_call(
+                "map_err",
+                false,
+                ArmBodyShape::Call,
+                Some("x::domain::user::greet"),
+                42,
+            )],
+        );
+        assert!(fl006(&air, &fl_arm_section(), CheckMode::Human).is_empty());
+    }
+
+    #[test]
+    fn fl006_quiet_when_callee_is_not_map_err() {
+        // `unwrap_or_else(|_| ...)` is FL003's territory; FL006 must
+        // ignore non-`map_err` callees regardless of closure shape.
+        let air = air_with_module(
+            "x::domain::user",
+            vec![
+                closure_method_call(
+                    "unwrap_or_else",
+                    true,
+                    ArmBodyShape::Call,
+                    Some("x::domain::user::greet"),
+                    1,
+                ),
+                closure_method_call(
+                    "or_else",
+                    true,
+                    ArmBodyShape::Call,
+                    Some("x::domain::user::greet"),
+                    2,
+                ),
+                closure_method_call(
+                    "and_then",
+                    true,
+                    ArmBodyShape::Call,
+                    Some("x::domain::user::greet"),
+                    3,
+                ),
+            ],
+        );
+        assert!(fl006(&air, &fl_arm_section(), CheckMode::Human).is_empty());
+    }
+
+    #[test]
+    fn fl006_silent_when_invariant_owner_paths_empty() {
+        let air = air_with_module(
+            "x::domain::user",
+            vec![closure_method_call(
+                "map_err",
+                true,
+                ArmBodyShape::Call,
+                Some("x::domain::user::greet"),
+                42,
+            )],
+        );
+        assert!(fl006(&air, &FlSection::default(), CheckMode::Human).is_empty());
+    }
+
+    #[test]
+    fn fl006_quiet_in_invariant_owner_module() {
+        let air = air_with_module(
+            "x::supervisor::root",
+            vec![closure_method_call(
+                "map_err",
+                true,
+                ArmBodyShape::Call,
+                Some("x::supervisor::root::run"),
+                7,
+            )],
+        );
+        assert!(fl006(&air, &fl_arm_section(), CheckMode::Human).is_empty());
+    }
+
+    #[test]
+    fn fl006_agent_strict_elevates_warning_to_fatal() {
+        let air = air_with_module(
+            "x::domain::user",
+            vec![closure_method_call(
+                "map_err",
+                true,
+                ArmBodyShape::Call,
+                Some("x::domain::user::greet"),
+                42,
+            )],
+        );
+        let diags = fl006(&air, &fl_arm_section(), CheckMode::AgentStrict);
+        assert_eq!(diags.len(), 1);
+        assert_eq!(diags[0].severity, Severity::Fatal);
+    }
+
+    // ---- fl007 behavioural tests ----
+
+    #[test]
+    fn fl007_fires_on_err_underscore_arm_with_literal_body() {
+        // `match result { Ok(x) => x, Err(_) => 0 }` — Err arm body is
+        // `Literal`, FL007 fires.
+        let air = air_with_module(
+            "x::domain::user",
+            vec![match_arm(
+                "result",
+                "Err(_)",
+                true,
+                ArmBodyShape::Literal,
+                Some("x::domain::user::lookup"),
+                12,
+            )],
+        );
+        let diags = fl007(&air, &fl_arm_section(), CheckMode::Human);
+        assert_eq!(diags.len(), 1, "expected one FL007 diag, got {diags:?}");
+        assert_eq!(diags[0].rule_id, "FL007");
+        assert_eq!(diags[0].severity, Severity::Warning);
+        assert!(diags[0].concept.is_none());
+        assert!(diags[0].message.contains("Err(_)"));
+        assert!(diags[0].message.contains("silently swallows"));
+        assert!(
+            diags[0]
+                .why
+                .iter()
+                .any(|w| w.contains("arm pattern `Err(_)`")),
+            "why should surface the pattern text; got: {:?}",
+            diags[0].why,
+        );
+    }
+
+    #[test]
+    fn fl007_fires_on_err_underscore_arm_with_call_body() {
+        // `Err(_) => Default::default()` — body shape is `Call`. Still silent.
+        let air = air_with_module(
+            "x::domain::user",
+            vec![match_arm(
+                "result",
+                "Err(_)",
+                true,
+                ArmBodyShape::Call,
+                Some("x::domain::user::lookup"),
+                4,
+            )],
+        );
+        let diags = fl007(&air, &fl_arm_section(), CheckMode::Human);
+        assert_eq!(diags.len(), 1);
+        assert!(diags[0].message.contains("call expression"));
+    }
+
+    #[test]
+    fn fl007_quiet_when_arm_body_propagates() {
+        // `Err(e) => return Err(e.into())` — well, propagation by `?` is
+        // the canonical example. Body shape is `Propagate`; FL007 stays
+        // quiet because the arm has explicitly handled the failure.
+        let air = air_with_module(
+            "x::domain::user",
+            vec![match_arm(
+                "result",
+                "Err(_)",
+                true,
+                ArmBodyShape::Propagate,
+                Some("x::domain::user::lookup"),
+                4,
+            )],
+        );
+        assert!(fl007(&air, &fl_arm_section(), CheckMode::Human).is_empty());
+    }
+
+    #[test]
+    fn fl007_quiet_when_arm_body_returns() {
+        // `Err(_) => return None` — body is `Return`. Control flow leaves
+        // the function explicitly, so the failure has an owner.
+        let air = air_with_module(
+            "x::domain::user",
+            vec![match_arm(
+                "result",
+                "Err(_)",
+                true,
+                ArmBodyShape::Return,
+                Some("x::domain::user::lookup"),
+                4,
+            )],
+        );
+        assert!(fl007(&air, &fl_arm_section(), CheckMode::Human).is_empty());
+    }
+
+    #[test]
+    fn fl007_quiet_when_pattern_does_not_target_err() {
+        // `Ok(_) => 0` — wildcard binder is present but the pattern
+        // doesn't match `Err`. FL011 reasons about `_` patterns; FL007
+        // is the `Err`-specific rule and must not fire here.
+        let air = air_with_module(
+            "x::domain::user",
+            vec![match_arm(
+                "result",
+                "Ok(_)",
+                true,
+                ArmBodyShape::Literal,
+                Some("x::domain::user::lookup"),
+                4,
+            )],
+        );
+        assert!(fl007(&air, &fl_arm_section(), CheckMode::Human).is_empty());
+    }
+
+    #[test]
+    fn fl007_silent_when_invariant_owner_paths_empty() {
+        let air = air_with_module(
+            "x::domain::user",
+            vec![match_arm(
+                "result",
+                "Err(_)",
+                true,
+                ArmBodyShape::Literal,
+                Some("x::domain::user::lookup"),
+                12,
+            )],
+        );
+        assert!(fl007(&air, &FlSection::default(), CheckMode::Human).is_empty());
+    }
+
+    #[test]
+    fn fl007_agent_strict_elevates_warning_to_fatal() {
+        let air = air_with_module(
+            "x::domain::user",
+            vec![match_arm(
+                "result",
+                "Err(_)",
+                true,
+                ArmBodyShape::Literal,
+                Some("x::domain::user::lookup"),
+                12,
+            )],
+        );
+        let diags = fl007(&air, &fl_arm_section(), CheckMode::AgentStrict);
+        assert_eq!(diags.len(), 1);
+        assert_eq!(diags[0].severity, Severity::Fatal);
+    }
+
+    // ---- fl011 behavioural tests ----
+
+    #[test]
+    fn fl011_fires_on_bare_wildcard_arm_with_literal_body() {
+        // `match status { Status::A => 1, _ => 0 }` — bare `_` arm body
+        // is `Literal`. FL011 fires.
+        let air = air_with_module(
+            "x::domain::user",
+            vec![match_arm(
+                "status",
+                "_",
+                true,
+                ArmBodyShape::Literal,
+                Some("x::domain::user::classify"),
+                9,
+            )],
+        );
+        let diags = fl011(&air, &fl_arm_section(), CheckMode::Human);
+        assert_eq!(diags.len(), 1, "expected one FL011 diag, got {diags:?}");
+        assert_eq!(diags[0].rule_id, "FL011");
+        assert_eq!(diags[0].severity, Severity::Warning);
+        assert!(diags[0].concept.is_none());
+        assert!(diags[0].message.contains("bare `_` arm"));
+        assert!(diags[0].message.contains("literal default"));
+        assert!(
+            diags[0]
+                .why
+                .iter()
+                .any(|w| w.contains("scrutinee `status`")),
+            "why should surface the scrutinee; got: {:?}",
+            diags[0].why,
+        );
+    }
+
+    #[test]
+    fn fl011_fires_on_bare_wildcard_arm_with_call_body() {
+        // `_ => Default::default()` — body shape `Call`. Still silent.
+        let air = air_with_module(
+            "x::domain::user",
+            vec![match_arm(
+                "status",
+                "_",
+                true,
+                ArmBodyShape::Call,
+                Some("x::domain::user::classify"),
+                3,
+            )],
+        );
+        let diags = fl011(&air, &fl_arm_section(), CheckMode::Human);
+        assert_eq!(diags.len(), 1);
+        assert!(diags[0].message.contains("call expression"));
+    }
+
+    #[test]
+    fn fl011_quiet_on_err_underscore_pattern() {
+        // `Err(_)` is FL007's territory. FL011 must ignore patterns that
+        // aren't the bare `_`.
+        let air = air_with_module(
+            "x::domain::user",
+            vec![match_arm(
+                "result",
+                "Err(_)",
+                true,
+                ArmBodyShape::Literal,
+                Some("x::domain::user::lookup"),
+                4,
+            )],
+        );
+        assert!(fl011(&air, &fl_arm_section(), CheckMode::Human).is_empty());
+    }
+
+    #[test]
+    fn fl011_quiet_when_arm_body_returns() {
+        // `_ => return None` — body is `Return`. Explicit handling, no FL011.
+        let air = air_with_module(
+            "x::domain::user",
+            vec![match_arm(
+                "status",
+                "_",
+                true,
+                ArmBodyShape::Return,
+                Some("x::domain::user::classify"),
+                3,
+            )],
+        );
+        assert!(fl011(&air, &fl_arm_section(), CheckMode::Human).is_empty());
+    }
+
+    #[test]
+    fn fl011_quiet_when_arm_body_is_block() {
+        // Multi-statement block — could be doing real work. FL011 doesn't
+        // pre-judge.
+        let air = air_with_module(
+            "x::domain::user",
+            vec![match_arm(
+                "status",
+                "_",
+                true,
+                ArmBodyShape::Block,
+                Some("x::domain::user::classify"),
+                3,
+            )],
+        );
+        assert!(fl011(&air, &fl_arm_section(), CheckMode::Human).is_empty());
+    }
+
+    #[test]
+    fn fl011_silent_when_invariant_owner_paths_empty() {
+        let air = air_with_module(
+            "x::domain::user",
+            vec![match_arm(
+                "status",
+                "_",
+                true,
+                ArmBodyShape::Literal,
+                Some("x::domain::user::classify"),
+                9,
+            )],
+        );
+        assert!(fl011(&air, &FlSection::default(), CheckMode::Human).is_empty());
+    }
+
+    #[test]
+    fn fl011_agent_strict_elevates_warning_to_fatal() {
+        let air = air_with_module(
+            "x::domain::user",
+            vec![match_arm(
+                "status",
+                "_",
+                true,
+                ArmBodyShape::Literal,
+                Some("x::domain::user::classify"),
+                9,
+            )],
+        );
+        let diags = fl011(&air, &fl_arm_section(), CheckMode::AgentStrict);
         assert_eq!(diags.len(), 1);
         assert_eq!(diags[0].severity, Severity::Fatal);
     }

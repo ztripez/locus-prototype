@@ -78,7 +78,23 @@ use serde::{Deserialize, Serialize};
 ///
 ///   Closes the silent-error coverage gap that FL003 (which only sees
 ///   `.ok()` / `.err()` method-call shape) couldn't reach.
-pub const AIR_SCHEMA_VERSION: u32 = 9;
+/// - **10**: `match` arm bodies + closure-arg shape. Adds:
+///     - `AirItem::MatchArm` — for every arm of every `match` expression
+///       the visitor sees, records the pattern text, whether it contains
+///       a wildcard binder (`_`), an `ArmBodyShape` heuristic for what the
+///       arm's body does (`Empty` / `Literal` / `Call` / `Return` /
+///       `Propagate` (uses `?`) / `Block` / `Other`), and the enclosing
+///       function. Lets FL007 (catch-all `Err(_)`), FL011 (default-variant
+///       failure sinks), and ER005 (catch-all error mapping) reason about
+///       arm-level silence the previous AIR couldn't see.
+///     - `AirItem::ClosureMethodCall` — for every method call whose first
+///       argument is a closure (e.g. `result.map_err(|_| Default::default())`,
+///       `result.unwrap_or_else(|e| log(e))`, `opt.or_else(|| ...)`),
+///       records the callee, whether the closure pattern discards its
+///       argument with `_`, and a body shape. Lets FL006 (`map_err`
+///       losing source context) flag closures that throw the original
+///       error away.
+pub const AIR_SCHEMA_VERSION: u32 = 10;
 
 // ot: canonical
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -141,6 +157,8 @@ pub enum AirItem {
     CallSite(AirCallSite),
     SilentDiscard(AirSilentDiscard),
     PartialIfLet(AirPartialIfLet),
+    MatchArm(AirMatchArm),
+    ClosureMethodCall(AirClosureMethodCall),
 }
 
 // ot: canonical
@@ -361,6 +379,82 @@ pub struct AirPartialIfLet {
     /// We record this so FL005 can phrase the diagnostic precisely
     /// (a missing `Err` branch reads differently from a missing `Ok` one).
     pub variant: String,
+    /// Enclosing function's symbol, if known.
+    pub function: Option<String>,
+    pub span: AirSpan,
+}
+
+/// One arm of a `match` expression. The visitor emits one
+/// `AirItem::MatchArm` per arm so paradigm rules can reason about the
+/// shape of each arm's body — specifically whether a `Result`-shape arm
+/// silently swallows the unmatched case.
+// ot: canonical
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AirMatchArm {
+    /// The match expression's scrutinee, rendered as text.
+    pub scrutinee: String,
+    /// The arm's pattern, rendered as text (`"Ok(x)"`, `"Err(_)"`,
+    /// `"_"`, `"Status::Active"`, …).
+    pub pattern: String,
+    /// `true` when the pattern contains at least one wildcard binder
+    /// (`_`). Catches both bare `_` arms and tuple/struct patterns with
+    /// `_` placeholders (`Err(_)`, `Foo(_, x)`).
+    pub pattern_has_wildcard: bool,
+    /// Heuristic shape of the arm's body. See [`ArmBodyShape`].
+    pub body_shape: ArmBodyShape,
+    /// Enclosing function's symbol, if known.
+    pub function: Option<String>,
+    pub span: AirSpan,
+}
+
+/// Coarse classification of a `match` arm body. Rules use this to tell
+/// the difference between an arm that *handles* its case (returns,
+/// propagates, computes something) and an arm that silently swallows
+/// (unit body, literal default, `Default::default()` call).
+// ot: canonical
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[serde(rename_all = "snake_case")]
+pub enum ArmBodyShape {
+    /// Unit `()`, empty block `{}`. The arm matches and does nothing.
+    Empty,
+    /// A bare literal expression — `0`, `""`, `false`, `None`. The arm
+    /// matches and returns a default value silently.
+    Literal,
+    /// A single function or method call (`Default::default()`,
+    /// `Vec::new()`, `default()`). Often a silent default.
+    Call,
+    /// A `return` expression (with or without value). Definitely
+    /// non-silent — control flow leaves the function.
+    Return,
+    /// The arm uses the `?` operator somewhere. The error is
+    /// propagated to the caller — the opposite of silent.
+    Propagate,
+    /// A multi-statement block. Could be doing real work; the rule
+    /// shouldn't pre-judge.
+    Block,
+    /// Anything else (constructor, method chain, macro call, …).
+    Other,
+}
+
+/// A method call whose first argument is a closure. The visitor emits
+/// these for shapes like `result.map_err(|_| ...)`,
+/// `result.unwrap_or_else(|e| ...)`, `option.or_else(|| ...)`, etc.
+/// FL006 uses [`Self::closure_discards_arg`] to flag `map_err(|_|)`-shape
+/// closures that throw the original error away.
+// ot: canonical
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AirClosureMethodCall {
+    /// Bare method name — same convention as [`AirCallSite::callee`] for
+    /// method calls. `"map_err"`, `"unwrap_or_else"`, `"or_else"`, …
+    pub callee: String,
+    /// `true` when the closure's first parameter pattern is `_` or the
+    /// closure has no parameters (`|_| ...`, `|| ...`, `|_, x| ...`).
+    /// `map_err(|_| ...)` is the canonical "lose source context"
+    /// pattern.
+    pub closure_discards_arg: bool,
+    /// Heuristic shape of the closure body — same vocabulary as
+    /// [`ArmBodyShape`] so paradigm rules can share matching logic.
+    pub body_shape: ArmBodyShape,
     /// Enclosing function's symbol, if known.
     pub function: Option<String>,
     pub span: AirSpan,

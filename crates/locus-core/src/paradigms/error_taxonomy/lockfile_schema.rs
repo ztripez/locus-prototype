@@ -14,6 +14,11 @@
 //! FL001 names, repeated here so the ER section stands alone). Both
 //! default to empty — ER003 stays silent until both are populated.
 //!
+//! ER005 is lockfile-driven via `error_collapse_owner_paths` — the list
+//! of modules where a catch-all `Err(_) => default` arm is legitimate
+//! (top-level error handlers, presentation/edge layers). Empty default
+//! keeps ER005 silent until populated.
+//!
 //! ER007 is heuristic and lockfile-free — duplicate variant names across
 //! `*Error*` enums are flagged via a workspace-wide pass.
 
@@ -71,6 +76,25 @@ pub struct ErSection {
     /// Default: empty. ER003 stays silent until populated.
     #[serde(default)]
     pub boundary_error_patterns: Vec<String>,
+
+    /// Module patterns matching `AirFile.module_path` (or the enclosing
+    /// function's containing module) where catch-all `Err(_) => default`
+    /// match arms are legitimate. Typical entries: top-level error
+    /// handlers, presentation/edge layers, CLI surfaces — anywhere
+    /// collapsing distinct error variants into a single value is the
+    /// intentional design (the layer is meant to flatten the taxonomy
+    /// before responding to the user).
+    ///
+    /// Pattern syntax: segment-aligned wildcards via [`matches_pattern`]
+    /// (same shape FL/DG use). Examples:
+    ///
+    /// - `"*::cli::*"` — anywhere under a `cli` module segment.
+    /// - `"my_app::presentation::*"` — a specific presentation layer.
+    /// - `"*::tests::*"` — test modules where collapse is fine.
+    ///
+    /// Used by ER005. Default: empty. ER005 stays silent until populated.
+    #[serde(default)]
+    pub error_collapse_owner_paths: Vec<String>,
 }
 
 /// Pattern syntax: segment-aligned wildcards.

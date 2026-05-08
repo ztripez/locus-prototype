@@ -143,6 +143,8 @@ fn file_anchor_span(file: &AirFile) -> AirSpan {
             AirItem::Usage(u) => u.span.clone(),
             AirItem::SilentDiscard(d) => d.span.clone(),
             AirItem::PartialIfLet(p) => p.span.clone(),
+            AirItem::MatchArm(a) => a.span.clone(),
+            AirItem::ClosureMethodCall(c) => c.span.clone(),
         })
         .next()
         .unwrap_or_else(|| AirSpan::new(file.path.clone(), 1, 1))

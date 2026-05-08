@@ -5,9 +5,10 @@
 
 use crate::type_render::{render_path, render_type};
 use locus_air::{
-    ActionKind, AirCallSite, AirConversion, AirField, AirFunction, AirImpl, AirImport, AirItem,
-    AirPartialIfLet, AirSilentDiscard, AirSpan, AirTruthAction, AirType, AirVariant, CallKind,
-    ConversionMechanism, DiscardKind, TypeKind, Visibility,
+    ActionKind, AirCallSite, AirClosureMethodCall, AirConversion, AirField, AirFunction, AirImpl,
+    AirImport, AirItem, AirMatchArm, AirPartialIfLet, AirSilentDiscard, AirSpan, AirTruthAction,
+    AirType, AirVariant, ArmBodyShape, CallKind, ConversionMechanism, DiscardKind, TypeKind,
+    Visibility,
 };
 use quote::ToTokens;
 use syn::{
@@ -590,15 +591,31 @@ fn scan_expr(expr: &Expr, function: &str, file_path: &str, out: &mut Vec<AirItem
             }
         }
         Expr::Match(m) => {
-            let target = m.expr.to_token_stream().to_string();
+            let scrutinee = m.expr.to_token_stream().to_string();
             out.push(AirItem::TruthAction(AirTruthAction {
                 action: ActionKind::EnumMatch,
-                target,
+                target: scrutinee.clone(),
                 function: Some(function.to_string()),
                 span: span_of(file_path, m.span()),
                 confidence: 0.6,
                 reasons: vec!["match expression".into()],
             }));
+            // Per-arm shape capture so paradigm rules (FL007 catch-all
+            // `Err(_)`, FL011 default-variant sinks, ER005 catch-all error
+            // mapping) can reason about silence at the arm level.
+            for arm in &m.arms {
+                let pattern = arm.pat.to_token_stream().to_string();
+                let pattern_has_wildcard = pat_has_wildcard(&arm.pat);
+                let body_shape = classify_body(&arm.body);
+                out.push(AirItem::MatchArm(AirMatchArm {
+                    scrutinee: scrutinee.clone(),
+                    pattern,
+                    pattern_has_wildcard,
+                    body_shape,
+                    function: Some(function.to_string()),
+                    span: span_of(file_path, arm.span()),
+                }));
+            }
             scan_expr(&m.expr, function, file_path, out);
             for arm in &m.arms {
                 scan_expr(&arm.body, function, file_path, out);
@@ -690,6 +707,21 @@ fn scan_expr(expr: &Expr, function: &str, file_path: &str, out: &mut Vec<AirItem
                 function: Some(function.to_string()),
                 span: span_of(file_path, m.span()),
             }));
+            // ClosureMethodCall: emit when the first argument is a closure.
+            // Lets paradigm rules (FL006 `map_err(|_| ...)`, future
+            // closure-shape rules) inspect whether the closure discards
+            // its argument.
+            if let Some(Expr::Closure(closure)) = m.args.first() {
+                let closure_discards_arg = closure_discards_first_arg(closure);
+                let body_shape = classify_body(&closure.body);
+                out.push(AirItem::ClosureMethodCall(AirClosureMethodCall {
+                    callee: m.method.to_string(),
+                    closure_discards_arg,
+                    body_shape,
+                    function: Some(function.to_string()),
+                    span: span_of(file_path, m.span()),
+                }));
+            }
             scan_expr(&m.receiver, function, file_path, out);
             for a in &m.args {
                 scan_expr(a, function, file_path, out);
@@ -710,6 +742,127 @@ fn scan_expr(expr: &Expr, function: &str, file_path: &str, out: &mut Vec<AirItem
         Expr::Try(t) => scan_expr(&t.expr, function, file_path, out),
         Expr::Unary(u) => scan_expr(&u.expr, function, file_path, out),
         _ => {}
+    }
+}
+
+/// True when `pat` contains at least one wildcard binder (`_`) anywhere
+/// in its tree — bare `_`, `Err(_)`, `Some(Foo(_, x))`, `(_, _)`. Used by
+/// FL007 / FL011 / ER005 to detect catch-all arms that silently swallow
+/// the unmatched case.
+fn pat_has_wildcard(pat: &Pat) -> bool {
+    match pat {
+        Pat::Wild(_) => true,
+        Pat::TupleStruct(ts) => ts.elems.iter().any(pat_has_wildcard),
+        Pat::Tuple(t) => t.elems.iter().any(pat_has_wildcard),
+        Pat::Struct(s) => s.fields.iter().any(|f| pat_has_wildcard(&f.pat)),
+        Pat::Or(o) => o.cases.iter().any(pat_has_wildcard),
+        Pat::Paren(p) => pat_has_wildcard(&p.pat),
+        Pat::Reference(r) => pat_has_wildcard(&r.pat),
+        Pat::Slice(s) => s.elems.iter().any(pat_has_wildcard),
+        _ => false,
+    }
+}
+
+/// Coarse classification of a match-arm body or closure body. The shape
+/// vocabulary is shared (see [`ArmBodyShape`]).
+///
+/// `Empty` is reserved for unit `()` and `{}` blocks. `Literal` covers
+/// bare literals. `Call` is a single function/method/macro call —
+/// commonly `Default::default()`, `Vec::new()`, `default()`. `Return`
+/// is any `return ...`. `Propagate` is detected when the body or any
+/// transitively-reachable expression contains a `?`. `Block` is a
+/// multi-statement block we don't want to pre-judge.
+fn classify_body(expr: &Expr) -> ArmBodyShape {
+    match expr {
+        Expr::Tuple(t) if t.elems.is_empty() => ArmBodyShape::Empty,
+        Expr::Block(b) if b.block.stmts.is_empty() => ArmBodyShape::Empty,
+        Expr::Lit(_) => ArmBodyShape::Literal,
+        Expr::Call(_) | Expr::MethodCall(_) | Expr::Macro(_) => {
+            // A bare call expression is a "call" body (commonly a default
+            // factory). Recurse into the call's args is unnecessary — we
+            // only care about the top-level shape.
+            ArmBodyShape::Call
+        }
+        Expr::Return(_) => ArmBodyShape::Return,
+        Expr::Try(_) => ArmBodyShape::Propagate,
+        Expr::Block(b) => {
+            // Multi-statement block — check if any statement contains a `?`
+            // that would propagate the error. If yes → Propagate; if any
+            // contains a `return` → Return; otherwise → Block.
+            let mut has_propagate = false;
+            let mut has_return = false;
+            for stmt in &b.block.stmts {
+                if stmt_has_propagate(stmt) {
+                    has_propagate = true;
+                }
+                if stmt_has_return(stmt) {
+                    has_return = true;
+                }
+            }
+            if has_propagate {
+                ArmBodyShape::Propagate
+            } else if has_return {
+                ArmBodyShape::Return
+            } else {
+                ArmBodyShape::Block
+            }
+        }
+        Expr::Paren(p) => classify_body(&p.expr),
+        Expr::Reference(r) => classify_body(&r.expr),
+        Expr::Path(_) => ArmBodyShape::Literal, // bare ident or path used as value
+        _ => ArmBodyShape::Other,
+    }
+}
+
+fn stmt_has_propagate(stmt: &Stmt) -> bool {
+    match stmt {
+        Stmt::Local(l) => l
+            .init
+            .as_ref()
+            .is_some_and(|init| expr_has_propagate(&init.expr)),
+        Stmt::Expr(e, _) => expr_has_propagate(e),
+        Stmt::Macro(_) | Stmt::Item(_) => false,
+    }
+}
+
+fn expr_has_propagate(expr: &Expr) -> bool {
+    match expr {
+        Expr::Try(_) => true,
+        Expr::MethodCall(m) => {
+            expr_has_propagate(&m.receiver) || m.args.iter().any(expr_has_propagate)
+        }
+        Expr::Call(c) => expr_has_propagate(&c.func) || c.args.iter().any(expr_has_propagate),
+        Expr::Paren(p) => expr_has_propagate(&p.expr),
+        Expr::Reference(r) => expr_has_propagate(&r.expr),
+        Expr::Tuple(t) => t.elems.iter().any(expr_has_propagate),
+        _ => false,
+    }
+}
+
+fn stmt_has_return(stmt: &Stmt) -> bool {
+    matches!(stmt, Stmt::Expr(Expr::Return(_), _))
+}
+
+/// True when the closure has zero parameters or its first parameter
+/// pattern is a wildcard (`|_| ...`, `|| ...`, `|_, x| ...`). This is
+/// the canonical "discarding the input" shape FL006 fires on for
+/// `map_err(|_| ...)`.
+fn closure_discards_first_arg(closure: &syn::ExprClosure) -> bool {
+    let Some(first) = closure.inputs.first() else {
+        return true; // `|| ...` — no args at all
+    };
+    pat_is_pure_wildcard(first)
+}
+
+/// Stricter wildcard check than [`pat_has_wildcard`]: only true when the
+/// pattern is *exactly* `_` (or a parenthesised/referenced wrap of one).
+/// `|(_, x)|` doesn't count as a discard — the `x` is being used.
+fn pat_is_pure_wildcard(pat: &Pat) -> bool {
+    match pat {
+        Pat::Wild(_) => true,
+        Pat::Paren(p) => pat_is_pure_wildcard(&p.pat),
+        Pat::Reference(r) => pat_is_pure_wildcard(&r.pat),
+        _ => false,
     }
 }
 
@@ -922,5 +1075,167 @@ mod tests {
         let parts = partial_if_lets(&items);
         assert_eq!(parts.len(), 1);
         assert_eq!(parts[0].variant, "Ok");
+    }
+
+    // ---- MatchArm emission ----
+
+    fn match_arms(items: &[AirItem]) -> Vec<&AirMatchArm> {
+        items
+            .iter()
+            .filter_map(|i| match i {
+                AirItem::MatchArm(a) => Some(a),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn match_arm_records_pattern_and_wildcard_flag() {
+        let items = items_for(indoc! {r#"
+            fn run(r: Result<i32, String>) {
+                match r {
+                    Ok(x) => use_value(x),
+                    Err(_) => (),
+                }
+            }
+        "#});
+        let arms = match_arms(&items);
+        assert_eq!(arms.len(), 2);
+        assert!(arms[0].pattern.contains("Ok"));
+        assert!(!arms[0].pattern_has_wildcard);
+        assert!(arms[1].pattern.contains("Err"));
+        assert!(arms[1].pattern_has_wildcard);
+    }
+
+    #[test]
+    fn match_arm_body_shape_classifications() {
+        let items = items_for(indoc! {r#"
+            fn run(r: Result<i32, String>) -> Result<i32, String> {
+                match r {
+                    Ok(x) => x,
+                    Err(_) => 0,
+                }
+            }
+        "#});
+        let arms = match_arms(&items);
+        // Ok(x) => x  : path expr, classifies as Literal-ish
+        // Err(_) => 0 : Literal
+        assert!(matches!(
+            arms[1].body_shape,
+            ArmBodyShape::Literal | ArmBodyShape::Other
+        ));
+    }
+
+    #[test]
+    fn match_arm_body_shape_call_for_default_factory() {
+        let items = items_for(indoc! {r#"
+            fn run(r: Result<i32, String>) -> i32 {
+                match r {
+                    Ok(x) => x,
+                    Err(_) => i32::default(),
+                }
+            }
+        "#});
+        let arms = match_arms(&items);
+        let err_arm = arms.iter().find(|a| a.pattern_has_wildcard).unwrap();
+        assert_eq!(err_arm.body_shape, ArmBodyShape::Call);
+    }
+
+    #[test]
+    fn match_arm_body_shape_propagate_for_question_mark() {
+        let items = items_for(indoc! {r#"
+            fn run(r: Result<i32, String>) -> Result<i32, String> {
+                match r {
+                    Ok(x) => Ok(x),
+                    Err(e) => {
+                        let v = parse(&e)?;
+                        Ok(v)
+                    }
+                }
+            }
+        "#});
+        let arms = match_arms(&items);
+        // Err arm has `?` → Propagate
+        let err_arm = arms.iter().find(|a| a.pattern.starts_with("Err")).unwrap();
+        assert_eq!(err_arm.body_shape, ArmBodyShape::Propagate);
+    }
+
+    #[test]
+    fn match_arm_pattern_wildcard_in_nested_position() {
+        let items = items_for(indoc! {r#"
+            fn run(t: (i32, String)) {
+                match t {
+                    (0, _) => (),
+                    (_, _) => (),
+                    _ => (),
+                }
+            }
+        "#});
+        let arms = match_arms(&items);
+        assert_eq!(arms.len(), 3);
+        for arm in &arms {
+            assert!(arm.pattern_has_wildcard, "pattern: {}", arm.pattern);
+        }
+    }
+
+    // ---- ClosureMethodCall emission ----
+
+    fn closure_method_calls(items: &[AirItem]) -> Vec<&AirClosureMethodCall> {
+        items
+            .iter()
+            .filter_map(|i| match i {
+                AirItem::ClosureMethodCall(c) => Some(c),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn map_err_with_underscore_records_discarding_closure() {
+        let items = items_for(indoc! {r#"
+            fn run() -> Result<i32, String> {
+                let x: Result<i32, std::io::Error> = Ok(1);
+                x.map_err(|_| "oops".to_string())
+            }
+        "#});
+        let cmcs = closure_method_calls(&items);
+        let map_err = cmcs.iter().find(|c| c.callee == "map_err").unwrap();
+        assert!(map_err.closure_discards_arg);
+    }
+
+    #[test]
+    fn map_err_using_arg_records_non_discarding_closure() {
+        let items = items_for(indoc! {r#"
+            fn run() -> Result<i32, String> {
+                let x: Result<i32, std::io::Error> = Ok(1);
+                x.map_err(|e| format!("io error: {e}"))
+            }
+        "#});
+        let cmcs = closure_method_calls(&items);
+        let map_err = cmcs.iter().find(|c| c.callee == "map_err").unwrap();
+        assert!(!map_err.closure_discards_arg);
+    }
+
+    #[test]
+    fn unwrap_or_else_with_no_arg_closure_is_treated_as_discarding() {
+        let items = items_for(indoc! {r#"
+            fn run() -> i32 {
+                let x: Option<i32> = None;
+                x.unwrap_or_else(|| 0)
+            }
+        "#});
+        let cmcs = closure_method_calls(&items);
+        let uo = cmcs.iter().find(|c| c.callee == "unwrap_or_else").unwrap();
+        assert!(uo.closure_discards_arg); // no-arg closure is "no input being used"
+    }
+
+    #[test]
+    fn method_call_without_closure_arg_does_not_emit_closure_method_call() {
+        let items = items_for(indoc! {r#"
+            fn run() {
+                vec.push(42);
+            }
+        "#});
+        assert!(closure_method_calls(&items).is_empty());
     }
 }

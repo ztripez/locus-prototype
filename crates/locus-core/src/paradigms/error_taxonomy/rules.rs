@@ -7,6 +7,9 @@
 //! - [`er003`]: a domain error enum embeds a boundary error type as a
 //!   variant field — structural taxonomy violation that buries the
 //!   transport failure inside the domain vocabulary.
+//! - [`er005`]: catch-all `Err(_)` arm body collapsing distinct errors
+//!   into a single value (taxonomy-collapse view of the same shape FL007
+//!   sees).
 //! - [`er007`]: a variant name appears on two or more `*Error*` enums in
 //!   the workspace — the taxonomy is drifting / duplicating.
 //!
@@ -15,9 +18,10 @@
 //! [`ErSection::forbidden_error_types`]; it stays silent until that list is
 //! populated. ER003 is lockfile-driven via [`ErSection::domain_paths`] +
 //! [`ErSection::boundary_error_patterns`]; silent until both are populated.
-//! ER007 is heuristic and lockfile-free.
+//! ER005 is lockfile-driven via [`ErSection::error_collapse_owner_paths`];
+//! silent until populated. ER007 is heuristic and lockfile-free.
 
-use locus_air::{AirItem, AirWorkspace, Visibility};
+use locus_air::{AirItem, AirMatchArm, AirWorkspace, ArmBodyShape, Visibility};
 
 use super::lockfile_schema::{ErSection, matches_pattern};
 use crate::diagnostics::{CheckMode, Diagnostic, Severity};
@@ -318,6 +322,152 @@ pub fn er003(air: &AirWorkspace, section: &ErSection, mode: CheckMode) -> Vec<Di
         }
     }
     out
+}
+
+/// ER005 — catch-all errors hiding domain errors.
+///
+/// For every `AirItem::MatchArm` whose pattern is an `Err`-shaped
+/// catch-all (`Err(_)`, `Err(MyError(_, _))`, etc. — any pattern
+/// containing a wildcard binder *and* starting with `Err` or
+/// containing `Err(`) **and** whose body shape is `Empty`, `Literal`,
+/// or `Call` (i.e. a silent / default-producing arm), fire one
+/// diagnostic. The arm collapses every distinct error variant into a
+/// single value: the failure taxonomy is being flattened at this point
+/// and callers can't pattern-match on the cause anymore.
+///
+/// Distinct from FL007: FL007 reads the same arm shape through the
+/// "silent swallow / failure-lineage loss" lens; ER005 reads it through
+/// the "error-taxonomy collapse" lens. Same fact, two paradigm angles.
+///
+/// Suppression: lockfile-driven via [`ErSection::error_collapse_owner_paths`].
+/// A module is suppressed when either the file's `module_path` matches
+/// or the enclosing function's symbol matches (the segment-anywhere
+/// matcher catches both forms — inline `mod tests {}` carve-outs work
+/// without a separate `containing_module_of` helper). Default empty;
+/// ER005 stays silent until the user populates the list.
+///
+/// Severity: `mode.elevate(Severity::Warning)`. Same arm shape FL007
+/// fires on, different angle — Warning is the right baseline; agent-strict
+/// elevates to Fatal. ER005 is heuristic by construction (the `Call`
+/// body shape covers `Default::default()` *and* `MyError::generic()` —
+/// the rule can't tell them apart, and that's the entire point).
+pub fn er005(air: &AirWorkspace, section: &ErSection, mode: CheckMode) -> Vec<Diagnostic> {
+    if section.error_collapse_owner_paths.is_empty() {
+        return Vec::new();
+    }
+    let mut out = Vec::new();
+    for pkg in &air.packages {
+        for file in &pkg.files {
+            let Some(module_path) = file.module_path.as_deref() else {
+                continue;
+            };
+            for item in &file.items {
+                let AirItem::MatchArm(arm) = item else {
+                    continue;
+                };
+                if !is_err_catchall_pattern(arm) {
+                    continue;
+                }
+                if !is_collapse_body_shape(arm.body_shape) {
+                    continue;
+                }
+                if arm_in_collapse_owner(
+                    module_path,
+                    arm.function.as_deref(),
+                    &section.error_collapse_owner_paths,
+                ) {
+                    continue;
+                }
+                out.push(diagnostic_for_er005(arm, module_path, mode));
+            }
+        }
+    }
+    out
+}
+
+/// True when `arm` is a wildcard-bearing `Err(...)` pattern. Both
+/// `pattern_has_wildcard` and an `Err`-shaped pattern text must hold —
+/// a bare `_` arm (FL011's territory) is rejected here.
+fn is_err_catchall_pattern(arm: &AirMatchArm) -> bool {
+    if !arm.pattern_has_wildcard {
+        return false;
+    }
+    let pat = arm.pattern.as_str();
+    pat.starts_with("Err") || pat.contains("Err(")
+}
+
+/// True when the arm body produces a single generic value: unit / empty
+/// block (`Empty`), bare literal (`Literal`), or a single function/method
+/// call (`Call`). Anything else (`Return`, `Propagate`, `Block`, `Other`)
+/// is doing real work and the rule shouldn't pre-judge.
+fn is_collapse_body_shape(shape: ArmBodyShape) -> bool {
+    matches!(
+        shape,
+        ArmBodyShape::Empty | ArmBodyShape::Literal | ArmBodyShape::Call
+    )
+}
+
+/// File-level OR function-symbol-level collapse-owner match. The
+/// segment-anywhere matcher (`*::tests::*`) lines up against both forms,
+/// so inline `mod tests {}` carve-outs work without a separate
+/// `containing_module_of` helper.
+fn arm_in_collapse_owner(
+    file_module: &str,
+    function_symbol: Option<&str>,
+    patterns: &[String],
+) -> bool {
+    if patterns.iter().any(|p| matches_pattern(p, file_module)) {
+        return true;
+    }
+    if let Some(sym) = function_symbol
+        && patterns.iter().any(|p| matches_pattern(p, sym))
+    {
+        return true;
+    }
+    false
+}
+
+fn diagnostic_for_er005(arm: &AirMatchArm, module_path: &str, mode: CheckMode) -> Diagnostic {
+    let function_label = arm
+        .function
+        .as_deref()
+        .unwrap_or("<unknown enclosing function>");
+    let body_shape_label = match arm.body_shape {
+        ArmBodyShape::Empty => "empty",
+        ArmBodyShape::Literal => "literal",
+        ArmBodyShape::Call => "call",
+        // Defensive: filtered out earlier, but keep a label so the
+        // diagnostic still renders if `is_collapse_body_shape` ever
+        // grows.
+        ArmBodyShape::Return => "return",
+        ArmBodyShape::Propagate => "propagate",
+        ArmBodyShape::Block => "block",
+        ArmBodyShape::Other => "other",
+    };
+    Diagnostic {
+        rule_id: "ER005".to_string(),
+        severity: mode.elevate(Severity::Warning),
+        span: arm.span.clone(),
+        concept: None,
+        message: format!(
+            "catch-all `Err(_) => {body_shape_label}` in `{module_path}` (fn `{function_label}`) \
+             collapses distinct error variants into a single value"
+        ),
+        why: vec![
+            format!("module `{module_path}`"),
+            format!("function `{function_label}`"),
+            format!("arm pattern `{}` matches every `Err` variant", arm.pattern),
+            format!("arm body is a `{body_shape_label}` — distinct error causes are erased"),
+            "the error taxonomy is being flattened at this point".into(),
+        ],
+        suggested_fix: Some(format!(
+            "enumerate the specific Err variants the caller cares about (`Err(MyError::A) => …, \
+             Err(MyError::B) => …`), or wrap each into a typed error before mapping. If \
+             `{module_path}` is a presentation/edge layer where collapsing is intentional, \
+             accept it via `paradigms.ER.error_collapse_owner_paths`. For a one-off, suppress \
+             with `// ot: allow ER005 reason=\"…\" expires=\"YYYY-MM-DD\"`"
+        )),
+    }
 }
 
 /// ER007 — variant name shared across two or more `*Error*` enums.
@@ -1197,6 +1347,244 @@ mod tests {
         assert!(messages.iter().any(|m| m.contains("Network")));
         assert!(messages.iter().any(|m| m.contains("Db")));
         assert!(messages.iter().any(|m| m.contains("Io")));
+    }
+
+    // ---- ER005 helpers + tests ----
+
+    fn match_arm(
+        pattern: &str,
+        pattern_has_wildcard: bool,
+        body_shape: ArmBodyShape,
+        function: Option<&str>,
+    ) -> AirItem {
+        AirItem::MatchArm(AirMatchArm {
+            scrutinee: "result".into(),
+            pattern: pattern.into(),
+            pattern_has_wildcard,
+            body_shape,
+            function: function.map(str::to_string),
+            span: AirSpan::new("src/ops.rs", 30, 35),
+        })
+    }
+
+    fn er005_section(patterns: &[&str]) -> ErSection {
+        ErSection {
+            error_collapse_owner_paths: patterns.iter().map(|p| (*p).into()).collect(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn er005_fires_on_err_underscore_arm_with_call_body() {
+        let air = air_with_module(
+            "src/domain/handlers.rs",
+            "x::domain::handlers",
+            vec![match_arm(
+                "Err(_)",
+                true,
+                ArmBodyShape::Call,
+                Some("x::domain::handlers::handle"),
+            )],
+        );
+        let section = er005_section(&["*::cli::*"]);
+        let diags = er005(&air, &section, CheckMode::Human);
+        assert_eq!(diags.len(), 1, "expected one diag, got {diags:?}");
+        assert_eq!(diags[0].rule_id, "ER005");
+        assert_eq!(diags[0].severity, Severity::Warning);
+        assert!(
+            diags[0]
+                .message
+                .contains("collapses distinct error variants"),
+            "message should mention collapse; got: {}",
+            diags[0].message,
+        );
+        assert!(
+            diags[0].message.contains("x::domain::handlers"),
+            "message should reference module; got: {}",
+            diags[0].message,
+        );
+        assert!(
+            diags[0]
+                .why
+                .iter()
+                .any(|w| w.contains("Err") && w.contains("matches every")),
+            "why list should explain Err pattern; got: {:?}",
+            diags[0].why,
+        );
+        assert!(
+            diags[0]
+                .suggested_fix
+                .as_deref()
+                .unwrap_or("")
+                .contains("error_collapse_owner_paths"),
+            "suggested fix should mention the lockfile field; got: {:?}",
+            diags[0].suggested_fix,
+        );
+    }
+
+    #[test]
+    fn er005_fires_on_err_underscore_arm_with_literal_body() {
+        let air = air_with_module(
+            "src/domain/handlers.rs",
+            "x::domain::handlers",
+            vec![match_arm(
+                "Err(_)",
+                true,
+                ArmBodyShape::Literal,
+                Some("x::domain::handlers::handle"),
+            )],
+        );
+        let section = er005_section(&["*::cli::*"]);
+        let diags = er005(&air, &section, CheckMode::Human);
+        assert_eq!(diags.len(), 1);
+        assert!(diags[0].message.contains("literal"));
+    }
+
+    #[test]
+    fn er005_quiet_on_propagate_body_question_mark() {
+        // `Err(e) => return Err(e.into())` uses `?` somewhere → Propagate.
+        // That's not collapse — the error is being typed-and-propagated.
+        let air = air_with_module(
+            "src/domain/handlers.rs",
+            "x::domain::handlers",
+            vec![match_arm(
+                "Err(_)",
+                true,
+                ArmBodyShape::Propagate,
+                Some("x::domain::handlers::handle"),
+            )],
+        );
+        let section = er005_section(&["*::cli::*"]);
+        assert!(er005(&air, &section, CheckMode::Human).is_empty());
+    }
+
+    #[test]
+    fn er005_quiet_on_bare_wildcard_arm() {
+        // Bare `_` is FL011's territory — pattern doesn't start with `Err`
+        // and doesn't contain `Err(`, so ER005 must skip it.
+        let air = air_with_module(
+            "src/domain/handlers.rs",
+            "x::domain::handlers",
+            vec![match_arm(
+                "_",
+                true,
+                ArmBodyShape::Call,
+                Some("x::domain::handlers::handle"),
+            )],
+        );
+        let section = er005_section(&["*::cli::*"]);
+        assert!(er005(&air, &section, CheckMode::Human).is_empty());
+    }
+
+    #[test]
+    fn er005_quiet_when_file_in_collapse_owner_path() {
+        // Same arm shape, but the file's module_path is on the
+        // collapse-owner allowlist — must be silent.
+        let air = air_with_module(
+            "src/cli/handlers.rs",
+            "x::cli::handlers",
+            vec![match_arm(
+                "Err(_)",
+                true,
+                ArmBodyShape::Call,
+                Some("x::cli::handlers::handle"),
+            )],
+        );
+        let section = er005_section(&["*::cli::*"]);
+        assert!(er005(&air, &section, CheckMode::Human).is_empty());
+    }
+
+    #[test]
+    fn er005_quiet_when_function_in_collapse_owner_path_via_inline_test_mod() {
+        // File's module_path doesn't include `::tests::`, but the function
+        // symbol does (inline `mod tests {}` block). Segment-anywhere
+        // matcher must catch the function symbol form.
+        let air = air_with_module(
+            "src/domain/handlers.rs",
+            "x::domain::handlers",
+            vec![match_arm(
+                "Err(_)",
+                true,
+                ArmBodyShape::Call,
+                Some("x::domain::handlers::tests::case"),
+            )],
+        );
+        let section = er005_section(&["*::tests::*"]);
+        assert!(er005(&air, &section, CheckMode::Human).is_empty());
+    }
+
+    #[test]
+    fn er005_silent_when_collapse_owner_paths_empty() {
+        // Default ErSection has no collapse-owner patterns → ER005 stays
+        // entirely quiet on the most blatant collapse arm. Mandatory
+        // silent-on-default contract.
+        let air = air_with_module(
+            "src/domain/handlers.rs",
+            "x::domain::handlers",
+            vec![match_arm(
+                "Err(_)",
+                true,
+                ArmBodyShape::Call,
+                Some("x::domain::handlers::handle"),
+            )],
+        );
+        assert!(er005(&air, &ErSection::default(), CheckMode::Human).is_empty());
+    }
+
+    #[test]
+    fn er005_agent_strict_elevates_warning_to_fatal() {
+        let air = air_with_module(
+            "src/domain/handlers.rs",
+            "x::domain::handlers",
+            vec![match_arm(
+                "Err(_)",
+                true,
+                ArmBodyShape::Call,
+                Some("x::domain::handlers::handle"),
+            )],
+        );
+        let section = er005_section(&["*::cli::*"]);
+        let diags = er005(&air, &section, CheckMode::AgentStrict);
+        assert_eq!(diags.len(), 1);
+        assert_eq!(diags[0].severity, Severity::Fatal);
+    }
+
+    #[test]
+    fn er005_quiet_on_block_body_doing_real_work() {
+        // Multi-statement block body — could be doing real work; ER005
+        // must not pre-judge. Only Empty / Literal / Call qualify.
+        let air = air_with_module(
+            "src/domain/handlers.rs",
+            "x::domain::handlers",
+            vec![match_arm(
+                "Err(_)",
+                true,
+                ArmBodyShape::Block,
+                Some("x::domain::handlers::handle"),
+            )],
+        );
+        let section = er005_section(&["*::cli::*"]);
+        assert!(er005(&air, &section, CheckMode::Human).is_empty());
+    }
+
+    #[test]
+    fn er005_fires_on_nested_err_pattern_with_wildcard() {
+        // `Err(MyError::Generic(_))` — pattern starts with `Err` and has
+        // a wildcard somewhere. ER005 should fire the same way.
+        let air = air_with_module(
+            "src/domain/handlers.rs",
+            "x::domain::handlers",
+            vec![match_arm(
+                "Err(MyError::Generic(_))",
+                true,
+                ArmBodyShape::Call,
+                Some("x::domain::handlers::handle"),
+            )],
+        );
+        let section = er005_section(&["*::cli::*"]);
+        let diags = er005(&air, &section, CheckMode::Human);
+        assert_eq!(diags.len(), 1);
+        assert!(diags[0].message.contains("collapses"));
     }
 
     // ---- ER007 tests ----

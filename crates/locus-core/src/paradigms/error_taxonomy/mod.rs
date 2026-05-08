@@ -14,6 +14,8 @@
 //!   Lockfile-driven via [`lockfile_schema::ErSection::domain_paths`] plus
 //!   [`lockfile_schema::ErSection::boundary_error_patterns`]; silent until
 //!   both are populated.
+//! - ER005: catch-all `Err(_)` arm body collapsing distinct errors into a
+//!   single value (taxonomy-collapse view of the same shape FL007 sees).
 //! - ER007: a variant name appears on two or more `*Error*` enums in the
 //!   workspace (taxonomy drift). Heuristic and lockfile-free.
 
@@ -49,6 +51,7 @@ impl Paradigm for ErrorTaxonomy {
         let mut diags = rules::er001(air, &section, mode);
         diags.extend(rules::er002(air, &section, mode));
         diags.extend(rules::er003(air, &section, mode));
+        diags.extend(rules::er005(air, &section, mode));
         diags.extend(rules::er007(air, mode));
         diags
     }

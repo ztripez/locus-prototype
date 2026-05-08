@@ -21,6 +21,15 @@
 //!   isn't on the `silent_discard_allowed_callees` allowlist.
 //! - FL005: `if let Ok/Err(...) = expr { ... }` with no `else` branch in
 //!   a module that isn't in `invariant_owner_paths`.
+//! - FL006: `.map_err(|_| ...)` call whose closure discards its argument,
+//!   outside `invariant_owner_paths` — the original error is dropped
+//!   before being wrapped, breaking failure lineage at the conversion site.
+//! - FL007: catch-all `Err(_) => <silent>` match arm whose body is
+//!   `Empty`, `Literal`, or `Call`, outside `invariant_owner_paths` —
+//!   every `Err` variant routed to a silent default.
+//! - FL011: bare `_ => <silent>` match arm whose body is `Empty`,
+//!   `Literal`, or `Call`, outside `invariant_owner_paths` — unknown
+//!   enum variants silently routed to a default sink.
 //! - FL013: a function returning `Result<_, String>` / `Result<_, &str>`
 //!   that contains a stringifying call site (`to_string` / `format!` /
 //!   `format` / `display`) — lossy error stringification at the source.
@@ -61,6 +70,9 @@ impl Paradigm for FailureLineage {
         out.extend(rules::fl003(air, &section, mode));
         out.extend(rules::fl004(air, &section, mode));
         out.extend(rules::fl005(air, &section, mode));
+        out.extend(rules::fl006(air, &section, mode));
+        out.extend(rules::fl007(air, &section, mode));
+        out.extend(rules::fl011(air, &section, mode));
         out.extend(rules::fl013(air, &section, mode));
         out
     }

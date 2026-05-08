@@ -98,14 +98,13 @@ This keeps Locus deterministic, extensible, and architecture-focused.
 
 This document is the *target* spec — the full set of paradigms Locus is designed to guard. Not everything below is implemented yet. This section is the live snapshot so contributors can see what's shipped, what's partial, and what's still aspirational.
 
-**AIR coverage today** (schema v9): symbols, types (struct / enum / alias / union / trait), fields, variants, derives, doc text, functions (signature + line count + doc), inherent and trait `impl` blocks (with method names), imports (flattened, `crate::` normalized), call sites (Function / Method / Macro with rendered callee text and enclosing function), discarded bindings (`AirItem::SilentDiscard` for `let _ = expr;` where `expr` is a call), partial `if let` matches (`AirItem::PartialIfLet` for `if let Ok/Err = ...` without `else`), conversions (From / TryFrom / inherent / free), truth actions (`Construct` / `EnumMatch` / `StringCompare` / `Validate` / `Normalize`), source hints (`// ot: …`), normalized loader facts (`spawned_work`, `config_read`, `logging` produced by the `std-rt` loader; `external_io`, `persistence_write`, `blocking_call`, `hot_path`, `request_context`, `boundary_entry`, `runtime_state_owner`, `background_worker` reserved for future loaders).
+**AIR coverage today** (schema v10): symbols, types (struct / enum / alias / union / trait), fields, variants, derives, doc text, functions (signature + line count + doc), inherent and trait `impl` blocks (with method names), imports (flattened, `crate::` normalized), call sites (Function / Method / Macro with rendered callee text and enclosing function), discarded bindings (`AirItem::SilentDiscard` for `let _ = expr;` where `expr` is a call), partial `if let` matches (`AirItem::PartialIfLet` for `if let Ok/Err = ...` without `else`), `match` arm bodies (`AirItem::MatchArm` with pattern + wildcard flag + body shape), closure-arg shape on method calls (`AirItem::ClosureMethodCall` for `map_err(|_|)` family with `closure_discards_arg` flag), conversions (From / TryFrom / inherent / free), truth actions (`Construct` / `EnumMatch` / `StringCompare` / `Validate` / `Normalize`), source hints (`// ot: …`), normalized loader facts (`spawned_work`, `config_read`, `logging` produced by the `std-rt` loader; `external_io`, `persistence_write`, `blocking_call`, `hot_path`, `request_context`, `boundary_entry`, `runtime_state_owner`, `background_worker` reserved for future loaders).
 
 **Not yet in AIR** (rules that need these will be partial or absent until the visitor lands them):
 
-- general literal capture beyond truth actions
-- `match` arm bodies (we record the match target but not what each arm does)
-- `unwrap_or(default)` chains where the default arg is a literal
-- retry-loop shapes
+- general literal capture beyond truth actions (string/numeric literals as values)
+- `unwrap_or(default)` argument-shape capture (only `unwrap_or_else`'s closure shape is recorded today)
+- retry-loop shapes (`loop { ... if ok break }`, `for _ in 0..N { ... }`)
 - attribute presence on functions (no `#[cfg(test)]` detection — FL works around this with explicit `*::tests::*` patterns)
 
 **Rules implemented per paradigm:**
@@ -123,8 +122,8 @@ This document is the *target* spec — the full set of paradigms Locus is design
 | MO (9) | MO001, MO002, MO003, MO004 | many | public-type budget; responsibility entropy; canonical+boundary colocation; canonical+handler colocation. |
 | CX (10) | CX001, CX007, CX008 | several | function line budget; public-surface budget; fan-out budget. |
 | UT (11) | UT001–UT005 | many | public type in utility; forbidden import; generic-utility module; domain logic in utility; validate/normalize in utility. |
-| FL (12) | FL001–FL005, FL013 | many | Boundary error in domain; panic-shaped callee; silent `.ok()`; `let _ = call`; partial `if let`; lossy stringification. Residual gaps: `match` arm bodies, `unwrap_or` chains, spawned-task no-sink. |
-| ER (13) | ER001, ER002, ER003, ER007 | several | error-type fork; string-shaped error; boundary error in domain enum; duplicate variant across `*Error*` enums. |
+| FL (12) | FL001–FL007, FL011, FL013 | many | Boundary error; panic-shaped; silent `.ok()`; `let _ = call`; partial `if let`; **`map_err(|_|)`**; **catch-all `Err(_)`**; **bare `_` failure sink**; lossy stringification. Residual gaps: `unwrap_or(literal)`, retry-loop shapes, spawned-task no-sink. |
+| ER (13) | ER001, ER002, ER003, **ER005**, ER007 | several | error-type fork; string-shaped error; boundary error in domain enum; **catch-all error mapping**; duplicate variant across enums. |
 | RW (14) | RW001, RW003, RW004 | many | spawn outside runtime owner; Mutex/RwLock fields outside owner; singleton-shape outside owner. |
 | FO (15) | FO001, FO004 | many | concept name across features; shared type referencing feature internals. |
 | AB (16) | AB001, AB002 | many | speculative single-impl trait; manager/processor abstraction without accepted role. |
@@ -884,14 +883,18 @@ FL — Failure Lineage Ownership
 | FL003 | Silent-discard method call (`.ok()` / `.err()` / `.unwrap_or_else()`) outside `invariant_owner_paths` | `AirItem::CallSite` (Method) | Warning / Fatal |
 | FL004 | `let _ = expr;` discarded binding outside `invariant_owner_paths`, when `expr` is a call and the callee isn't on `silent_discard_allowed_callees` | `AirItem::SilentDiscard` (since AIR v9) | Warning / Fatal |
 | FL005 | `if let Ok(...) = expr { ... }` or `if let Err(...) = expr { ... }` with no `else` branch outside `invariant_owner_paths` | `AirItem::PartialIfLet` (since AIR v9) | Warning / Fatal |
+| FL006 | `.map_err(\|_\| ...)` outside `invariant_owner_paths` — the closure discards the original error, breaking failure lineage at the conversion site | `AirItem::ClosureMethodCall` (since AIR v10) | Warning / Fatal |
+| FL007 | catch-all `Err(_) => <silent-body>` match arm outside `invariant_owner_paths` — `Err(_) => 0` / `Err(_) => Default::default()` shapes that swallow the failure | `AirItem::MatchArm` (since AIR v10) | Warning / Fatal |
+| FL011 | bare `_ => <silent-body>` arm on an enum scrutinee outside `invariant_owner_paths` — unknown variants routed to a default value | `AirItem::MatchArm` (since AIR v10) | Warning / Fatal |
+| FL013 | `.to_string()` / `format!` calls inside a function returning `Result<_, String\|&str>` outside `invariant_owner_paths` — lossy error stringification | `AirItem::CallSite` + `AirFunction.return_type` | Warning / Fatal |
 
-All five share `invariant_owner_paths`. FL's matcher accepts a richer pattern shape than other paradigms — `*::tests::*` / `*::test::*` patterns match any `tests` segment in either the file's `module_path` or the enclosing function's containing module (so inline `mod tests {}` blocks are correctly carved out without enumerating per-crate paths).
+All FL rules share `invariant_owner_paths`. FL's matcher accepts a richer pattern shape than other paradigms — `*::tests::*` / `*::test::*` patterns match any `tests` segment in either the file's `module_path` or the enclosing function's containing module (so inline `mod tests {}` blocks are correctly carved out without enumerating per-crate paths).
 
-**Coverage gaps** — silent-error patterns AIR still can't see today (no item emitted, so no rule can check them):
+**Coverage gaps** — silent-error patterns AIR still can't see today:
 
-- `match result { Ok(x) => x, Err(_) => default }` — explicit silent swallow inside an arm body. The visitor records the `match` target via `AirTruthAction::EnumMatch` but not the arm bodies.
-- `result.unwrap_or(default)` followed by no error path — fallback-as-discard. We see the call but not whether the surrounding context propagates anywhere.
+- `result.unwrap_or(default)` followed by no error path — fallback-as-discard. We see the call but not whether the surrounding context propagates anywhere. Capturing the literal-shape of the default arg (similar to how `unwrap_or_else`'s closure shape is now captured) would close this.
 - Spawned-task failures with no sink — needs richer fact production (`RuntimeStateOwner` / `BackgroundWorker` loader output).
+- Retry loops without policy — needs loop-shape detection.
 
 These land when AIR adds the corresponding source-fact items. CLAUDE.md's roadmap tracks the remaining visitor work.
 

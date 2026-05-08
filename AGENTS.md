@@ -11,11 +11,11 @@ This file is the per-repo dev-handoff for Claude Code (and other agents — `CLA
 
 ## Project status
 
-19 paradigms registered; **72 rules implemented** (up from 41 — see `docs/PARADIGMS.md` "Implementation status (snapshot)" for the per-paradigm rule list). Highlight set:
+19 paradigms registered; **76 rules implemented** (up from 41 — see `docs/PARADIGMS.md` "Implementation status (snapshot)" for the per-paradigm rule list). Highlight set:
 
 - **OT** (Canonical Domain Ownership) — OT001–OT012 implemented. End-to-end wiring: AIR emission, paradigm host, lockfile, `locus init / accept canonical|boundary / check` CLI.
 - **DG** (Dependency Graph / Direction) — DG001 (forbidden import), DG002 (dependency cycle via Tarjan SCC), DG003 (cross-feature internals reach), DG004 (shared module reaching feature). Lockfile carries `forbidden_edges`, `features` (with `public_api` patterns), and `shared_paths`. CLI mutators: `locus dg forbid-edge`, `locus dg define-feature`, `locus dg add-shared-path`.
-- **FL** (Failure Lineage) — FL001 (boundary error in domain signature), FL002 (panic-shaped callees), FL003 (silent-discard `.ok()` / `.err()` / `.unwrap_or_else()`), FL004 (`let _ = call(...);` discarded bindings), FL005 (partial `if let Ok/Err = ...` without `else`). All four heuristic rules share `invariant_owner_paths`; FL's matcher accepts the richer `*::tests::*` segment-anywhere wildcard so inline `mod tests {}` blocks are correctly carved out.
+- **FL** (Failure Lineage) — 9 rules: FL001 (boundary error in domain signature), FL002 (panic-shaped callees), FL003 (`.ok()`/`.err()` silent discard), FL004 (`let _ = call(...);`), FL005 (partial `if let Ok/Err`), FL006 (`map_err(|_|)` losing source context), FL007 (catch-all `Err(_)` arm with silent body), FL011 (bare `_` arm as failure sink), FL013 (lossy stringification in `Result<_, String>`). All share `invariant_owner_paths`; matcher accepts segment-anywhere `*::tests::*` patterns so inline `mod tests {}` blocks are correctly carved out.
 - **Every paradigm now ships at least 2 rules.** Largest expansions: MO (4 rules), UT (5), FL (6), TA (4), RM (4), ER (4), DA (3), BO (3), PA (3), CX (3), OB (3), DC (3), RW (3), AB (2), CR (2), FO (2), CF (1+stub).
 - **CF002 is a stub** — lockfile fields ship today; rule body deferred until a filesystem-aware loader lands (consumes `AirWorkspace`, not the filesystem directly).
 
@@ -119,13 +119,13 @@ locus check --workspace . --agent-strict # warnings → fatal
 
 ## Implementation roadmap
 
-- ✅ AIR emission v9 (Rust adapter, package-prefixed symbols, clean type rendering, imports, call sites, impl blocks, doc comments, line counts, normalized loader facts, `let _ = ...` silent discards, partial `if let Ok/Err = ...` without `else`).
+- ✅ AIR emission v10 (Rust adapter, package-prefixed symbols, clean type rendering, imports, call sites, impl blocks, doc comments, line counts, normalized loader facts, `let _ = ...` silent discards, partial `if let Ok/Err = ...` without `else`, `match` arm bodies with shape classification, closure-arg shape on method calls).
 - ✅ OT paradigm: OT001–OT012 all shipped; `init` / `accept canonical|boundary` / `check` end-to-end with `--agent-strict` elevation.
 - ✅ DG paradigm: DG001–DG004 (forbidden imports, cycles via Tarjan, cross-feature internals reach, shared-module reaching feature).
 - ✅ FL paradigm: FL001 (boundary error in domain), FL002 (panic-shaped callees), FL003 (silent-discard `.ok()`/`.err()`), FL004 (`let _ = call(...);` discards), FL005 (partial `if let Ok/Err = ...` without `else`).
 - ✅ Cross-paradigm: `Severity::from_confidence` tier helper; `// ot: allow` + lockfile exceptions wired through the CLI's `check` pipeline.
 - ✅ Second rules for DC, ER, UT, RM (DC002 doc-residue phrases, ER002 string-shaped errors, UT002 forbidden imports, RM002 converter side-effects).
-- 🔜 **Residual silent-error coverage gap** — `let _ = result;` and partial `if let Ok/Err = ...` are now covered (FL004 / FL005, AIR v9). Still missing: `match result { ... Err(_) => () }` (silent arm body), `result.unwrap_or(default)` chains, spawned-task failures with no sink. Each requires either richer arm-body inspection in the visitor or new `FactKind` producers. Spec coverage in `docs/PARADIGMS.md` §"Paradigm 12: Failure Lineage Ownership" → "Coverage gaps".
+- ✅ **Silent-error coverage gap nearly closed** — FL004 (`let _ =`), FL005 (partial `if let`), FL006 (`map_err(|_|)`), FL007 (catch-all `Err(_)` arm body), FL011 (bare `_` failure sink), ER005 (catch-all error mapping). AIR v10 adds `MatchArm` + `ClosureMethodCall` items. Still missing: `result.unwrap_or(literal)` (needs literal-shape capture on the default arg), spawned-task failures with no sink (needs `RuntimeStateOwner`/`BackgroundWorker` loader output), retry-loop shapes.
 - ✅ Second rules for every paradigm (16 paradigms beyond OT/DG now each ship 2–6 rules; see `docs/PARADIGMS.md` snapshot).
 - 🔜 Remaining ~21 spec patterns require new visitor work (`match` arm bodies, literal capture, `unwrap_or` chains, closure-arg shape) or new loader output (`BlockingCall`, `HotPath`, `PersistenceWrite`, `ExternalIo`, `RuntimeStateOwner`, `BackgroundWorker`).
 - 🔜 CLI oracle commands: `locus explain`, `locus query <kind>`, `locus debt` (lists active + expired exceptions), `locus graph`, `locus prune`, `locus add adapter`. Spec: `docs/PARADIGMS.md` §"Locus as an Architectural Oracle".
