@@ -1514,6 +1514,9 @@ fn init(args: InitArgs) -> Result<()> {
     print!("{}", render_checklist(&suggestions, hints_promoted));
 
     if !suggestions.is_empty() {
+        // Flush before exit; process::exit skips destructors, so a buffered
+        // stdout under pipe/redirect would otherwise drop the checklist.
+        let _ = io::stdout().lock().flush();
         std::process::exit(1);
     }
     Ok(())
