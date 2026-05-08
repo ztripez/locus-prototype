@@ -532,12 +532,25 @@ mod cross_paradigm_layer_tests {
     }
 }
 
-/// Distinct second-segment module names across the workspace
-/// (`x::user::domain` → `"user"`). Excludes single-segment files (the
-/// crate root). Returned alphabetically.
+/// Candidate feature names for the workspace. On a multi-package
+/// workspace, each package is a feature (returns `AirPackage.name` for
+/// every package). On a single-package workspace, falls back to the
+/// distinct second-segment module names within that package
+/// (`x::user::domain` → `"user"`), since the package itself is the
+/// whole product and its top-level modules are the features.
+/// Excludes single-segment files (the crate root). Returned
+/// alphabetically.
 pub fn top_level_modules(air: &AirWorkspace) -> Vec<String> {
     use std::collections::BTreeSet;
     let mut names: BTreeSet<String> = BTreeSet::new();
+    if air.packages.len() > 1 {
+        for pkg in &air.packages {
+            // Cargo package names use `-`; Rust module paths use `_`. The
+            // glob has to match `AirFile.module_path`, so mangle.
+            names.insert(pkg.name.replace('-', "_"));
+        }
+        return names.into_iter().collect();
+    }
     for pkg in &air.packages {
         for file in &pkg.files {
             let Some(module) = file.module_path.as_deref() else {
@@ -600,6 +613,47 @@ mod top_level_module_tests {
     fn ignores_crate_root_only_files() {
         let air = ws(&["x"]);
         assert!(top_level_modules(&air).is_empty());
+    }
+
+    #[test]
+    fn multi_package_workspace_returns_package_names() {
+        // Two packages, each with their own submodules. The features should
+        // be the package names, not the union of submodules across packages.
+        let air = AirWorkspace::new(vec![
+            AirPackage {
+                name: "anatom".into(),
+                version: "0.0.1".into(),
+                root_dir: "/tmp/anatom".into(),
+                files: vec![AirFile {
+                    path: "src/body.rs".into(),
+                    module_path: Some("anatom::body".into()),
+                    items: Vec::new(),
+                    hints: Vec::new(),
+                    parse_error: None,
+                    line_count: 1,
+                }],
+            },
+            AirPackage {
+                // Cargo name (with hyphen) — must be mangled to Rust
+                // module form when used as a glob.
+                name: "lore-engine".into(),
+                version: "0.0.1".into(),
+                root_dir: "/tmp/lore_engine".into(),
+                files: vec![AirFile {
+                    path: "src/world.rs".into(),
+                    module_path: Some("lore_engine::world".into()),
+                    items: Vec::new(),
+                    hints: Vec::new(),
+                    parse_error: None,
+                    line_count: 1,
+                }],
+            },
+        ]);
+        let modules = top_level_modules(&air);
+        assert_eq!(
+            modules,
+            vec!["anatom".to_string(), "lore_engine".to_string()]
+        );
     }
 }
 
