@@ -491,3 +491,74 @@ mod cross_paradigm_layer_tests {
         );
     }
 }
+
+/// Distinct second-segment module names across the workspace
+/// (`x::user::domain` → `"user"`). Excludes single-segment files (the
+/// crate root). Returned alphabetically.
+pub fn top_level_modules(air: &AirWorkspace) -> Vec<String> {
+    use std::collections::BTreeSet;
+    let mut names: BTreeSet<String> = BTreeSet::new();
+    for pkg in &air.packages {
+        for file in &pkg.files {
+            let Some(module) = file.module_path.as_deref() else {
+                continue;
+            };
+            let mut segs = module.split("::");
+            let _root = segs.next();
+            if let Some(second) = segs.next() {
+                names.insert(second.to_string());
+            }
+        }
+    }
+    names.into_iter().collect()
+}
+
+#[cfg(test)]
+mod top_level_module_tests {
+    use super::*;
+    use locus_air::{AirFile, AirPackage, AirWorkspace};
+
+    fn ws(modules: &[&str]) -> AirWorkspace {
+        AirWorkspace::new(vec![AirPackage {
+            name: "x".into(),
+            version: "0.0.1".into(),
+            root_dir: "/tmp/x".into(),
+            files: modules
+                .iter()
+                .map(|m| AirFile {
+                    path: format!("src/{}.rs", m.replace("::", "/")),
+                    module_path: Some((*m).into()),
+                    items: Vec::new(),
+                    hints: Vec::new(),
+                    parse_error: None,
+                    line_count: 1,
+                })
+                .collect(),
+        }])
+    }
+
+    #[test]
+    fn enumerates_distinct_first_segment_after_crate_root() {
+        let air = ws(&[
+            "x::user::domain",
+            "x::user::api",
+            "x::order::domain",
+            "x::billing",
+        ]);
+        let modules = top_level_modules(&air);
+        assert_eq!(
+            modules,
+            vec![
+                "billing".to_string(),
+                "order".to_string(),
+                "user".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn ignores_crate_root_only_files() {
+        let air = ws(&["x"]);
+        assert!(top_level_modules(&air).is_empty());
+    }
+}
