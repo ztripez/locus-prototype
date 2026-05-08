@@ -265,7 +265,19 @@ pub fn bo004(air: &AirWorkspace, section: &BoSection, mode: CheckMode) -> Vec<Di
                 let AirItem::Type(ty) = item else {
                     continue;
                 };
-                for derive in &ty.derives {
+                // BO004 historically scanned `AirType.derives` (Rust-only).
+                // After AIR v13 the field became `decorators` with a `source`
+                // tag; we keep BO004 narrow to derives by filtering to
+                // `DecoratorSource::Derive`. TS/Python adapters that emit
+                // their own derive-equivalent shapes (`Decorator` /
+                // `Annotation`) won't trip this rule unless the user opts
+                // those sources into the forbidden list separately.
+                for decorator in ty
+                    .decorators
+                    .iter()
+                    .filter(|d| matches!(d.source, locus_air::DecoratorSource::Derive))
+                {
+                    let derive = &decorator.name;
                     let short = derive.rsplit("::").next().unwrap_or(derive.as_str());
                     let Some(forbidden) = section
                         .forbidden_canonical_derives
@@ -439,6 +451,7 @@ mod tests {
     fn import(path: &str) -> AirItem {
         AirItem::Import(AirImport {
             path: path.into(),
+            path_segments: Vec::new(),
             visibility: Visibility::Private,
             span: AirSpan::new("t.rs", 1, 1),
         })
@@ -581,6 +594,8 @@ mod tests {
             return_type: return_type.map(|s| s.to_string()),
             span: AirSpan::new("t.rs", 1, 1),
             line_count: 1,
+            decorators: Vec::new(),
+            symbol_segments: Vec::new(),
             doc: None,
         })
     }
@@ -717,16 +732,23 @@ mod tests {
     // ----- BO004 -----
 
     fn type_with_derives(name: &str, symbol: &str, derives: Vec<&str>) -> AirItem {
-        use locus_air::{AirType, TypeKind};
+        use locus_air::{AirDecorator, AirType, DecoratorSource, TypeKind};
         AirItem::Type(AirType {
             kind: TypeKind::Struct,
             name: name.into(),
             symbol: symbol.into(),
+            symbol_segments: Vec::new(),
             visibility: Visibility::Public,
             fields: Vec::new(),
             variants: Vec::new(),
-            derives: derives.into_iter().map(|s| s.to_string()).collect(),
-            attrs: Vec::new(),
+            decorators: derives
+                .into_iter()
+                .map(|s| AirDecorator {
+                    source: DecoratorSource::Derive,
+                    name: s.to_string(),
+                    args: Vec::new(),
+                })
+                .collect(),
             span: AirSpan::new("t.rs", 1, 1),
             doc: None,
         })
@@ -855,6 +877,8 @@ mod tests {
             return_type: None,
             span: AirSpan::new(file, line, line + 5),
             line_count: 6,
+            decorators: Vec::new(),
+            symbol_segments: Vec::new(),
             doc: None,
         })
     }

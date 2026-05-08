@@ -284,8 +284,8 @@ mod tests {
             visibility: vis,
             fields: Vec::new(),
             variants: Vec::new(),
-            derives: Vec::new(),
-            attrs: Vec::new(),
+            decorators: Vec::new(),
+            symbol_segments: Vec::new(),
             span: AirSpan::new("t.rs", 1, 1),
             doc: None,
         })
@@ -308,8 +308,8 @@ mod tests {
                 })
                 .collect(),
             variants: Vec::new(),
-            derives: Vec::new(),
-            attrs: Vec::new(),
+            decorators: Vec::new(),
+            symbol_segments: Vec::new(),
             span: AirSpan::new("t.rs", 1, 1),
             doc: None,
         })

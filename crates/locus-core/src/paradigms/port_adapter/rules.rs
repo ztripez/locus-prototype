@@ -14,7 +14,8 @@
 use std::collections::BTreeMap;
 
 use locus_air::{
-    ActionKind, AirFact, AirImpl, AirItem, AirSpan, AirWorkspace, FactKind, FactTarget, TypeKind,
+    ActionKind, AirFact, AirImplBlock, AirItem, AirSpan, AirWorkspace, FactKind, FactTarget,
+    TypeKind,
 };
 
 use super::lockfile_schema::{PaSection, matches_pattern};
@@ -80,13 +81,13 @@ pub fn pa001(air: &AirWorkspace, section: &PaSection, mode: CheckMode) -> Vec<Di
                     concept: None,
                     message: format!(
                         "trait `{}` and its only impl (`{}`) share file `{}`",
-                        ty.name, imp.self_ty, ty.span.file
+                        ty.name, imp.target_type, ty.span.file
                     ),
                     why: vec![
                         format!("trait `{}` declared in `{}`", ty.symbol, ty.span.file),
                         format!(
                             "sole impl is `impl {} for {}` in the same file",
-                            ty.name, imp.self_ty
+                            ty.name, imp.target_type
                         ),
                         "no `accepted_colocated_traits` pattern matched".into(),
                     ],
@@ -95,7 +96,7 @@ pub fn pa001(air: &AirWorkspace, section: &PaSection, mode: CheckMode) -> Vec<Di
                          impl for `{}` to an adapter/infrastructure module; if this trait is a \
                          genuine utility helper rather than a port, accept it via \
                          `paradigms.PA.accepted_colocated_traits` in `locus.lock`",
-                        ty.name, imp.self_ty
+                        ty.name, imp.target_type
                     )),
                 });
             }
@@ -107,15 +108,15 @@ pub fn pa001(air: &AirWorkspace, section: &PaSection, mode: CheckMode) -> Vec<Di
 /// Index every `AirItem::Impl` with a `trait_path` by the trait's short name
 /// (last `::` segment). Inherent impls (`trait_path: None`) are excluded —
 /// they aren't port implementations.
-fn build_trait_to_impls(air: &AirWorkspace) -> BTreeMap<&str, Vec<&AirImpl>> {
-    let mut out: BTreeMap<&str, Vec<&AirImpl>> = BTreeMap::new();
+fn build_trait_to_impls(air: &AirWorkspace) -> BTreeMap<&str, Vec<&AirImplBlock>> {
+    let mut out: BTreeMap<&str, Vec<&AirImplBlock>> = BTreeMap::new();
     for pkg in &air.packages {
         for file in &pkg.files {
             for item in &file.items {
                 let AirItem::Impl(imp) = item else {
                     continue;
                 };
-                let Some(tp) = imp.trait_path.as_deref() else {
+                let Some(tp) = imp.interface.as_deref() else {
                     continue;
                 };
                 let short = tp.rsplit("::").next().unwrap_or(tp);
@@ -429,18 +430,19 @@ mod tests {
             visibility: Visibility::Public,
             fields: Vec::new(),
             variants: Vec::new(),
-            derives: Vec::new(),
-            attrs: Vec::new(),
+            decorators: Vec::new(),
+            symbol_segments: Vec::new(),
             span: AirSpan::new(file, line, line),
             doc: None,
         })
     }
 
     fn impl_item(trait_path: Option<&str>, self_ty: &str, file: &str, line: u32) -> AirItem {
-        AirItem::Impl(AirImpl {
-            trait_path: trait_path.map(|s| s.to_string()),
-            self_ty: self_ty.into(),
+        AirItem::Impl(AirImplBlock {
+            interface: trait_path.map(|s| s.to_string()),
+            target_type: self_ty.into(),
             method_names: Vec::new(),
+            dispatch: locus_air::ImplDispatch::Static,
             span: AirSpan::new(file, line, line),
         })
     }
@@ -637,6 +639,7 @@ mod tests {
         use locus_air::AirImport;
         AirItem::Import(AirImport {
             path: path.into(),
+            path_segments: Vec::new(),
             visibility: Visibility::Private,
             span: AirSpan::new(file, line, line),
         })
@@ -913,6 +916,8 @@ mod tests {
             return_type: None,
             span: AirSpan::new(file, line, line + 5),
             line_count: 6,
+            decorators: Vec::new(),
+            symbol_segments: Vec::new(),
             doc: None,
         })
     }

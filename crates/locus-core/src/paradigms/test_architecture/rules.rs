@@ -325,7 +325,7 @@ pub fn ta004(air: &AirWorkspace, section: &TaSection, mode: CheckMode) -> Vec<Di
                 let AirItem::Impl(imp) = item else {
                     continue;
                 };
-                let Some(trait_path) = imp.trait_path.as_deref() else {
+                let Some(trait_path) = imp.interface.as_deref() else {
                     continue;
                 };
                 let trait_short = trait_path.rsplit("::").next().unwrap_or(trait_path);
@@ -345,7 +345,7 @@ pub fn ta004(air: &AirWorkspace, section: &TaSection, mode: CheckMode) -> Vec<Di
                     message: format!(
                         "port impl `impl {trait_path} for {}` in test module `{module_path}` \
                          lives outside any `paradigms.TA.accepted_test_adapter_paths`",
-                        imp.self_ty,
+                        imp.target_type,
                     ),
                     why: vec![
                         format!("module `{module_path}` matches test pattern `{test_pattern}`"),
@@ -365,7 +365,7 @@ pub fn ta004(air: &AirWorkspace, section: &TaSection, mode: CheckMode) -> Vec<Di
                          `paradigms.TA.accepted_test_adapter_paths` in `locus.lock`), \
                          or — if this trait isn't really a port — narrow \
                          `paradigms.TA.port_trait_patterns` so it no longer matches",
-                        imp.self_ty,
+                        imp.target_type,
                     )),
                 });
             }
@@ -442,7 +442,9 @@ fn best_jaccard_match<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use locus_air::{AIR_SCHEMA_VERSION, AirField, AirFile, AirImpl, AirPackage, AirSpan, AirType};
+    use locus_air::{
+        AIR_SCHEMA_VERSION, AirField, AirFile, AirImplBlock, AirPackage, AirSpan, AirType,
+    };
 
     fn ty(name: &str, vis: Visibility) -> AirItem {
         AirItem::Type(AirType {
@@ -452,8 +454,8 @@ mod tests {
             visibility: vis,
             fields: Vec::new(),
             variants: Vec::new(),
-            derives: Vec::new(),
-            attrs: Vec::new(),
+            decorators: Vec::new(),
+            symbol_segments: Vec::new(),
             span: AirSpan::new("t.rs", 1, 1),
             doc: None,
         })
@@ -573,18 +575,19 @@ mod tests {
                 })
                 .collect(),
             variants: Vec::new(),
-            derives: Vec::new(),
-            attrs: Vec::new(),
+            decorators: Vec::new(),
+            symbol_segments: Vec::new(),
             span: AirSpan::new("t.rs", 1, 1),
             doc: None,
         })
     }
 
     fn impl_item(trait_path: Option<&str>, self_ty: &str) -> AirItem {
-        AirItem::Impl(AirImpl {
-            trait_path: trait_path.map(|s| s.to_string()),
-            self_ty: self_ty.into(),
+        AirItem::Impl(AirImplBlock {
+            interface: trait_path.map(|s| s.to_string()),
+            target_type: self_ty.into(),
             method_names: Vec::new(),
+            dispatch: locus_air::ImplDispatch::Static,
             span: AirSpan::new("t.rs", 1, 1),
         })
     }

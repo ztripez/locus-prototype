@@ -84,14 +84,14 @@ fn scans_sample_crate() {
     assert!(
         conversions
             .iter()
-            .any(|c| c.mechanism == ConversionMechanism::TryFrom && c.to == "User"),
+            .any(|c| c.mechanism == ConversionMechanism::FallibleAdapter && c.to == "User"),
         "expect TryFrom<UserDto> for User; got {:?}",
         conversions
     );
     assert!(
         conversions
             .iter()
-            .any(|c| c.mechanism == ConversionMechanism::FreeFn
+            .any(|c| c.mechanism == ConversionMechanism::FreeFunction
                 && c.symbol.ends_with("::map_user")),
         "expect map_user free-fn converter; got {:?}",
         conversions

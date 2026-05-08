@@ -212,7 +212,7 @@ pub fn ut003(air: &AirWorkspace, section: &UtSection, mode: CheckMode) -> Vec<Di
                     AirItem::Usage(u) => u.span.clone(),
                     AirItem::CallSite(c) => c.span.clone(),
                     AirItem::SilentDiscard(d) => d.span.clone(),
-                    AirItem::PartialIfLet(p) => p.span.clone(),
+                    AirItem::PartialResultMatch(p) => p.span.clone(),
                     AirItem::MatchArm(a) => a.span.clone(),
                     AirItem::ClosureMethodCall(c) => c.span.clone(),
                     AirItem::FallbackCall(c) => c.span.clone(),
@@ -453,8 +453,8 @@ mod tests {
             visibility: vis,
             fields: Vec::new(),
             variants: Vec::new(),
-            derives: Vec::new(),
-            attrs: Vec::new(),
+            decorators: Vec::new(),
+            symbol_segments: Vec::new(),
             span: AirSpan::new("t.rs", 1, 1),
             doc: None,
         })
@@ -510,7 +510,7 @@ mod tests {
     fn ut001_quiet_on_crate_visible_type_in_utility_module() {
         // `pub(crate)` is not full Public — utility modules are allowed to
         // hold crate-visible helpers; only the truly Public surface trips UT001.
-        let air = air_with_module("x::utils", vec![ty("Helper", Visibility::Crate)]);
+        let air = air_with_module("x::utils", vec![ty("Helper", Visibility::Module)]);
         let section = UtSection {
             utility_paths: vec!["x::utils::*".into()],
             ..Default::default()
@@ -586,6 +586,7 @@ mod tests {
     fn import(path: &str) -> AirItem {
         AirItem::Import(AirImport {
             path: path.into(),
+            path_segments: Vec::new(),
             visibility: Visibility::Private,
             span: AirSpan::new("t.rs", 1, 1),
         })

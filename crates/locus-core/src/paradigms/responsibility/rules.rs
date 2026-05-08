@@ -189,7 +189,7 @@ pub fn rm001(air: &AirWorkspace, section: &RmSection, mode: CheckMode) -> Vec<Di
 fn format_kind(k: &ActionKind) -> String {
     match k {
         ActionKind::Construct => "Construct".to_string(),
-        ActionKind::EnumMatch => "EnumMatch".to_string(),
+        ActionKind::DiscriminatedMatch => "EnumMatch".to_string(),
         ActionKind::StringCompare => "StringCompare".to_string(),
         ActionKind::Validate => "Validate".to_string(),
         ActionKind::Normalize => "Normalize".to_string(),
@@ -430,7 +430,10 @@ fn density_rule(
                 let AirItem::TruthAction(a) = item else {
                     continue;
                 };
-                if !matches!(a.action, ActionKind::StringCompare | ActionKind::EnumMatch) {
+                if !matches!(
+                    a.action,
+                    ActionKind::StringCompare | ActionKind::DiscriminatedMatch
+                ) {
                     continue;
                 }
                 let Some(fn_sym) = a.function.as_deref() else {
@@ -806,6 +809,8 @@ mod tests {
             return_type: None,
             span: AirSpan::new(file, line, line + 10),
             line_count: 11,
+            decorators: Vec::new(),
+            symbol_segments: Vec::new(),
             doc: None,
         })
     }
@@ -974,7 +979,7 @@ mod tests {
                     13,
                 ),
                 action(
-                    ActionKind::EnumMatch,
+                    ActionKind::DiscriminatedMatch,
                     "Status",
                     "crate::handler::do_it",
                     "src/handler.rs",
@@ -1432,7 +1437,7 @@ mod tests {
         let mut items = vec![func("crate::handler::small", "src/handler.rs", 4)];
         for i in 0..3 {
             items.push(action(
-                ActionKind::EnumMatch,
+                ActionKind::DiscriminatedMatch,
                 "Status",
                 "crate::handler::small",
                 "src/handler.rs",
@@ -1529,7 +1534,7 @@ mod tests {
         let mut items = vec![func("crate::repo::find_by", "src/repo.rs", 8)];
         for i in 0..5 {
             items.push(action(
-                ActionKind::EnumMatch,
+                ActionKind::DiscriminatedMatch,
                 "QueryShape",
                 "crate::repo::find_by",
                 "src/repo.rs",
@@ -1601,7 +1606,7 @@ mod tests {
         let mut items = vec![func("crate::repo::big", "src/repo.rs", 4)];
         for i in 0..4 {
             items.push(action(
-                ActionKind::EnumMatch,
+                ActionKind::DiscriminatedMatch,
                 "Q",
                 "crate::repo::big",
                 "src/repo.rs",

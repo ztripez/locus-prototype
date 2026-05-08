@@ -674,13 +674,13 @@ pub fn ot008(air: &AirWorkspace, section: &OtSection, mode: CheckMode) -> Vec<Di
                 let AirItem::Impl(im) = item else {
                     continue;
                 };
-                if im.trait_path.is_some() {
+                if im.interface.is_some() {
                     // Trait impls (`impl From<X> for Y`, `impl Display for Y`,
                     // serde derives, etc.) are projection by construction —
                     // they're how boundary types translate, not domain logic.
                     continue;
                 }
-                let self_short = short_name(&im.self_ty);
+                let self_short = short_name(&im.target_type);
                 let Some(concept_id) = boundary_short_to_concept.get(self_short) else {
                     continue;
                 };
@@ -1435,7 +1435,7 @@ mod tests {
                     items: vec![AirItem::Conversion(AirConversion {
                         from: from.into(),
                         to: to.into(),
-                        mechanism: ConversionMechanism::TryFrom,
+                        mechanism: ConversionMechanism::FallibleAdapter,
                         symbol: symbol.into(),
                         span: AirSpan::new("t.rs", 1, 1),
                     })],
@@ -1571,8 +1571,8 @@ mod tests {
                 visibility: Visibility::Public,
             }],
             variants: Vec::new(),
-            derives: Vec::new(),
-            attrs: Vec::new(),
+            decorators: Vec::new(),
+            symbol_segments: Vec::new(),
             span: AirSpan::new(file_path, 1, 1),
             doc: None,
         })
@@ -1595,6 +1595,8 @@ mod tests {
             return_type: ret.map(|s| s.to_string()),
             span: AirSpan::new(file_path, 1, 1),
             line_count: 1,
+            decorators: Vec::new(),
+            symbol_segments: Vec::new(),
             doc: None,
         })
     }
@@ -2031,7 +2033,7 @@ mod tests {
         AirItem::Conversion(AirConversion {
             from: from.into(),
             to: to.into(),
-            mechanism: ConversionMechanism::From,
+            mechanism: ConversionMechanism::InfallibleAdapter,
             symbol: symbol.into(),
             span: AirSpan::new(file_path, line, line),
         })
@@ -2180,15 +2182,16 @@ mod tests {
     // ---- OT008 / OT009 / OT010 / OT011 / OT012 helpers ----
 
     fn impl_in_file(
-        self_ty: &str,
-        trait_path: Option<&str>,
+        target_type: &str,
+        interface: Option<&str>,
         method_names: &[&str],
         file_path: &str,
     ) -> AirItem {
-        AirItem::Impl(locus_air::AirImpl {
-            trait_path: trait_path.map(|s| s.to_string()),
-            self_ty: self_ty.into(),
+        AirItem::Impl(locus_air::AirImplBlock {
+            interface: interface.map(|s| s.to_string()),
+            target_type: target_type.into(),
             method_names: method_names.iter().map(|s| s.to_string()).collect(),
+            dispatch: locus_air::ImplDispatch::Static,
             span: AirSpan::new(file_path, 1, 1),
         })
     }
@@ -2208,8 +2211,8 @@ mod tests {
                     fields: Vec::new(),
                 })
                 .collect(),
-            derives: Vec::new(),
-            attrs: Vec::new(),
+            decorators: Vec::new(),
+            symbol_segments: Vec::new(),
             span: AirSpan::new(file_path, 1, 1),
             doc: None,
         })
@@ -2235,8 +2238,8 @@ mod tests {
                 })
                 .collect(),
             variants: Vec::new(),
-            derives: Vec::new(),
-            attrs: Vec::new(),
+            decorators: Vec::new(),
+            symbol_segments: Vec::new(),
             span: AirSpan::new(file_path, 1, 1),
             doc: None,
         })

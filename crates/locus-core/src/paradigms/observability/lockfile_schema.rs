@@ -54,7 +54,7 @@ pub struct ObSection {
     pub forbidden_log_targets: Vec<String>,
     /// Macro-callee patterns identifying *metric emission* sites
     /// (`metrics::counter!`, `metrics::histogram!`, `metrics::gauge!`).
-    /// OB002 matches each `AirItem::CallSite` of `CallKind::Macro` against
+    /// OB002 matches each `AirItem::CallSite` of `CallKind::Meta` against
     /// these patterns. Default is the `metrics` crate family — the user
     /// can replace it with whatever macro names their project uses.
     #[serde(default = "default_metric_macro_patterns")]
@@ -66,7 +66,7 @@ pub struct ObSection {
     pub metric_owner_paths: Vec<String>,
     /// Macro-callee patterns identifying *event emission* sites — typically
     /// `event!`, `emit!`, `publish!`, or any project-specific event macro.
-    /// OB003 matches each `AirItem::CallSite` of `CallKind::Macro` against
+    /// OB003 matches each `AirItem::CallSite` of `CallKind::Meta` against
     /// these patterns.
     #[serde(default = "default_event_macro_patterns")]
     pub event_macro_patterns: Vec<String>,
@@ -107,7 +107,7 @@ pub fn default_forbidden_log_targets() -> Vec<String> {
 /// Default metric-emission macro patterns. Aligned with the `metrics`
 /// crate family — the most common Rust convention. Pattern shape is the
 /// rendered callee text the visitor records on `AirItem::CallSite` of
-/// `CallKind::Macro`, so `metrics::counter!` is recorded as
+/// `CallKind::Meta`, so `metrics::counter!` is recorded as
 /// `metrics::counter`.
 pub fn default_metric_macro_patterns() -> Vec<String> {
     vec![

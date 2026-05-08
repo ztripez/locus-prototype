@@ -142,7 +142,7 @@ fn file_anchor_span(file: &AirFile) -> AirSpan {
             AirItem::CallSite(c) => c.span.clone(),
             AirItem::Usage(u) => u.span.clone(),
             AirItem::SilentDiscard(d) => d.span.clone(),
-            AirItem::PartialIfLet(p) => p.span.clone(),
+            AirItem::PartialResultMatch(p) => p.span.clone(),
             AirItem::MatchArm(a) => a.span.clone(),
             AirItem::ClosureMethodCall(c) => c.span.clone(),
             AirItem::FallbackCall(c) => c.span.clone(),
@@ -433,8 +433,8 @@ mod tests {
             visibility: Visibility::Public,
             fields: Vec::new(),
             variants: Vec::new(),
-            derives: Vec::new(),
-            attrs: Vec::new(),
+            decorators: Vec::new(),
+            symbol_segments: Vec::new(),
             span: AirSpan::new("t.rs", 1, 1),
             doc: None,
         })
@@ -448,8 +448,8 @@ mod tests {
             visibility: Visibility::Private,
             fields: Vec::new(),
             variants: Vec::new(),
-            derives: Vec::new(),
-            attrs: Vec::new(),
+            decorators: Vec::new(),
+            symbol_segments: Vec::new(),
             span: AirSpan::new("t.rs", 1, 1),
             doc: None,
         })
@@ -726,6 +726,8 @@ mod tests {
             return_type: None,
             span: AirSpan::new("t.rs", line, line + 5),
             line_count: 6,
+            decorators: Vec::new(),
+            symbol_segments: Vec::new(),
             doc: None,
         })
     }
@@ -733,6 +735,7 @@ mod tests {
     fn import(path: &str) -> AirItem {
         AirItem::Import(AirImport {
             path: path.into(),
+            path_segments: Vec::new(),
             visibility: Visibility::Private,
             span: AirSpan::new("t.rs", 1, 1),
         })

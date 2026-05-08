@@ -670,6 +670,8 @@ mod tests {
             return_type: None,
             span: AirSpan::new(file, line, line + 5),
             line_count: 6,
+            decorators: Vec::new(),
+            symbol_segments: Vec::new(),
             doc: None,
         })
     }
@@ -1064,8 +1066,8 @@ mod tests {
                 })
                 .collect(),
             variants: Vec::new(),
-            derives: Vec::new(),
-            attrs: Vec::new(),
+            decorators: Vec::new(),
+            symbol_segments: Vec::new(),
             span: AirSpan::new(file, line, line + 4),
             doc: None,
         })

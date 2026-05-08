@@ -393,6 +393,8 @@ mod tests {
             return_type: None,
             span: AirSpan::new("t.rs", line, line + 5),
             line_count: 6,
+            decorators: Vec::new(),
+            symbol_segments: Vec::new(),
             doc: None,
         })
     }

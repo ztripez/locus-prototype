@@ -192,7 +192,7 @@ fn classify(callee: &str, kind: CallKind) -> Vec<(FactKind, String)> {
                 ));
             }
         }
-        CallKind::Macro => {
+        CallKind::Meta => {
             let last = callee.rsplit("::").next().unwrap_or(callee);
             // Bare 1-segment print/dbg family.
             if !callee.contains("::")
@@ -311,12 +311,12 @@ mod tests {
     #[test]
     fn classifies_print_and_log_macros_as_logging() {
         let air = air_with_items(vec![
-            call_site("println", CallKind::Macro, Some("x::handler::y"), 1),
-            call_site("dbg", CallKind::Macro, Some("x::handler::y"), 2),
-            call_site("eprintln", CallKind::Macro, Some("x::handler::y"), 3),
-            call_site("tracing::info", CallKind::Macro, Some("x::handler::y"), 4),
-            call_site("log::warn", CallKind::Macro, Some("x::handler::y"), 5),
-            call_site("slog::error", CallKind::Macro, Some("x::handler::y"), 6),
+            call_site("println", CallKind::Meta, Some("x::handler::y"), 1),
+            call_site("dbg", CallKind::Meta, Some("x::handler::y"), 2),
+            call_site("eprintln", CallKind::Meta, Some("x::handler::y"), 3),
+            call_site("tracing::info", CallKind::Meta, Some("x::handler::y"), 4),
+            call_site("log::warn", CallKind::Meta, Some("x::handler::y"), 5),
+            call_site("slog::error", CallKind::Meta, Some("x::handler::y"), 6),
         ]);
         let facts = StdRtLoader.enrich(&air);
         assert_eq!(facts.len(), 6);

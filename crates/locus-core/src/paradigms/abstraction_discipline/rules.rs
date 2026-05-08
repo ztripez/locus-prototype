@@ -103,7 +103,7 @@ pub fn ab001(air: &AirWorkspace, section: &AbSection, mode: CheckMode) -> Vec<Di
         for file in &pkg.files {
             for item in &file.items {
                 let AirItem::Impl(im) = item else { continue };
-                let Some(trait_path) = im.trait_path.as_deref() else {
+                let Some(trait_path) = im.interface.as_deref() else {
                     // Inherent impl (`impl Foo`) — never counts toward a trait.
                     continue;
                 };
@@ -112,7 +112,7 @@ pub fn ab001(air: &AirWorkspace, section: &AbSection, mode: CheckMode) -> Vec<Di
                 if let Some(slot) = by_symbol.get_mut(trait_path) {
                     slot.count += 1;
                     if slot.first_self_ty.is_none() {
-                        slot.first_self_ty = Some(im.self_ty.clone());
+                        slot.first_self_ty = Some(im.target_type.clone());
                     }
                     continue;
                 }
@@ -127,7 +127,7 @@ pub fn ab001(air: &AirWorkspace, section: &AbSection, mode: CheckMode) -> Vec<Di
                 if let Some(slot) = by_short.get_mut(short) {
                     slot.count += 1;
                     if slot.first_self_ty.is_none() {
-                        slot.first_self_ty = Some(im.self_ty.clone());
+                        slot.first_self_ty = Some(im.target_type.clone());
                     }
                 }
             }
@@ -307,7 +307,7 @@ pub fn ab002(air: &AirWorkspace, section: &AbSection, mode: CheckMode) -> Vec<Di
 #[cfg(test)]
 mod tests {
     use super::*;
-    use locus_air::{AIR_SCHEMA_VERSION, AirFile, AirImpl, AirPackage, AirType, Visibility};
+    use locus_air::{AIR_SCHEMA_VERSION, AirFile, AirImplBlock, AirPackage, AirType, Visibility};
 
     fn trait_decl(symbol: &str, name: &str) -> AirItem {
         AirItem::Type(AirType {
@@ -317,8 +317,8 @@ mod tests {
             visibility: Visibility::Public,
             fields: Vec::new(),
             variants: Vec::new(),
-            derives: Vec::new(),
-            attrs: Vec::new(),
+            decorators: Vec::new(),
+            symbol_segments: Vec::new(),
             span: AirSpan::new("t.rs", 10, 20),
             doc: None,
         })
@@ -332,18 +332,19 @@ mod tests {
             visibility: Visibility::Public,
             fields: Vec::new(),
             variants: Vec::new(),
-            derives: Vec::new(),
-            attrs: Vec::new(),
+            decorators: Vec::new(),
+            symbol_segments: Vec::new(),
             span: AirSpan::new("t.rs", 1, 1),
             doc: None,
         })
     }
 
     fn impl_for(trait_path: Option<&str>, self_ty: &str) -> AirItem {
-        AirItem::Impl(AirImpl {
-            trait_path: trait_path.map(str::to_string),
-            self_ty: self_ty.into(),
+        AirItem::Impl(AirImplBlock {
+            interface: trait_path.map(str::to_string),
+            target_type: self_ty.into(),
             method_names: Vec::new(),
+            dispatch: locus_air::ImplDispatch::Static,
             span: AirSpan::new("t.rs", 30, 40),
         })
     }

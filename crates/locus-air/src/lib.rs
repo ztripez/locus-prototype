@@ -71,13 +71,60 @@ use serde::{Deserialize, Serialize};
 ///       Carries the rendered callee text and a `DiscardKind` so FL004 can
 ///       decide whether the discard is legitimate (e.g. `lock` / `send` /
 ///       `drop` patterns) or an agent-introduced silent failure swallow.
-///     - `AirItem::PartialIfLet` — captures `if let Ok(...) = expr { … }`
+///     - `AirItem::PartialResultMatch` — captures `if let Ok(...) = expr { … }`
 ///       and `if let Err(...) = expr { … }` patterns with **no** `else`
 ///       branch. The unmatched arm is implicitly silent; FL005 flags this
 ///       when the file is outside `invariant_owner_paths`.
 ///
 ///   Closes the silent-error coverage gap that FL003 (which only sees
 ///   `.ok()` / `.err()` method-call shape) couldn't reach.
+/// - **13**: language-agnostic naming pass. The architectural concepts
+///   in AIR were sound but Rust-flavoured names (the previous
+///   `EnumMatch`, `PartialIfLet`, `Visibility::Crate`, the
+///   `From`/`TryFrom` conversion variants, `derives`/`attrs`,
+///   `AirImpl`, `Macro`-as-discriminator) leaked into the schema.
+///   v13 is a cosmetic + small-structural pass that removes the Rust
+///   bias so a future TS / Python / Go / Swift adapter emits AIR JSON
+///   that reads naturally:
+///     - Renames (old → new): `ActionKind::EnumMatch` →
+///       `DiscriminatedMatch`; `Visibility::Crate` → `Module`;
+///       `CallKind::Macro` → `Meta`; `DiscardKind::Macro` → `Meta`;
+///       `ArmBodyShape::Propagate` → `ErrorPropagation`;
+///       `AirItem::PartialIfLet` → `PartialResultMatch` (with
+///       `variant: Success|Failure` enum replacing the previous
+///       `String "Ok"|"Err"`); the `ConversionMechanism` variants
+///       move from Rust-trait-named `From` / `TryFrom` /
+///       `InherentMethod` / `FreeFn` to architectural
+///       `InfallibleAdapter` / `FallibleAdapter` / `InstanceMethod`
+///       / `FreeFunction`, plus a new `FactoryFunction` variant.
+///     - Replaces `AirType.derives` + `AirType.attrs` with a unified
+///       `decorators: Vec<AirDecorator>` collection and adds the same
+///       to `AirFunction`. Each decorator carries a `source` tag
+///       (`Derive` / `Attribute` / `Decorator` / `Annotation`) so
+///       per-language adapters can map their own syntax (`#[derive]`
+///       vs. `@dataclass` vs. `@Override`) into one shape.
+///     - Adds `path_segments: Vec<String>` to `AirImport` and
+///       `symbol_segments: Vec<String>` to `AirType` / `AirFunction`
+///       so paradigm matchers can operate on segments without
+///       splitting `::` themselves (other adapters use `/`, `.`,
+///       etc.).
+///     - Renames `AirImpl` → `AirImplBlock` with
+///       `trait_path → interface`, `self_ty → target_type`, and a
+///       new `dispatch: ImplDispatch { Static, Structural, Dynamic }`
+///       discriminator. Rust adapter emits `Static` for explicit
+///       `impl Trait for Type` and `Dynamic` for `impl dyn Trait` /
+///       trait-object boundaries; Go adapter would later emit
+///       `Structural` for implicit interface satisfaction.
+///     - Adds a `pattern: FallbackPattern { ValueOr, Or, DefaultOr }`
+///       field on `AirFallbackCall` so non-Rust adapters can map
+///       `??` / `||` / `getOr(...)` to the same architectural
+///       shapes; the Rust `unwrap_or` / `or` / `unwrap_or_default`
+///       method names are kept on `callee` as evidence.
+///
+///   `AirRetryLoop` and `AirClosureMethodCall` keep their current
+///   shapes — their Rust bias is deep enough that speculative
+///   generalisation would produce a worse abstraction than letting
+///   future adapters emit parallel items.
 /// - **12**: closes the "tractable visitor work" gap from the audit.
 ///   Adds three new `AirItem` variants:
 ///     - `AirItem::FallbackCall` — `unwrap_or(literal)` /
@@ -124,7 +171,7 @@ use serde::{Deserialize, Serialize};
 ///       argument with `_`, and a body shape. Lets FL006 (`map_err`
 ///       losing source context) flag closures that throw the original
 ///       error away.
-pub const AIR_SCHEMA_VERSION: u32 = 12;
+pub const AIR_SCHEMA_VERSION: u32 = 13;
 
 // ot: canonical
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -183,10 +230,10 @@ pub enum AirItem {
     Usage(AirUsage),
     TruthAction(AirTruthAction),
     Import(AirImport),
-    Impl(AirImpl),
+    Impl(AirImplBlock),
     CallSite(AirCallSite),
     SilentDiscard(AirSilentDiscard),
-    PartialIfLet(AirPartialIfLet),
+    PartialResultMatch(AirPartialResultMatch),
     MatchArm(AirMatchArm),
     ClosureMethodCall(AirClosureMethodCall),
     FallbackCall(AirFallbackCall),
@@ -201,12 +248,28 @@ pub struct AirType {
     #[serde(rename = "type_kind")]
     pub kind: TypeKind,
     pub name: String,
+    /// Fully-qualified symbol as the language adapter rendered it
+    /// (`pkg::module::Name` for Rust, `pkg/module/Name` for Go,
+    /// `pkg.module.Name` for Python, etc.). Opaque text — paradigms
+    /// that need segment-level matching should use [`Self::symbol_segments`].
     pub symbol: String,
+    /// `symbol` split into segments. Lets paradigm matchers operate
+    /// on path components without depending on the language adapter's
+    /// delimiter convention. Rust: `["pkg", "module", "Name"]`;
+    /// TypeScript: same shape after the adapter splits on `/`;
+    /// Python: same shape split on `.`. Empty for adapters that
+    /// haven't populated segments yet.
+    #[serde(default)]
+    pub symbol_segments: Vec<String>,
     pub visibility: Visibility,
     pub fields: Vec<AirField>,
     pub variants: Vec<AirVariant>,
-    pub derives: Vec<String>,
-    pub attrs: Vec<String>,
+    /// Decorators on this type — `#[derive(...)]` and `#[serde(...)]`
+    /// in Rust, `@dataclass` / `@pytest.fixture` in Python, class
+    /// decorators in TypeScript, annotations in Java. See
+    /// [`AirDecorator`] for the per-source classification.
+    #[serde(default)]
+    pub decorators: Vec<AirDecorator>,
     pub span: AirSpan,
     /// Joined doc-comment text (`///` and `#[doc = "..."]`), one line per
     /// source comment with the rustdoc-convention single leading space
@@ -218,10 +281,22 @@ pub struct AirType {
 // ot: canonical
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 pub enum TypeKind {
+    /// Record / product type. Rust `struct`, TS `class`/`interface`-as-shape,
+    /// Python `class`/`@dataclass`, Go `struct`, Swift `struct`/`class`.
     Struct,
+    /// Sum / discriminated-union type. Rust `enum`, TS discriminated
+    /// union, Python `Enum`/`Literal`, Swift `enum`, Java `sealed`.
     Enum,
+    /// Type alias. Rust `type X = Y`, TS `type X = Y`, Python type
+    /// aliases (`X: TypeAlias = Y`).
     Alias,
+    /// Untagged union. Rust `union` (FFI-only); rare in other
+    /// languages — TS `A | B` is more like `Enum`. Adapters that
+    /// don't have this concept skip it.
     Union,
+    /// Method-bag / interface / abstract type. Rust `trait`, TS
+    /// `interface`, Python `Protocol`/`abc.ABC`, Go `interface`,
+    /// Swift `protocol`, Java `interface`.
     Trait,
 }
 
@@ -240,12 +315,26 @@ pub struct AirVariant {
     pub fields: Vec<AirField>,
 }
 
+/// Visibility of a type / function / field. Renamed in v13 from the
+/// Rust-specific `Crate` to a least-common-denominator `Module`:
+/// most languages have a "wider than private, narrower than public"
+/// tier that maps here (Rust `pub(crate)`, Java package-private,
+/// Go uppercase-but-crate-internal-by-convention, TS
+/// non-exported-but-module-visible).
 // ot: canonical
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 pub enum Visibility {
+    /// Visible to all consumers across package/module boundaries.
     Public,
-    Crate,
+    /// Visible within the current package/crate/module but not
+    /// exported. Rust `pub(crate)`, Java package-private,
+    /// TypeScript non-`export`'d module locals.
+    Module,
+    /// Visible to a specific scope narrower than the whole module.
+    /// Rust `pub(in path::to)`, Swift `fileprivate`, Java protected.
     Restricted,
+    /// Visible only inside the defining type / file. Rust `pub(self)`
+    /// or no `pub`, TS `private`, Python `_name` convention, Java `private`.
     Private,
 }
 
@@ -253,7 +342,13 @@ pub enum Visibility {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AirFunction {
     pub name: String,
+    /// Fully-qualified symbol as the language adapter rendered it.
+    /// See [`AirType::symbol`] for delimiter conventions; use
+    /// [`Self::symbol_segments`] for portable segment matching.
     pub symbol: String,
+    /// `symbol` split into segments — see [`AirType::symbol_segments`].
+    #[serde(default)]
+    pub symbol_segments: Vec<String>,
     pub visibility: Visibility,
     pub params: Vec<(String, String)>,
     pub return_type: Option<String>,
@@ -266,21 +361,106 @@ pub struct AirFunction {
     /// stripped. `None` when the function has no doc comments. Consumed by
     /// the DC (Documentation) paradigm slice.
     pub doc: Option<String>,
+    /// Decorators on this function — `#[inline]` / `#[test]` in Rust,
+    /// `@staticmethod` / `@property` in Python, decorators in TS,
+    /// annotations in Java/Kotlin. See [`AirDecorator`].
+    #[serde(default)]
+    pub decorators: Vec<AirDecorator>,
+}
+
+/// A decorator / derive / annotation attached to a type or function.
+/// Unifies Rust `#[derive(Foo)]` + `#[serde(rename = "x")]`,
+/// TypeScript class decorators, Python `@dataclass` / `@pytest.fixture`,
+/// Java/Kotlin annotations, Swift property wrappers — every
+/// "metadata attached to a definition" syntax. The `source` tag lets
+/// rules that care about a specific syntactic surface (BO004 cares
+/// about Rust derives specifically) match against it; rules that
+/// just want "any decorator named X" can ignore source.
+// ot: canonical
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AirDecorator {
+    pub source: DecoratorSource,
+    /// Decorator / derive / annotation name. `Serialize` for
+    /// `#[derive(Serialize)]`, `dataclass` for `@dataclass`,
+    /// `Override` for `@Override`.
+    pub name: String,
+    /// Rendered argument text, one entry per top-level argument.
+    /// Empty for argument-less decorators. Adapters keep the
+    /// rendering consistent with the rest of the AIR's `type_text`
+    /// conventions (no extra spaces, `::` for Rust paths).
+    #[serde(default)]
+    pub args: Vec<String>,
 }
 
 // ot: canonical
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[serde(rename_all = "snake_case")]
+pub enum DecoratorSource {
+    /// Rust `#[derive(Foo)]` — implementation generated for the type.
+    Derive,
+    /// Rust `#[attr(...)]`, Java/Kotlin annotations — metadata that
+    /// configures a separate processor (serde, JSON-Schema, etc.).
+    Attribute,
+    /// TypeScript / JavaScript class & method decorators —
+    /// `@Component`, `@Injectable`, `@Get('/path')`.
+    Decorator,
+    /// Python `@dataclass` / `@cached_property` / `@pytest.fixture` —
+    /// callable wrapping the decorated definition.
+    Annotation,
+}
+
+/// Block of methods declared on a type, optionally implementing an
+/// interface. Renamed in v13 from `AirImplBlock` to lift the Rust-only
+/// `impl Trait for Type` shape into a language-agnostic
+/// "implements interface" / "method bag on type" concept.
+// ot: canonical
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AirImpl {
-    /// `Some("path::to::Trait")` for `impl Trait for Type`; `None` for
-    /// inherent `impl Type`. Rendered with the same clean type-text
-    /// formatting as [`AirType`] symbols.
-    pub trait_path: Option<String>,
-    /// The `Type` in `impl ... for Type`.
-    pub self_ty: String,
-    /// Names of methods declared inside the impl, in declaration order.
-    /// Empty for empty impls.
+pub struct AirImplBlock {
+    /// `Some("path::to::Interface")` when this block implements an
+    /// interface (Rust `impl Trait for Type`, TS `class X implements I`,
+    /// Java `class X implements I`, Python `class X(Protocol)`,
+    /// Swift `extension X: I`). `None` for inherent / non-conforming
+    /// method bags.
+    #[serde(default)]
+    pub interface: Option<String>,
+    /// The type this block adds methods to. Same convention as
+    /// [`AirType::symbol`] for delimiter handling.
+    pub target_type: String,
+    /// Names of methods declared inside the block, in declaration order.
+    /// Empty for empty blocks.
     pub method_names: Vec<String>,
+    /// How the implementation is *bound* to the interface. Rust
+    /// `impl Trait for Type` is `Static`; Rust trait objects
+    /// (`Box<dyn Trait>`) and Java reflection-bound impls are
+    /// `Dynamic`; Go's implicit interface satisfaction (a struct
+    /// "implements" an interface by having the method set without
+    /// declaring the relationship) is `Structural`. Rust adapter
+    /// always emits `Static` today.
+    #[serde(default = "default_impl_dispatch")]
+    pub dispatch: ImplDispatch,
     pub span: AirSpan,
+}
+
+fn default_impl_dispatch() -> ImplDispatch {
+    ImplDispatch::Static
+}
+
+// ot: canonical
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[serde(rename_all = "snake_case")]
+pub enum ImplDispatch {
+    /// Static / explicit conformance. Rust `impl Trait for Type`,
+    /// TS `class X implements I`, Java `implements`, Swift
+    /// `extension X: Protocol`.
+    Static,
+    /// Implicit / structural conformance — the type satisfies the
+    /// interface by having the right method set, without declaring
+    /// the relationship. Go interfaces, TypeScript structural
+    /// typing, Python duck-typing.
+    Structural,
+    /// Late / runtime-bound dispatch — Rust `dyn Trait`, Java
+    /// `Class.cast`, Python ABC virtual subclassing.
+    Dynamic,
 }
 
 // ot: canonical
@@ -293,13 +473,32 @@ pub struct AirConversion {
     pub span: AirSpan,
 }
 
+/// How a type-to-type conversion is wired. Renamed in v13 from the
+/// Rust-trait-name-shaped variants (`From`/`TryFrom`) to language-
+/// agnostic categories. Adapters map their idioms here:
+///
+/// - **InfallibleAdapter**: Rust `impl From<A> for B`, TS `(a: A): B`,
+///   Python `def __init__(self, a: A)` for total construction.
+/// - **FallibleAdapter**: Rust `impl TryFrom<A>`, TS `(a: A): B | null`,
+///   Python `@classmethod def try_from(cls, a)` returning `Optional`.
+/// - **InstanceMethod**: Rust inherent `impl B { fn from_a(...) }`,
+///   TS class method, Python instance method.
+/// - **FreeFunction**: Rust free `fn map_a_to_b(a: A) -> B`, TS
+///   module-level function, Go package-level function.
+/// - **FactoryFunction**: a free / static factory whose name is a
+///   convention (`X::new`, `X.create`, `make_x`). Adapters that
+///   want to distinguish factory functions from arbitrary free
+///   functions emit this variant; otherwise they fall back to
+///   `FreeFunction`.
 // ot: canonical
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
 pub enum ConversionMechanism {
-    From,
-    TryFrom,
-    InherentMethod,
-    FreeFn,
+    InfallibleAdapter,
+    FallibleAdapter,
+    InstanceMethod,
+    FreeFunction,
+    FactoryFunction,
 }
 
 // ot: canonical
@@ -331,13 +530,30 @@ pub struct AirTruthAction {
     pub reasons: Vec<String>,
 }
 
+/// Architectural shape of a "decision-like" action inside a function
+/// body. Renamed in v13 from the Rust-syntax-shaped `EnumMatch` to
+/// `DiscriminatedMatch` so other adapters (TS discriminated-union
+/// `switch`, Python `match` on dataclasses, Go type-switch, Swift
+/// `enum` match) emit naturally.
 // ot: canonical
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[serde(rename_all = "snake_case")]
 pub enum ActionKind {
+    /// Constructing a new value of a domain-shaped type. Rust
+    /// `Type { ... }` literal, TS `new Type(...)`, Python `Type(...)`.
     Construct,
-    EnumMatch,
+    /// Dispatching on a discriminator/tag — Rust `match`, TS
+    /// `switch (x.kind)`, Python `match x:`, Go type-switch,
+    /// Swift `switch` on an enum.
+    DiscriminatedMatch,
+    /// Comparing a value against a string literal — `if role ==
+    /// "admin"` and similar.
     StringCompare,
+    /// Validation-like operation — `if !is_valid(x) { return ... }`,
+    /// `assert!(x.starts_with("..."))`, `raise ValueError`.
     Validate,
+    /// Normalisation-like operation — `x.trim().to_lowercase()`,
+    /// `x.replace(...)`, canonicalising input.
     Normalize,
 }
 
@@ -359,10 +575,20 @@ pub struct AirCallSite {
 
 // ot: canonical
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[serde(rename_all = "snake_case")]
 pub enum CallKind {
+    /// Free / standalone function call (`foo(args)` where `foo` is
+    /// a path or named function reference).
     Function,
+    /// Method call on a receiver (`x.foo(args)`). Receiver-type
+    /// resolution is out of AIR's scope.
     Method,
-    Macro,
+    /// Meta / syntactic / definition-time call surface. Rust macros
+    /// (`println!`, `vec![]`), TypeScript template-tag invocations
+    /// (``html`<div/>` ``), Python decorator calls evaluated at
+    /// definition time, Java reflective method invocations.
+    /// Renamed in v13 from `Macro` to lift the Rust-specific shape.
+    Meta,
 }
 
 /// `let _ = expr;` — a discarded binding. Captured only when `expr` is a
@@ -387,34 +613,58 @@ pub struct AirSilentDiscard {
 
 // ot: canonical
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[serde(rename_all = "snake_case")]
 pub enum DiscardKind {
-    /// `let _ = receiver.method(...);`
+    /// `let _ = receiver.method(...);` — method call on a receiver.
     Method,
-    /// `let _ = function(...);`
+    /// `let _ = function(...);` — free function call.
     Function,
-    /// `let _ = macro!(...);`
-    Macro,
+    /// `let _ = macro!(...);` — syntactic / meta call surface.
+    /// Renamed in v13 from `Macro` (consistent with [`CallKind::Meta`]).
+    Meta,
     /// `let _ = some_other_expr;` — block, field access, literal, etc.
     /// Recorded for completeness; FL004 defaults to ignoring this kind
     /// because the false-positive surface is too large.
     Other,
 }
 
-/// `if let Ok(...) = expr { ... }` or `if let Err(...) = expr { ... }`
-/// **without** an `else` branch. The unmatched arm is implicitly silent —
-/// the failure (or success) just falls through. FL005 fires on this
-/// shape outside `invariant_owner_paths`. Patterns matching anything
-/// other than the `Ok` / `Err` `Result` constructors are not recorded.
+/// A partial match against the `Result`-shape: only the success or
+/// only the failure branch is handled, with no `else` / no companion
+/// arm. The unmatched side falls through silently. FL005 fires on
+/// this shape outside `invariant_owner_paths`.
+///
+/// Each language adapter emits this for its own `Result`-equivalent
+/// pattern: Rust `if let Ok/Err(...) = expr { ... }` (no else),
+/// TypeScript `if (result.ok) { ... }` (no else), Python `if
+/// result.is_ok(): ...` (no else), Go `if err == nil { ... }` (no
+/// else handling the err). Renamed in v13 from `AirPartialResultMatch` to
+/// lift the Rust-only `if let` shape into a language-agnostic
+/// "partial result match" concept.
 // ot: canonical
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AirPartialIfLet {
-    /// `"Ok"` or `"Err"` — the variant the surface `if let` matches on.
-    /// We record this so FL005 can phrase the diagnostic precisely
-    /// (a missing `Err` branch reads differently from a missing `Ok` one).
-    pub variant: String,
+pub struct AirPartialResultMatch {
+    /// Which branch of the `Result` shape *was* handled. The
+    /// unmatched complement is the silent path. Renamed in v13 from
+    /// the previous `String "Ok"|"Err"` to a typed enum so consumers
+    /// don't have to do string compares.
+    pub variant: ResultMatchVariant,
     /// Enclosing function's symbol, if known.
     pub function: Option<String>,
     pub span: AirSpan,
+}
+
+// ot: canonical
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[serde(rename_all = "snake_case")]
+pub enum ResultMatchVariant {
+    /// The success branch was handled — Rust `Ok(x)`, TS
+    /// `result.ok`, Python `result.is_ok()`, Go `err == nil`.
+    /// The implicit failure branch is silent.
+    Success,
+    /// The failure branch was handled — Rust `Err(e)`, TS
+    /// `!result.ok`, Python `result.is_err()`, Go `err != nil`.
+    /// The implicit success branch is silent.
+    Failure,
 }
 
 /// One arm of a `match` expression. The visitor emits one
@@ -459,9 +709,12 @@ pub enum ArmBodyShape {
     /// A `return` expression (with or without value). Definitely
     /// non-silent — control flow leaves the function.
     Return,
-    /// The arm uses the `?` operator somewhere. The error is
-    /// propagated to the caller — the opposite of silent.
-    Propagate,
+    /// The arm propagates an error to the caller — Rust `?`,
+    /// TypeScript `try { … }` rethrow, Python `raise`, Go's
+    /// `if err != nil { return err }` early-exit shape. The
+    /// opposite of silent. Renamed in v13 from `Propagate` to make
+    /// the cross-language meaning explicit.
+    ErrorPropagation,
     /// A multi-statement block. Could be doing real work; the rule
     /// shouldn't pre-judge.
     Block,
@@ -508,15 +761,46 @@ pub struct AirClosureMethodCall {
 // ot: canonical
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AirFallbackCall {
-    /// Bare method name (`unwrap_or`, `or`, `unwrap_or_default`).
+    /// Architectural classification of the fallback shape — added in
+    /// v13 so non-Rust adapters can map their idioms here without
+    /// inventing fake Rust method names. TS `??` / `||`, Go's
+    /// two-value `if !ok { default }`, Python `value or default`
+    /// all map to one of [`FallbackPattern::ValueOr`] /
+    /// [`FallbackPattern::Or`] / [`FallbackPattern::DefaultOr`].
+    pub pattern: FallbackPattern,
+    /// Original callee text, kept as evidence the rule can quote.
+    /// Rust adapter populates with `unwrap_or` / `or` /
+    /// `unwrap_or_default`; TypeScript adapter would populate with
+    /// `??` / `||` / a project-specific `getOr`.
     pub callee: String,
     /// Heuristic shape of the first-argument default expression.
-    /// `unwrap_or_default` — which takes no argument — is recorded
-    /// with `default_shape = Empty`.
+    /// `unwrap_or_default` (no argument) — and equivalents — are
+    /// recorded with `default_shape = Empty`.
     pub default_shape: ArmBodyShape,
     /// Enclosing function's symbol, if known.
     pub function: Option<String>,
     pub span: AirSpan,
+}
+
+/// Architectural shape of a fallback / value-or-default operation.
+// ot: canonical
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[serde(rename_all = "snake_case")]
+pub enum FallbackPattern {
+    /// Value-or-default with an explicit default expression. Rust
+    /// `result.unwrap_or(0)` / `option.unwrap_or(...)`, TS
+    /// `result ?? default`, Python `value if value is not None
+    /// else default`.
+    ValueOr,
+    /// Either-or: try the first; if it fails, fall through to the
+    /// second. Rust `option.or(other)` / `result.or(...)`, TS
+    /// `result || alternate`, Python `value or alternate`.
+    Or,
+    /// Default-of-type fallback — no explicit default, the type's
+    /// default value is used. Rust `unwrap_or_default()`, Python
+    /// `dict.setdefault(key)` patterns, TS spread-default
+    /// `{...defaults, ...x}`.
+    DefaultOr,
 }
 
 /// A loop construct (`loop {}`, `for ... {}`, `while ... {}`) whose
@@ -688,11 +972,24 @@ pub enum FactTarget {
 // ot: canonical
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AirImport {
-    /// Fully-rendered import path. `use foo::bar::Baz` → `"foo::bar::Baz"`.
-    /// `use a::{b, c}` is flattened: each leaf becomes its own AirImport.
-    /// Leading `crate::` is normalized to the package's lib name so paths
-    /// are consistent with [`AirType::symbol`].
+    /// Fully-rendered import path as the language adapter wrote it.
+    /// Rust `use foo::bar::Baz` → `"foo::bar::Baz"`. TypeScript
+    /// `import { Baz } from "./foo/bar"` → `"./foo/bar/Baz"` or
+    /// equivalent adapter convention. Python `from foo.bar import
+    /// Baz` → `"foo.bar.Baz"`. `use a::{b, c}` is flattened: each
+    /// leaf becomes its own AirImport. Leading `crate::` (Rust) is
+    /// normalised to the package's lib name so paths are consistent
+    /// with [`AirType::symbol`].
+    ///
+    /// Opaque text — paradigm matchers that need delimiter-agnostic
+    /// segment matching should use [`Self::path_segments`].
     pub path: String,
+    /// `path` split into segments. Lets paradigm matchers operate
+    /// on path components (`["foo", "bar", "Baz"]`) without
+    /// depending on the language adapter's delimiter convention.
+    /// Empty for adapters that haven't populated segments yet.
+    #[serde(default)]
+    pub path_segments: Vec<String>,
     pub visibility: Visibility,
     pub span: AirSpan,
 }

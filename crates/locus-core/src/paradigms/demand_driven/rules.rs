@@ -68,7 +68,7 @@ pub fn da001(air: &AirWorkspace, section: &DaSection, mode: CheckMode) -> Vec<Di
         return Vec::new();
     }
 
-    // Second pass: count impl blocks per trait. We match an `AirImpl.trait_path`
+    // Second pass: count impl blocks per trait. We match an `AirImplBlock.interface`
     // to a declared trait by either:
     // - exact symbol equality (`my_crate::ports::Clock` matches symbol), OR
     // - last-segment name equality (the trait was imported and used as `Clock`).
@@ -82,7 +82,7 @@ pub fn da001(air: &AirWorkspace, section: &DaSection, mode: CheckMode) -> Vec<Di
         for file in &pkg.files {
             for item in &file.items {
                 let AirItem::Impl(imp) = item else { continue };
-                let Some(raw) = imp.trait_path.as_deref() else {
+                let Some(raw) = imp.interface.as_deref() else {
                     continue; // inherent impl
                 };
                 let normalized = strip_generics(raw);
@@ -354,7 +354,7 @@ pub fn da007(air: &AirWorkspace, section: &DaSection, mode: CheckMode) -> Vec<Di
 mod tests {
     use super::*;
     use locus_air::{
-        AIR_SCHEMA_VERSION, AirFile, AirImpl, AirItem, AirPackage, AirSpan, AirType, TypeKind,
+        AIR_SCHEMA_VERSION, AirFile, AirImplBlock, AirItem, AirPackage, AirSpan, AirType, TypeKind,
         Visibility,
     };
 
@@ -366,8 +366,8 @@ mod tests {
             visibility: Visibility::Public,
             fields: Vec::new(),
             variants: Vec::new(),
-            derives: Vec::new(),
-            attrs: Vec::new(),
+            decorators: Vec::new(),
+            symbol_segments: Vec::new(),
             span: AirSpan::new("t.rs", 1, 1),
             doc: None,
         })
@@ -381,18 +381,19 @@ mod tests {
             visibility: Visibility::Public,
             fields: Vec::new(),
             variants: Vec::new(),
-            derives: Vec::new(),
-            attrs: Vec::new(),
+            decorators: Vec::new(),
+            symbol_segments: Vec::new(),
             span: AirSpan::new("t.rs", 1, 1),
             doc: None,
         })
     }
 
     fn impl_for(trait_path: Option<&str>, self_ty: &str) -> AirItem {
-        AirItem::Impl(AirImpl {
-            trait_path: trait_path.map(str::to_string),
-            self_ty: self_ty.into(),
+        AirItem::Impl(AirImplBlock {
+            interface: trait_path.map(str::to_string),
+            target_type: self_ty.into(),
             method_names: Vec::new(),
+            dispatch: locus_air::ImplDispatch::Static,
             span: AirSpan::new("t.rs", 1, 1),
         })
     }
@@ -650,8 +651,8 @@ mod tests {
             visibility: Visibility::Public,
             fields: Vec::new(),
             variants: Vec::new(),
-            derives: Vec::new(),
-            attrs: Vec::new(),
+            decorators: Vec::new(),
+            symbol_segments: Vec::new(),
             span: trait_span.clone(),
             doc: None,
         });
@@ -674,6 +675,8 @@ mod tests {
             return_type: None,
             span: AirSpan::new("t.rs", 1, 1),
             line_count: 1,
+            decorators: Vec::new(),
+            symbol_segments: Vec::new(),
             doc: None,
         })
     }
@@ -703,8 +706,8 @@ mod tests {
                     fields: Vec::new(),
                 })
                 .collect(),
-            derives: Vec::new(),
-            attrs: Vec::new(),
+            decorators: Vec::new(),
+            symbol_segments: Vec::new(),
             span: AirSpan::new("t.rs", 1, 1),
             doc: None,
         })

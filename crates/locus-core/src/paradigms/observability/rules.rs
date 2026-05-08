@@ -168,7 +168,7 @@ fn diagnostic_for(
 
 /// OB002 — metric emission outside the accepted owner module.
 ///
-/// For every `AirItem::CallSite` of `CallKind::Macro` whose `callee` matches
+/// For every `AirItem::CallSite` of `CallKind::Meta` whose `callee` matches
 /// any pattern in `metric_macro_patterns`, fire when the enclosing file's
 /// `module_path` does NOT match any pattern in `metric_owner_paths`. The
 /// shape mirrors OB001 but skips the fact-tier — there's no normalized
@@ -322,7 +322,7 @@ fn macro_emission_diagnostics(
                 let AirItem::CallSite(cs) = item else {
                     continue;
                 };
-                if cs.kind != CallKind::Macro {
+                if cs.kind != CallKind::Meta {
                     continue;
                 }
                 let Some(matched_pattern) = macro_patterns
@@ -374,7 +374,7 @@ fn diagnostic_for_macro_emission(
             cs.callee,
         ),
         why: vec![
-            format!("callee `{}!` (CallKind::Macro)", cs.callee),
+            format!("callee `{}!` (CallKind::Meta)", cs.callee),
             format!("matches `{macro_lockfile_path}` pattern `{matched_pattern}`"),
             format!("module `{module_path}` does not match any `{owner_lockfile_path}` pattern"),
             format!("enclosing function: `{function_label}`"),
@@ -409,6 +409,8 @@ mod tests {
             return_type: None,
             span: AirSpan::new(file, line, line + 5),
             line_count: 6,
+            decorators: Vec::new(),
+            symbol_segments: Vec::new(),
             doc: None,
         })
     }
@@ -590,7 +592,7 @@ mod tests {
     fn macro_call(callee: &str, function: Option<&str>, line: u32) -> AirItem {
         AirItem::CallSite(AirCallSite {
             callee: callee.into(),
-            kind: CallKind::Macro,
+            kind: CallKind::Meta,
             function: function.map(|s| s.to_string()),
             span: AirSpan::new("t.rs", line, line),
         })

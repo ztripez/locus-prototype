@@ -316,6 +316,8 @@ mod tests {
             return_type: None,
             span: AirSpan::new("t.rs", 1, line_count.max(1)),
             line_count,
+            decorators: Vec::new(),
+            symbol_segments: Vec::new(),
             doc: None,
         })
     }
@@ -458,8 +460,8 @@ mod tests {
             visibility: Visibility::Public,
             fields: Vec::new(),
             variants: Vec::new(),
-            derives: Vec::new(),
-            attrs: Vec::new(),
+            decorators: Vec::new(),
+            symbol_segments: Vec::new(),
             span: AirSpan::new("t.rs", 1, 1),
             doc: None,
         })
@@ -473,8 +475,8 @@ mod tests {
             visibility: Visibility::Private,
             fields: Vec::new(),
             variants: Vec::new(),
-            derives: Vec::new(),
-            attrs: Vec::new(),
+            decorators: Vec::new(),
+            symbol_segments: Vec::new(),
             span: AirSpan::new("t.rs", 1, 1),
             doc: None,
         })
@@ -489,6 +491,8 @@ mod tests {
             return_type: None,
             span: AirSpan::new("t.rs", 1, 1),
             line_count: 1,
+            decorators: Vec::new(),
+            symbol_segments: Vec::new(),
             doc: None,
         })
     }

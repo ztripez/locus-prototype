@@ -5,12 +5,22 @@
 
 use crate::type_render::{render_path, render_type};
 use locus_air::{
-    ActionKind, AirCallSite, AirClosureMethodCall, AirConversion, AirFallbackCall, AirField,
-    AirFunction, AirImpl, AirImport, AirItem, AirMatchArm, AirPartialIfLet, AirRetryLoop,
-    AirScrutineeLiteral, AirSilentDiscard, AirSpan, AirTruthAction, AirType, AirVariant,
-    ArmBodyShape, CallKind, ConversionMechanism, DiscardKind, LiteralContext, LiteralKind,
-    LoopKind, TypeKind, Visibility,
+    ActionKind, AirCallSite, AirClosureMethodCall, AirConversion, AirDecorator, AirFallbackCall,
+    AirField, AirFunction, AirImplBlock, AirImport, AirItem, AirMatchArm, AirPartialResultMatch,
+    AirRetryLoop, AirScrutineeLiteral, AirSilentDiscard, AirSpan, AirTruthAction, AirType,
+    AirVariant, ArmBodyShape, CallKind, ConversionMechanism, DecoratorSource, DiscardKind,
+    FallbackPattern, ImplDispatch, LiteralContext, LiteralKind, LoopKind, ResultMatchVariant,
+    TypeKind, Visibility,
 };
+
+/// Split a Rust-style `::`-joined symbol into segments for AIR's
+/// language-agnostic `*_segments` fields. Empty input → empty Vec.
+fn segments_of(symbol: &str) -> Vec<String> {
+    if symbol.is_empty() {
+        return Vec::new();
+    }
+    symbol.split("::").map(|s| s.to_string()).collect()
+}
 use quote::ToTokens;
 use syn::{
     Expr, ExprLit, Fields, File, ImplItem, Item, ItemEnum, ItemFn, ItemImpl, ItemMod, ItemStruct,
@@ -59,8 +69,9 @@ fn walk_items(
 fn emit_struct(s: &ItemStruct, module: &str, file_path: &str, out: &mut Vec<AirItem>) {
     let name = s.ident.to_string();
     let symbol = format!("{module}::{name}");
+    let symbol_segments = segments_of(&symbol);
     let fields = collect_named_fields(&s.fields);
-    let (derives, attrs, doc) = split_attrs(&s.attrs);
+    let (decorators, doc) = split_attrs(&s.attrs);
     out.push(AirItem::Type(AirType {
         kind: TypeKind::Struct,
         name,
@@ -68,8 +79,8 @@ fn emit_struct(s: &ItemStruct, module: &str, file_path: &str, out: &mut Vec<AirI
         visibility: vis_of(&s.vis),
         fields,
         variants: Vec::new(),
-        derives,
-        attrs,
+        decorators,
+        symbol_segments,
         span: span_of(file_path, s.span()),
         doc,
     }));
@@ -78,7 +89,8 @@ fn emit_struct(s: &ItemStruct, module: &str, file_path: &str, out: &mut Vec<AirI
 fn emit_enum(e: &ItemEnum, module: &str, file_path: &str, out: &mut Vec<AirItem>) {
     let name = e.ident.to_string();
     let symbol = format!("{module}::{name}");
-    let (derives, attrs, doc) = split_attrs(&e.attrs);
+    let symbol_segments = segments_of(&symbol);
+    let (decorators, doc) = split_attrs(&e.attrs);
     let variants = e
         .variants
         .iter()
@@ -94,8 +106,8 @@ fn emit_enum(e: &ItemEnum, module: &str, file_path: &str, out: &mut Vec<AirItem>
         visibility: vis_of(&e.vis),
         fields: Vec::new(),
         variants,
-        derives,
-        attrs,
+        decorators,
+        symbol_segments,
         span: span_of(file_path, e.span()),
         doc,
     }));
@@ -104,7 +116,8 @@ fn emit_enum(e: &ItemEnum, module: &str, file_path: &str, out: &mut Vec<AirItem>
 fn emit_alias(a: &ItemType, module: &str, file_path: &str, out: &mut Vec<AirItem>) {
     let name = a.ident.to_string();
     let symbol = format!("{module}::{name}");
-    let (derives, attrs, doc) = split_attrs(&a.attrs);
+    let symbol_segments = segments_of(&symbol);
+    let (decorators, doc) = split_attrs(&a.attrs);
     let alias_target = render_type(&a.ty);
     out.push(AirItem::Type(AirType {
         kind: TypeKind::Alias,
@@ -117,8 +130,8 @@ fn emit_alias(a: &ItemType, module: &str, file_path: &str, out: &mut Vec<AirItem
             visibility: Visibility::Public,
         }],
         variants: Vec::new(),
-        derives,
-        attrs,
+        decorators,
+        symbol_segments,
         span: span_of(file_path, a.span()),
         doc,
     }));
@@ -127,7 +140,8 @@ fn emit_alias(a: &ItemType, module: &str, file_path: &str, out: &mut Vec<AirItem
 fn emit_union(u: &ItemUnion, module: &str, file_path: &str, out: &mut Vec<AirItem>) {
     let name = u.ident.to_string();
     let symbol = format!("{module}::{name}");
-    let (derives, attrs, doc) = split_attrs(&u.attrs);
+    let symbol_segments = segments_of(&symbol);
+    let (decorators, doc) = split_attrs(&u.attrs);
     let fields = u
         .fields
         .named
@@ -145,8 +159,8 @@ fn emit_union(u: &ItemUnion, module: &str, file_path: &str, out: &mut Vec<AirIte
         visibility: vis_of(&u.vis),
         fields,
         variants: Vec::new(),
-        derives,
-        attrs,
+        decorators,
+        symbol_segments,
         span: span_of(file_path, u.span()),
         doc,
     }));
@@ -155,7 +169,8 @@ fn emit_union(u: &ItemUnion, module: &str, file_path: &str, out: &mut Vec<AirIte
 fn emit_trait(t: &ItemTrait, module: &str, file_path: &str, out: &mut Vec<AirItem>) {
     let name = t.ident.to_string();
     let symbol = format!("{module}::{name}");
-    let (derives, attrs, doc) = split_attrs(&t.attrs);
+    let symbol_segments = segments_of(&symbol);
+    let (decorators, doc) = split_attrs(&t.attrs);
     out.push(AirItem::Type(AirType {
         kind: TypeKind::Trait,
         name,
@@ -163,8 +178,8 @@ fn emit_trait(t: &ItemTrait, module: &str, file_path: &str, out: &mut Vec<AirIte
         visibility: vis_of(&t.vis),
         fields: Vec::new(),
         variants: Vec::new(),
-        derives,
-        attrs,
+        decorators,
+        symbol_segments,
         span: span_of(file_path, t.span()),
         doc,
     }));
@@ -173,6 +188,7 @@ fn emit_trait(t: &ItemTrait, module: &str, file_path: &str, out: &mut Vec<AirIte
 fn emit_fn(f: &ItemFn, module: &str, file_path: &str, out: &mut Vec<AirItem>) {
     let name = f.sig.ident.to_string();
     let symbol = format!("{module}::{name}");
+    let symbol_segments = segments_of(&symbol);
     let params = f
         .sig
         .inputs
@@ -196,16 +212,18 @@ fn emit_fn(f: &ItemFn, module: &str, file_path: &str, out: &mut Vec<AirItem>) {
 
     let span = span_of(file_path, f.span());
     let line_count = span.line_end.saturating_sub(span.line_start) + 1;
-    let (_derives, _attrs, doc) = split_attrs(&f.attrs);
+    let (decorators, doc) = split_attrs(&f.attrs);
 
     out.push(AirItem::Function(AirFunction {
         name: name.clone(),
         symbol: symbol.clone(),
+        symbol_segments: symbol_segments.clone(),
         visibility: vis_of(&f.vis),
         params: params.clone(),
         return_type: return_type.clone(),
         span: span.clone(),
         line_count,
+        decorators: decorators.clone(),
         doc,
     }));
 
@@ -249,10 +267,15 @@ fn emit_impl(i: &ItemImpl, module: &str, file_path: &str, out: &mut Vec<AirItem>
             _ => None,
         })
         .collect();
-    out.push(AirItem::Impl(AirImpl {
-        trait_path: trait_path_text,
-        self_ty: self_ty.clone(),
+    out.push(AirItem::Impl(AirImplBlock {
+        interface: trait_path_text,
+        target_type: self_ty.clone(),
         method_names,
+        // Rust adapter emits Static for explicit `impl Trait for Type`.
+        // `impl dyn Trait` would be Dynamic, but those don't appear at
+        // item-level — they're type-position only. Future Go adapter
+        // will emit Structural for implicit interface satisfaction.
+        dispatch: ImplDispatch::Static,
         span: span_of(file_path, i.span()),
     }));
 
@@ -270,9 +293,9 @@ fn emit_impl(i: &ItemImpl, module: &str, file_path: &str, out: &mut Vec<AirItem>
             {
                 let from_ty = render_type(t);
                 let mech = if last == "TryFrom" {
-                    ConversionMechanism::TryFrom
+                    ConversionMechanism::FallibleAdapter
                 } else {
-                    ConversionMechanism::From
+                    ConversionMechanism::InfallibleAdapter
                 };
                 out.push(AirItem::Conversion(AirConversion {
                     from: from_ty,
@@ -328,8 +351,10 @@ fn emit_use(u: &ItemUse, crate_name: &str, file_path: &str, out: &mut Vec<AirIte
     let span = span_of(file_path, u.span());
     for raw in paths {
         let path = normalize_use_path(raw, crate_name);
+        let path_segments = segments_of(&path);
         out.push(AirItem::Import(AirImport {
             path,
+            path_segments,
             visibility,
             span: span.clone(),
         }));
@@ -408,7 +433,7 @@ fn vis_of(v: &SynVis) -> Visibility {
         SynVis::Public(_) => Visibility::Public,
         SynVis::Restricted(r) => {
             if r.path.is_ident("crate") {
-                Visibility::Crate
+                Visibility::Module
             } else {
                 Visibility::Restricted
             }
@@ -417,18 +442,21 @@ fn vis_of(v: &SynVis) -> Visibility {
     }
 }
 
-/// Returns `(derives, other_attrs, doc)`. Doc attrs (both `///` and
-/// `#[doc = "..."]`, which `syn` normalizes into the same shape) are
-/// extracted into `doc` and removed from `other_attrs` so they don't double-
-/// count under `AirType.attrs` / `AirFunction` attrs.
-fn split_attrs(attrs: &[syn::Attribute]) -> (Vec<String>, Vec<String>, Option<String>) {
-    let mut derives = Vec::new();
-    let mut others = Vec::new();
+/// Returns `(decorators, doc)`. AIR v13 unified Rust `#[derive(...)]`
+/// and `#[attr(...)]` forms into a single `Vec<AirDecorator>` with a
+/// `source` tag (`Derive` vs `Attribute`). Doc attrs (`///` and
+/// `#[doc = "..."]`) are still extracted separately into `doc`.
+fn split_attrs(attrs: &[syn::Attribute]) -> (Vec<AirDecorator>, Option<String>) {
+    let mut decorators: Vec<AirDecorator> = Vec::new();
     let mut doc_lines: Vec<String> = Vec::new();
     for a in attrs {
         if a.path().is_ident("derive") {
             let _ = a.parse_nested_meta(|meta| {
-                derives.push(meta.path.to_token_stream().to_string());
+                decorators.push(AirDecorator {
+                    source: DecoratorSource::Derive,
+                    name: meta.path.to_token_stream().to_string(),
+                    args: Vec::new(),
+                });
                 Ok(())
             });
         } else if a.path().is_ident("doc") {
@@ -443,7 +471,16 @@ fn split_attrs(attrs: &[syn::Attribute]) -> (Vec<String>, Vec<String>, Option<St
                 doc_lines.push(raw.strip_prefix(' ').unwrap_or(&raw).to_string());
             }
         } else {
-            others.push(a.to_token_stream().to_string());
+            // Non-doc, non-derive attribute — `#[serde(rename = "x")]`,
+            // `#[inline]`, `#[allow(...)]`. Render the whole attribute
+            // text as the decorator name; v13 keeps args empty (the
+            // text already includes the parenthesised arg block); a
+            // future refinement could parse args out separately.
+            decorators.push(AirDecorator {
+                source: DecoratorSource::Attribute,
+                name: a.to_token_stream().to_string(),
+                args: Vec::new(),
+            });
         }
     }
     let doc = if doc_lines.is_empty() {
@@ -451,7 +488,7 @@ fn split_attrs(attrs: &[syn::Attribute]) -> (Vec<String>, Vec<String>, Option<St
     } else {
         Some(doc_lines.join("\n"))
     };
-    (derives, others, doc)
+    (decorators, doc)
 }
 
 fn span_of(file: &str, sp: proc_macro2::Span) -> AirSpan {
@@ -467,7 +504,7 @@ fn free_fn_converter_kind(name: &str) -> Option<ConversionMechanism> {
         || name.starts_with("map_")
         || name.starts_with("convert_")
     {
-        Some(ConversionMechanism::FreeFn)
+        Some(ConversionMechanism::FreeFunction)
     } else {
         None
     }
@@ -475,7 +512,7 @@ fn free_fn_converter_kind(name: &str) -> Option<ConversionMechanism> {
 
 fn inherent_method_converter_kind(name: &str) -> Option<ConversionMechanism> {
     if name.starts_with("to_") || name.starts_with("into_") {
-        Some(ConversionMechanism::InherentMethod)
+        Some(ConversionMechanism::InstanceMethod)
     } else {
         None
     }
@@ -542,7 +579,7 @@ fn scan_stmt(stmt: &Stmt, function: &str, file_path: &str, out: &mut Vec<AirItem
             // callee path into normalized facts (e.g. LogsRaw / LogsStructured).
             out.push(AirItem::CallSite(AirCallSite {
                 callee: render_path(&m.mac.path),
-                kind: CallKind::Macro,
+                kind: CallKind::Meta,
                 function: Some(function.to_string()),
                 span: span_of(file_path, m.mac.span()),
             }));
@@ -565,7 +602,7 @@ fn classify_discard_init(expr: &Expr) -> (Option<String>, DiscardKind) {
             Expr::Path(p) => (Some(render_path(&p.path)), DiscardKind::Function),
             _ => (None, DiscardKind::Function),
         },
-        Expr::Macro(m) => (Some(render_path(&m.mac.path)), DiscardKind::Macro),
+        Expr::Macro(m) => (Some(render_path(&m.mac.path)), DiscardKind::Meta),
         // Peel through transparent wrappers so `let _ = (x.send());` and
         // `let _ = &mut x.lock();` still classify as the underlying call.
         Expr::Paren(p) => classify_discard_init(&p.expr),
@@ -594,7 +631,7 @@ fn scan_expr(expr: &Expr, function: &str, file_path: &str, out: &mut Vec<AirItem
         Expr::Match(m) => {
             let scrutinee = m.expr.to_token_stream().to_string();
             out.push(AirItem::TruthAction(AirTruthAction {
-                action: ActionKind::EnumMatch,
+                action: ActionKind::DiscriminatedMatch,
                 target: scrutinee.clone(),
                 function: Some(function.to_string()),
                 span: span_of(file_path, m.span()),
@@ -683,8 +720,18 @@ fn scan_expr(expr: &Expr, function: &str, file_path: &str, out: &mut Vec<AirItem
                 && let Expr::Let(let_expr) = &*i.cond
                 && let Some(variant) = result_variant_of_pat(&let_expr.pat)
             {
-                out.push(AirItem::PartialIfLet(AirPartialIfLet {
-                    variant: variant.to_string(),
+                // AIR v13: `variant` is now a `ResultMatchVariant` enum
+                // rather than a `String` "Ok"|"Err". Map the Rust-side
+                // `Ok`/`Err` to the architectural `Success`/`Failure`.
+                let variant_enum = match variant {
+                    "Ok" => ResultMatchVariant::Success,
+                    "Err" => ResultMatchVariant::Failure,
+                    // result_variant_of_pat only returns these two
+                    // strings; this arm is unreachable.
+                    _ => unreachable!("result_variant_of_pat returned {variant:?}"),
+                };
+                out.push(AirItem::PartialResultMatch(AirPartialResultMatch {
+                    variant: variant_enum,
                     function: Some(function.to_string()),
                     span: span_of(file_path, i.span()),
                 }));
@@ -723,7 +770,7 @@ fn scan_expr(expr: &Expr, function: &str, file_path: &str, out: &mut Vec<AirItem
         Expr::Macro(m) => {
             out.push(AirItem::CallSite(AirCallSite {
                 callee: render_path(&m.mac.path),
-                kind: CallKind::Macro,
+                kind: CallKind::Meta,
                 function: Some(function.to_string()),
                 span: span_of(file_path, m.mac.span()),
             }));
@@ -770,7 +817,23 @@ fn scan_expr(expr: &Expr, function: &str, file_path: &str, out: &mut Vec<AirItem
                     Some(arg) => classify_body(arg),
                     None => ArmBodyShape::Empty,
                 };
+                // AIR v13: classify the Rust callee into the
+                // architectural `FallbackPattern` so non-Rust adapters
+                // can map their idioms (TS `??` / `||`, Go's
+                // two-value-fallback, Python `value or default`) to the
+                // same shape. The Rust method name stays on `callee`
+                // as evidence rules can quote.
+                let pattern = match method_name.as_str() {
+                    "unwrap_or" => FallbackPattern::ValueOr,
+                    "or" => FallbackPattern::Or,
+                    "unwrap_or_default" => FallbackPattern::DefaultOr,
+                    // Future Rust callees that fit the family: unreachable
+                    // today because the outer `matches!` gate covers exactly
+                    // these three.
+                    _ => unreachable!("unhandled fallback callee {method_name:?}"),
+                };
                 out.push(AirItem::FallbackCall(AirFallbackCall {
+                    pattern,
                     callee: method_name,
                     default_shape,
                     function: Some(function.to_string()),
@@ -975,7 +1038,7 @@ fn classify_body(expr: &Expr) -> ArmBodyShape {
             ArmBodyShape::Call
         }
         Expr::Return(_) => ArmBodyShape::Return,
-        Expr::Try(_) => ArmBodyShape::Propagate,
+        Expr::Try(_) => ArmBodyShape::ErrorPropagation,
         Expr::Block(b) => {
             // Multi-statement block — check if any statement contains a `?`
             // that would propagate the error. If yes → Propagate; if any
@@ -991,7 +1054,7 @@ fn classify_body(expr: &Expr) -> ArmBodyShape {
                 }
             }
             if has_propagate {
-                ArmBodyShape::Propagate
+                ArmBodyShape::ErrorPropagation
             } else if has_return {
                 ArmBodyShape::Return
             } else {
@@ -1101,11 +1164,11 @@ mod tests {
             .collect()
     }
 
-    fn partial_if_lets(items: &[AirItem]) -> Vec<&AirPartialIfLet> {
+    fn partial_if_lets(items: &[AirItem]) -> Vec<&AirPartialResultMatch> {
         items
             .iter()
             .filter_map(|i| match i {
-                AirItem::PartialIfLet(p) => Some(p),
+                AirItem::PartialResultMatch(p) => Some(p),
                 _ => None,
             })
             .collect()
@@ -1150,7 +1213,7 @@ mod tests {
         let discards = silent_discards(&items);
         assert_eq!(discards.len(), 1);
         assert_eq!(discards[0].callee.as_deref(), Some("vec"));
-        assert_eq!(discards[0].kind, DiscardKind::Macro);
+        assert_eq!(discards[0].kind, DiscardKind::Meta);
     }
 
     #[test]
@@ -1206,7 +1269,7 @@ mod tests {
         "#});
         let parts = partial_if_lets(&items);
         assert_eq!(parts.len(), 1);
-        assert_eq!(parts[0].variant, "Ok");
+        assert_eq!(parts[0].variant, ResultMatchVariant::Success);
         assert_eq!(parts[0].function.as_deref(), Some("x::run"));
     }
 
@@ -1221,7 +1284,7 @@ mod tests {
         "#});
         let parts = partial_if_lets(&items);
         assert_eq!(parts.len(), 1);
-        assert_eq!(parts[0].variant, "Err");
+        assert_eq!(parts[0].variant, ResultMatchVariant::Failure);
     }
 
     #[test]
@@ -1265,7 +1328,7 @@ mod tests {
         "#});
         let parts = partial_if_lets(&items);
         assert_eq!(parts.len(), 1);
-        assert_eq!(parts[0].variant, "Ok");
+        assert_eq!(parts[0].variant, ResultMatchVariant::Success);
     }
 
     // ---- MatchArm emission ----
@@ -1348,7 +1411,7 @@ mod tests {
         let arms = match_arms(&items);
         // Err arm has `?` → Propagate
         let err_arm = arms.iter().find(|a| a.pattern.starts_with("Err")).unwrap();
-        assert_eq!(err_arm.body_shape, ArmBodyShape::Propagate);
+        assert_eq!(err_arm.body_shape, ArmBodyShape::ErrorPropagation);
     }
 
     #[test]

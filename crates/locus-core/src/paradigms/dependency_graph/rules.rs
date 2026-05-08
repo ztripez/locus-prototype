@@ -465,6 +465,7 @@ mod tests {
     fn import(path: &str) -> AirItem {
         AirItem::Import(AirImport {
             path: path.into(),
+            path_segments: Vec::new(),
             visibility: Visibility::Private,
             span: AirSpan::new("t.rs", 1, 1),
         })

@@ -440,7 +440,7 @@ fn diagnostic_for_er005(arm: &AirMatchArm, module_path: &str, mode: CheckMode) -
         // diagnostic still renders if `is_collapse_body_shape` ever
         // grows.
         ArmBodyShape::Return => "return",
-        ArmBodyShape::Propagate => "propagate",
+        ArmBodyShape::ErrorPropagation => "propagate",
         ArmBodyShape::Block => "block",
         ArmBodyShape::Other => "other",
     };
@@ -713,8 +713,8 @@ mod tests {
             visibility,
             fields: Vec::new(),
             variants: Vec::new(),
-            derives: Vec::new(),
-            attrs: Vec::new(),
+            decorators: Vec::new(),
+            symbol_segments: Vec::new(),
             span: AirSpan::new("src/errors.rs", 1, 1),
             doc: None,
         })
@@ -879,7 +879,7 @@ mod tests {
             vec![
                 pub_ty("UserError"),
                 ty("PrivateError", Visibility::Private),
-                ty("AlsoPrivateError", Visibility::Crate),
+                ty("AlsoPrivateError", Visibility::Module),
                 ty("RestrictedError", Visibility::Restricted),
             ],
         );
@@ -962,6 +962,8 @@ mod tests {
             return_type: return_type.map(str::to_string),
             span: AirSpan::new("src/ops.rs", 10, 20),
             line_count: 5,
+            decorators: Vec::new(),
+            symbol_segments: Vec::new(),
             doc: None,
         })
     }
@@ -1186,8 +1188,8 @@ mod tests {
             visibility: Visibility::Public,
             fields: Vec::new(),
             variants: air_variants,
-            derives: Vec::new(),
-            attrs: Vec::new(),
+            decorators: Vec::new(),
+            symbol_segments: Vec::new(),
             span: AirSpan::new("src/errors.rs", 1, 1),
             doc: None,
         })
@@ -1450,7 +1452,7 @@ mod tests {
             vec![match_arm(
                 "Err(_)",
                 true,
-                ArmBodyShape::Propagate,
+                ArmBodyShape::ErrorPropagation,
                 Some("x::domain::handlers::handle"),
             )],
         );

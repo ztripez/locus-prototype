@@ -146,7 +146,7 @@ mod tests {
         let conv = AirConversion {
             from: "UserDto".into(),
             to: "User".into(),
-            mechanism: locus_air::ConversionMechanism::TryFrom,
+            mechanism: locus_air::ConversionMechanism::FallibleAdapter,
             symbol: "impl TryFrom<UserDto> for User".into(),
             span: locus_air::AirSpan::new("t.rs", 1, 1),
         };
@@ -160,7 +160,7 @@ mod tests {
         let conv = AirConversion {
             from: "Foo".into(),
             to: "Bar".into(),
-            mechanism: locus_air::ConversionMechanism::From,
+            mechanism: locus_air::ConversionMechanism::InfallibleAdapter,
             symbol: "?".into(),
             span: locus_air::AirSpan::new("t.rs", 1, 1),
         };

@@ -1,0 +1,37 @@
+{
+  "version": 1,
+  "paradigms": {
+    "OT": {
+      "concepts": {
+        "user": {
+          "boundaries": [
+            {
+              "boundary": "api.v1",
+              "source": "hint",
+              "symbol": "sample_crate::dto::UserDto"
+            }
+          ],
+          "canonical": {
+            "source": "hint",
+            "symbol": "sample_crate::identity::User"
+          },
+          "converters": [
+            {
+              "from": "UserDto",
+              "source": "init",
+              "symbol": "sample_crate::dto::impl TryFrom<UserDto> for User",
+              "to": "User"
+            },
+            {
+              "from": "UserDto",
+              "source": "init",
+              "symbol": "sample_crate::dto::map_user",
+              "to": "User"
+            }
+          ]
+        }
+      }
+    }
+  },
+  "exceptions": []
+}

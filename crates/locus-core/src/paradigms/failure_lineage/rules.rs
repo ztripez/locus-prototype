@@ -19,7 +19,7 @@
 //!   `AirItem::SilentDiscard` items the visitor emits since AIR v9.
 //! - [`fl005`]: an `if let Ok(...) = expr { ... }` or `if let Err(...) =
 //!   expr { ... }` with no `else` branch outside `invariant_owner_paths`.
-//!   The unmatched arm is implicitly silent. Reads `AirItem::PartialIfLet`
+//!   The unmatched arm is implicitly silent. Reads `AirItem::PartialResultMatch`
 //!   items the visitor emits since AIR v9.
 //! - [`fl013`]: a function returning `Result<_, String>` or `Result<_, &str>`
 //!   that contains a call site stringifying via `to_string` / `format!` /
@@ -265,7 +265,7 @@ pub fn fl002(air: &AirWorkspace, section: &FlSection, mode: CheckMode) -> Vec<Di
                 // Function-shaped calls don't carry the unwrap/panic
                 // semantics we care about (and would false-positive on user
                 // free functions named `unwrap`). Method and Macro only.
-                if !matches!(cs.kind, CallKind::Method | CallKind::Macro) {
+                if !matches!(cs.kind, CallKind::Method | CallKind::Meta) {
                     continue;
                 }
                 if callsite_in_invariant_owner(
@@ -541,7 +541,7 @@ fn diagnostic_for_fl004(
     let kind_label = match d.kind {
         locus_air::DiscardKind::Method => "method",
         locus_air::DiscardKind::Function => "function",
-        locus_air::DiscardKind::Macro => "macro",
+        locus_air::DiscardKind::Meta => "macro",
         locus_air::DiscardKind::Other => "expression",
     };
     Diagnostic {
@@ -584,7 +584,7 @@ fn diagnostic_for_fl004(
 /// Catches the pattern `if let Ok(x) = result { ... }` (or its `Err`
 /// inverse) with no `else` branch — the unmatched arm is silent, and
 /// any failure (or success) on that path is dropped without
-/// acknowledgement. Reads [`AirItem::PartialIfLet`] items the visitor
+/// acknowledgement. Reads [`AirItem::PartialResultMatch`] items the visitor
 /// emits since AIR v9.
 ///
 /// Severity: `mode.elevate(Severity::Warning)` — Warning in human, Fatal
@@ -604,7 +604,7 @@ pub fn fl005(air: &AirWorkspace, section: &FlSection, mode: CheckMode) -> Vec<Di
                 continue;
             };
             for item in &file.items {
-                let AirItem::PartialIfLet(p) = item else {
+                let AirItem::PartialResultMatch(p) = item else {
                     continue;
                 };
                 if callsite_in_invariant_owner(
@@ -622,7 +622,7 @@ pub fn fl005(air: &AirWorkspace, section: &FlSection, mode: CheckMode) -> Vec<Di
 }
 
 fn diagnostic_for_fl005(
-    p: &locus_air::AirPartialIfLet,
+    p: &locus_air::AirPartialResultMatch,
     module_path: &str,
     mode: CheckMode,
 ) -> Diagnostic {
@@ -630,22 +630,28 @@ fn diagnostic_for_fl005(
         .function
         .as_deref()
         .unwrap_or("<unknown enclosing function>");
-    let unmatched = if p.variant == "Ok" { "Err" } else { "Ok" };
+    // AIR v13 turned `variant` from a String into `ResultMatchVariant`.
+    // Render the architectural-side label (Success/Failure) and the
+    // surface-side label (Ok/Err for Rust, ok/err for TS, etc. — Rust
+    // adapter today uses Ok/Err) so the diagnostic stays readable in
+    // both vocabularies.
+    let (matched_label, unmatched_label) = match p.variant {
+        locus_air::ResultMatchVariant::Success => ("Ok", "Err"),
+        locus_air::ResultMatchVariant::Failure => ("Err", "Ok"),
+    };
     Diagnostic {
         rule_id: "FL005".to_string(),
         severity: mode.elevate(Severity::Warning),
         span: p.span.clone(),
         concept: None,
         message: format!(
-            "partial `if let {}(...) = ...` (no `else` branch) in `{module_path}` \
-             (fn `{function_label}`) — the `{unmatched}` arm is implicitly silent",
-            p.variant
+            "partial `if let {matched_label}(...) = ...` (no `else` branch) in `{module_path}` \
+             (fn `{function_label}`) — the `{unmatched_label}` arm is implicitly silent"
         ),
         why: vec![
             format!(
-                "`if let {}(...) = ...` matches only the `{}` variant; the `{unmatched}` \
-                 arm has no body and falls through silently",
-                p.variant, p.variant,
+                "`if let {matched_label}(...) = ...` matches only the `{matched_label}` variant; the `{unmatched_label}` \
+                 arm has no body and falls through silently"
             ),
             format!("enclosing function: `{function_label}`"),
             format!(
@@ -655,7 +661,7 @@ fn diagnostic_for_fl005(
         ],
         suggested_fix: Some(format!(
             "rewrite as a `match` with both arms, or add an `else` branch \
-             that handles the `{unmatched}` case (log, propagate, or \
+             that handles the `{unmatched_label}` case (log, propagate, or \
              explicitly accept). If `{module_path}` is a legitimate \
              invariant owner (supervisor, test-support module), add it to \
              `paradigms.FL.invariant_owner_paths`. For a one-off accepted \
@@ -842,7 +848,7 @@ fn body_shape_label(shape: ArmBodyShape) -> &'static str {
         ArmBodyShape::Literal => "literal default",
         ArmBodyShape::Call => "call expression",
         ArmBodyShape::Return => "return",
-        ArmBodyShape::Propagate => "?-propagation",
+        ArmBodyShape::ErrorPropagation => "?-propagation",
         ArmBodyShape::Block => "block",
         ArmBodyShape::Other => "other",
     }
@@ -1260,7 +1266,7 @@ fn fallback_shape_token(shape: ArmBodyShape) -> &'static str {
         ArmBodyShape::Literal => "literal",
         ArmBodyShape::Call => "call",
         ArmBodyShape::Return => "return",
-        ArmBodyShape::Propagate => "propagate",
+        ArmBodyShape::ErrorPropagation => "propagate",
         ArmBodyShape::Block => "block",
         ArmBodyShape::Other => "other",
     }
@@ -1385,6 +1391,8 @@ mod tests {
             return_type: return_type.map(str::to_string),
             span: AirSpan::new("src/domain/user.rs", 10, 20),
             line_count: 11,
+            decorators: Vec::new(),
+            symbol_segments: Vec::new(),
             doc: None,
         })
     }
@@ -1737,7 +1745,7 @@ mod tests {
             "x::domain::user",
             vec![call_site(
                 "panic",
-                CallKind::Macro,
+                CallKind::Meta,
                 Some("x::domain::user::oops"),
                 12,
             )],
@@ -1841,7 +1849,7 @@ mod tests {
             "x::domain::user",
             vec![call_site(
                 "std::panic",
-                CallKind::Macro,
+                CallKind::Meta,
                 Some("x::domain::user::oops"),
                 7,
             )],
@@ -2015,8 +2023,16 @@ mod tests {
     }
 
     fn partial_if_let(variant: &str, function: Option<&str>, line: u32) -> AirItem {
-        AirItem::PartialIfLet(locus_air::AirPartialIfLet {
-            variant: variant.to_string(),
+        // AIR v13: variant is a typed enum, not a String. Map the
+        // legacy "Ok"/"Err" test fixture vocabulary to the new
+        // ResultMatchVariant.
+        let variant = match variant {
+            "Ok" => locus_air::ResultMatchVariant::Success,
+            "Err" => locus_air::ResultMatchVariant::Failure,
+            other => panic!("test fixture passed unexpected variant: {other}"),
+        };
+        AirItem::PartialResultMatch(locus_air::AirPartialResultMatch {
+            variant,
             function: function.map(|s| s.to_string()),
             span: AirSpan::new("src/domain/user.rs", line, line),
         })
@@ -2253,7 +2269,7 @@ mod tests {
                 func("describe", Some("Result<String, &str>")),
                 call_site(
                     "format",
-                    CallKind::Macro,
+                    CallKind::Meta,
                     Some("x::domain::user::describe"),
                     7,
                 ),
@@ -2324,6 +2340,8 @@ mod tests {
                             return_type: Some("Result<(), String>".into()),
                             span: AirSpan::new("src/supervisor/root.rs", 1, 5),
                             line_count: 5,
+                            decorators: Vec::new(),
+                            symbol_segments: Vec::new(),
                             doc: None,
                         }),
                         AirItem::CallSite(AirCallSite {
@@ -2649,7 +2667,7 @@ mod tests {
                 "result",
                 "Err(_)",
                 true,
-                ArmBodyShape::Propagate,
+                ArmBodyShape::ErrorPropagation,
                 Some("x::domain::user::lookup"),
                 4,
             )],
@@ -2877,6 +2895,7 @@ mod tests {
         line: u32,
     ) -> AirItem {
         AirItem::FallbackCall(AirFallbackCall {
+            pattern: locus_air::FallbackPattern::ValueOr,
             callee: callee.to_string(),
             default_shape: shape,
             function: function.map(|s| s.to_string()),
@@ -3028,7 +3047,7 @@ mod tests {
                 ),
                 fallback_call(
                     "unwrap_or",
-                    ArmBodyShape::Propagate,
+                    ArmBodyShape::ErrorPropagation,
                     Some("x::domain::user::greet"),
                     4,
                 ),

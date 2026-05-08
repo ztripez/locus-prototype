@@ -109,12 +109,15 @@ pub fn cluster_concepts_with_lockfile(
                 members[ref_idx].ty.name,
                 overlap * 100.0
             ));
-            if !m.ty.derives.is_empty()
-                && m.ty
-                    .derives
-                    .iter()
-                    .any(|d| d == "Serialize" || d == "Deserialize")
-            {
+            // OT inference treats serde derives as a "boundary-shaped"
+            // signal. After AIR v13 the field is `decorators` with a
+            // `source` tag; we filter to Rust derives only so non-Rust
+            // adapters that surface decorators differently don't
+            // accidentally light up the same heuristic.
+            if m.ty.decorators.iter().any(|d| {
+                matches!(d.source, locus_air::DecoratorSource::Derive)
+                    && (d.name == "Serialize" || d.name == "Deserialize")
+            }) {
                 reasons.push("derives Serialize/Deserialize".into());
             }
 

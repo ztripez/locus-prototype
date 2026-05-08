@@ -440,8 +440,8 @@ mod tests {
             visibility: vis,
             fields: Vec::new(),
             variants: Vec::new(),
-            derives: Vec::new(),
-            attrs: Vec::new(),
+            decorators: Vec::new(),
+            symbol_segments: Vec::new(),
             span: AirSpan::new("t.rs", 1, 1),
             doc: doc.map(|s| s.to_string()),
         })
@@ -456,6 +456,8 @@ mod tests {
             return_type: None,
             span: AirSpan::new("t.rs", 1, 1),
             line_count: 1,
+            decorators: Vec::new(),
+            symbol_segments: Vec::new(),
             doc: doc.map(|s| s.to_string()),
         })
     }
@@ -534,10 +536,10 @@ mod tests {
             "x::api",
             vec![
                 ty_item("Widget", Visibility::Private, None),
-                ty_item("Inner", Visibility::Crate, None),
+                ty_item("Inner", Visibility::Module, None),
                 ty_item("Restricted", Visibility::Restricted, None),
                 fn_item("helper", Visibility::Private, None),
-                fn_item("crate_helper", Visibility::Crate, None),
+                fn_item("crate_helper", Visibility::Module, None),
             ],
         );
         let section = DcSection {
