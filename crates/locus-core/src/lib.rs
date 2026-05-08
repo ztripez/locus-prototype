@@ -8,6 +8,7 @@
 
 pub mod diagnostics;
 pub mod exceptions;
+pub mod init;
 pub mod loaders;
 pub mod lockfile;
 pub mod paradigms;
@@ -16,6 +17,7 @@ pub use diagnostics::{
     CheckMode, Diagnostic, Severity, VACANT_PARADIGM_RULE, vacant_paradigm_diagnostic,
 };
 pub use exceptions::{EXPIRED_EXCEPTION_RULE, apply_exceptions, today_utc};
+pub use init::{CommandOption, Suggestion, SuggestionCategory};
 pub use loaders::{Loader, apply_loaders};
 pub use lockfile::{Lockfile, LockfileError};
 pub use paradigms::{Paradigm, registry};
