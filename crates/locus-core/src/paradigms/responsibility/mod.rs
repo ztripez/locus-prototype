@@ -23,6 +23,7 @@ use crate::lockfile::Lockfile;
 use locus_air::AirWorkspace;
 
 pub mod edit;
+pub mod init;
 pub mod lockfile_schema;
 pub mod rules;
 
@@ -85,5 +86,8 @@ impl Paradigm for Responsibility {
         diags.extend(rules::rm005(air, &section, mode));
         diags.extend(rules::rm006(air, &section, mode));
         diags
+    }
+    fn suggest(&self, air: &AirWorkspace, lockfile: &Lockfile) -> Vec<crate::init::Suggestion> {
+        init::suggest(air, lockfile)
     }
 }
