@@ -17,8 +17,67 @@ use std::cmp::Ordering;
 
 /// Cross-paradigm suggestions (layer detection, feature partitioning, …).
 /// Phase 1 returns no suggestions; phases 2 and 4 populate it.
-pub fn cross_paradigm_suggestions(_air: &AirWorkspace, _lockfile: &Lockfile) -> Vec<Suggestion> {
-    Vec::new()
+pub fn cross_paradigm_suggestions(air: &AirWorkspace, lockfile: &Lockfile) -> Vec<Suggestion> {
+    let layers = detect_layers(air);
+    let mut out = Vec::new();
+    if !layers.domain.is_empty() && !any_domain_paths_set(lockfile) {
+        out.push(domain_layer_suggestion(&layers.domain));
+    }
+    out
+}
+
+fn any_domain_paths_set(lockfile: &Lockfile) -> bool {
+    let bo: serde_json::Value = lockfile
+        .paradigm_section("BO")
+        .unwrap_or(serde_json::Value::Null);
+    let er: serde_json::Value = lockfile
+        .paradigm_section("ER")
+        .unwrap_or(serde_json::Value::Null);
+    let fl: serde_json::Value = lockfile
+        .paradigm_section("FL")
+        .unwrap_or(serde_json::Value::Null);
+    let rm: serde_json::Value = lockfile
+        .paradigm_section("RM")
+        .unwrap_or(serde_json::Value::Null);
+    has_nonempty_array(&bo, "domain_paths")
+        || has_nonempty_array(&er, "domain_paths")
+        || has_nonempty_array(&fl, "domain_paths")
+        || has_nonempty_array(&rm, "domain_paths_rm")
+}
+
+fn has_nonempty_array(v: &serde_json::Value, key: &str) -> bool {
+    v.get(key)
+        .and_then(|a| a.as_array())
+        .is_some_and(|a| !a.is_empty())
+}
+
+fn domain_layer_suggestion(globs: &[String]) -> Suggestion {
+    let mut commands: Vec<String> = Vec::new();
+    for g in globs {
+        commands.push(format!("locus bo add-domain-path \"{g}\""));
+        commands.push(format!("locus fl add-domain-path \"{g}\""));
+        commands.push(format!("locus er add-domain-path \"{g}\""));
+        commands.push(format!("locus rm add-domain-path \"{g}\""));
+    }
+    Suggestion {
+        category: SuggestionCategory::Layer,
+        headline: "domain layer detected, but no paradigms onboarded".into(),
+        why: vec![
+            "required by BO, ER, FL, RM".into(),
+            format!("globs: {}", globs.join(", ")),
+        ],
+        options: vec![
+            CommandOption {
+                label: "specify (run for each paradigm you want to onboard)".into(),
+                commands,
+            },
+            CommandOption {
+                label: "or skip these paradigms".into(),
+                commands: vec!["locus init --acknowledge-empty BO,ER,FL,RM".into()],
+            },
+        ],
+        prefixes: vec!["BO".into(), "ER".into(), "FL".into(), "RM".into()],
+    }
 }
 
 /// A set of module-path globs grouped by detected architectural layer. The
@@ -369,5 +428,66 @@ mod layer_detection_tests {
         assert!(layers.utilities.is_empty());
         assert!(layers.config.is_empty());
         assert!(layers.composition.is_empty());
+    }
+}
+
+#[cfg(test)]
+mod cross_paradigm_layer_tests {
+    use super::*;
+    use crate::lockfile::Lockfile;
+    use locus_air::{AirFile, AirPackage, AirWorkspace};
+
+    fn workspace_with(modules: &[&str]) -> AirWorkspace {
+        AirWorkspace::new(vec![AirPackage {
+            name: "x".into(),
+            version: "0.0.1".into(),
+            root_dir: "/tmp/x".into(),
+            files: modules
+                .iter()
+                .map(|m| AirFile {
+                    path: format!("src/{}.rs", m.replace("::", "/")),
+                    module_path: Some((*m).into()),
+                    items: Vec::new(),
+                    hints: Vec::new(),
+                    parse_error: None,
+                    line_count: 1,
+                })
+                .collect(),
+        }])
+    }
+
+    #[test]
+    fn emits_domain_suggestion_when_domain_modules_seen() {
+        let air = workspace_with(&["x::user::domain", "x::user::api"]);
+        let lf = Lockfile::empty();
+        let suggestions = cross_paradigm_suggestions(&air, &lf);
+        let domain = suggestions.iter().find(|s| {
+            s.headline
+                .contains("domain layer detected, but no paradigms onboarded")
+        });
+        assert!(domain.is_some(), "expected a domain-layer suggestion");
+        let s = domain.unwrap();
+        assert_eq!(s.category, SuggestionCategory::Layer);
+        let cmds = s.options[0].commands.join("\n");
+        assert!(cmds.contains("locus bo add-domain-path \"x::user::domain::*\""));
+        assert!(cmds.contains("locus fl add-domain-path \"x::user::domain::*\""));
+        assert!(cmds.contains("locus er add-domain-path \"x::user::domain::*\""));
+        assert!(cmds.contains("locus rm add-domain-path \"x::user::domain::*\""));
+    }
+
+    #[test]
+    fn omits_domain_suggestion_when_bo_already_has_a_path() {
+        use serde_json::json;
+        let air = workspace_with(&["x::user::domain"]);
+        let mut lf = Lockfile::empty();
+        lf.paradigms
+            .insert("BO".into(), json!({"domain_paths": ["x::user::domain::*"]}));
+        let suggestions = cross_paradigm_suggestions(&air, &lf);
+        assert!(
+            !suggestions
+                .iter()
+                .any(|s| s.headline.contains("domain layer detected")),
+            "domain suggestion should suppress once BO has the path"
+        );
     }
 }
