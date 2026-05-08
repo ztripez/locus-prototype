@@ -7,10 +7,16 @@
 //!   boundary.
 //! - [`rw004`]: `static` / `OnceCell` / `Lazy`-shaped global outside the
 //!   runtime-ownership boundary.
+//! - [`rw005`]: blocking call inside a function carrying a `HotPath`
+//!   marker fact (`// ot: marks hot_path`).
+//! - [`rw006`]: spawn inside a function carrying a `HotPath` marker fact.
 //!
-//! All RW rules are lockfile-driven: they stay silent until the user has
-//! populated `runtime_owner_paths` (otherwise we have no idea which modules
-//! are legitimately spawning runtime work).
+//! RW001–RW004 are lockfile-driven (they wait for `runtime_owner_paths`).
+//! RW005 / RW006 are marker-driven instead: the user's `// ot: marks
+//! hot_path` hint *is* the opt-in, so they fire as soon as a marked
+//! function picks up a blocking-call or spawn fact.
+
+use std::collections::HashSet;
 
 use locus_air::{AirFact, AirItem, AirSpan, AirType, AirWorkspace, FactKind, FactTarget, TypeKind};
 
@@ -446,6 +452,203 @@ fn rw004_diagnostic(
              `paradigms.RW.singleton_name_patterns` or \
              `paradigms.RW.runtime_state_type_patterns`.",
             t.symbol
+        )),
+    }
+}
+
+/// Collect the symbols of every function that has a `FactKind::HotPath`
+/// fact targeting it. The markers loader emits these for any function the
+/// user annotated with `// ot: marks hot_path`.
+fn collect_hot_path_symbols(air: &AirWorkspace) -> HashSet<String> {
+    let mut set = HashSet::new();
+    for fact in &air.facts {
+        if fact.kind != FactKind::HotPath {
+            continue;
+        }
+        if let FactTarget::Function { symbol } = &fact.target {
+            set.insert(symbol.clone());
+        }
+    }
+    set
+}
+
+/// RW005 — blocking call inside a function the user marked as `hot_path`.
+///
+/// The user's `// ot: marks hot_path` annotation is what opts a function
+/// into this rule: as soon as a function has BOTH a `FactKind::HotPath`
+/// marker and a `FactKind::BlockingCall` fact, we fire. This is the
+/// already-actionable subset of Paradigm 14's "blocking ops in
+/// async/request/hot context" rule — the broader async/request detection
+/// requires framework loaders that don't exist yet, but the hot-path
+/// half is purely user-declarative and lights up today.
+///
+/// Severity: Fatal — blocking inside a hot loop / frame budget is
+/// structural; it starves the runtime regardless of severity mode.
+///
+/// Not lockfile-gated: marker presence *is* the opt-in.
+pub fn rw005(air: &AirWorkspace, mode: CheckMode) -> Vec<Diagnostic> {
+    let hot = collect_hot_path_symbols(air);
+    if hot.is_empty() {
+        return Vec::new();
+    }
+    let mut out = Vec::new();
+    for fact in &air.facts {
+        if fact.kind != FactKind::BlockingCall {
+            continue;
+        }
+        let FactTarget::Function { symbol } = &fact.target else {
+            continue;
+        };
+        if !hot.contains(symbol) {
+            continue;
+        }
+        let Some((module_path, fn_span)) = lookup_function(air, symbol) else {
+            continue;
+        };
+        out.push(rw005_diagnostic(fact, symbol, module_path, fn_span, mode));
+    }
+    out
+}
+
+fn rw005_diagnostic(
+    fact: &AirFact,
+    symbol: &str,
+    module_path: &str,
+    fn_span: AirSpan,
+    mode: CheckMode,
+) -> Diagnostic {
+    let span = match &fact.target {
+        FactTarget::Span(s) => s.clone(),
+        FactTarget::Function { .. } | FactTarget::File { .. } => fn_span,
+    };
+    let evidence = fact.evidence.as_deref().unwrap_or("blocking call");
+    let why_reasons = if fact.reasons.is_empty() {
+        vec!["loader detected blocking-shaped call".to_string()]
+    } else {
+        fact.reasons.clone()
+    };
+    Diagnostic {
+        rule_id: "RW005".to_string(),
+        severity: mode.elevate(Severity::Fatal),
+        span,
+        concept: None,
+        message: format!(
+            "hot-path function `{symbol}` performs blocking call \
+             `{evidence}` — blocks the hot loop / frame budget"
+        ),
+        why: {
+            let mut w = vec![format!(
+                "function `{symbol}` carries `HotPath` marker (in module \
+                 `{module_path}`)"
+            )];
+            for r in why_reasons {
+                w.push(r);
+            }
+            if let Some(ev) = fact.evidence.as_deref() {
+                w.push(format!("evidence: `{ev}`"));
+            }
+            w.push(
+                "blocking calls in hot paths starve the runtime — they \
+                 must be moved off-thread or replaced with non-blocking \
+                 equivalents"
+                    .to_string(),
+            );
+            w
+        },
+        suggested_fix: Some(format!(
+            "move the blocking call out of `{symbol}`: spawn a one-off \
+             worker (`std::thread::spawn`) or submit the work to a job \
+             queue / thread pool from a runtime-owner module; or, if \
+             you're in async, use the non-blocking equivalent (e.g. \
+             `tokio::fs::read` instead of `std::fs::read`)"
+        )),
+    }
+}
+
+/// RW006 — spawn inside a function the user marked as `hot_path`.
+///
+/// Same shape as RW005 but for `FactKind::SpawnedWork` instead of
+/// `BlockingCall`. Spawning per-iteration inside a hot loop creates
+/// unbounded task pressure: per-frame `tokio::spawn` / `thread::spawn`
+/// allocates, schedules, and tears down workers at the loop's rate.
+///
+/// Severity: Fatal — same structural posture as RW005.
+///
+/// Not lockfile-gated: the user's `// ot: marks hot_path` annotation is
+/// what opts a function into this rule.
+pub fn rw006(air: &AirWorkspace, mode: CheckMode) -> Vec<Diagnostic> {
+    let hot = collect_hot_path_symbols(air);
+    if hot.is_empty() {
+        return Vec::new();
+    }
+    let mut out = Vec::new();
+    for fact in &air.facts {
+        if fact.kind != FactKind::SpawnedWork {
+            continue;
+        }
+        let FactTarget::Function { symbol } = &fact.target else {
+            continue;
+        };
+        if !hot.contains(symbol) {
+            continue;
+        }
+        let Some((module_path, fn_span)) = lookup_function(air, symbol) else {
+            continue;
+        };
+        out.push(rw006_diagnostic(fact, symbol, module_path, fn_span, mode));
+    }
+    out
+}
+
+fn rw006_diagnostic(
+    fact: &AirFact,
+    symbol: &str,
+    module_path: &str,
+    fn_span: AirSpan,
+    mode: CheckMode,
+) -> Diagnostic {
+    let span = match &fact.target {
+        FactTarget::Span(s) => s.clone(),
+        FactTarget::Function { .. } | FactTarget::File { .. } => fn_span,
+    };
+    let evidence = fact.evidence.as_deref().unwrap_or("spawn");
+    let why_reasons = if fact.reasons.is_empty() {
+        vec!["loader detected spawn-shaped call".to_string()]
+    } else {
+        fact.reasons.clone()
+    };
+    Diagnostic {
+        rule_id: "RW006".to_string(),
+        severity: mode.elevate(Severity::Fatal),
+        span,
+        concept: None,
+        message: format!(
+            "hot-path function `{symbol}` spawns work `{evidence}` \
+             — uncontrolled per-iteration spawning"
+        ),
+        why: {
+            let mut w = vec![format!(
+                "function `{symbol}` carries `HotPath` marker (in module \
+                 `{module_path}`)"
+            )];
+            for r in why_reasons {
+                w.push(r);
+            }
+            if let Some(ev) = fact.evidence.as_deref() {
+                w.push(format!("evidence: `{ev}`"));
+            }
+            w.push(
+                "spawning inside a hot loop creates unbounded task \
+                 pressure — work should be pre-spawned and submitted via \
+                 a port, or reused via a thread pool"
+                    .to_string(),
+            );
+            w
+        },
+        suggested_fix: Some(format!(
+            "pre-spawn the worker in a runtime-owner module and submit \
+             work from `{symbol}` via a channel (or other port) instead \
+             of spawning per iteration"
         )),
     }
 }
@@ -1161,5 +1364,287 @@ mod tests {
         let diags = rw004(&air, &section, CheckMode::AgentStrict);
         assert_eq!(diags.len(), 1);
         assert_eq!(diags[0].severity, Severity::Fatal);
+    }
+
+    // ---------- RW005 / RW006 helpers ----------
+
+    fn hot_path_marker_fact(symbol: &str) -> AirFact {
+        AirFact {
+            kind: FactKind::HotPath,
+            target: FactTarget::Function {
+                symbol: symbol.into(),
+            },
+            source: "markers".into(),
+            confidence: 1.0,
+            reasons: vec!["test marker".into()],
+            evidence: None,
+        }
+    }
+
+    fn blocking_call_fact(symbol: &str, callee: &str) -> AirFact {
+        AirFact {
+            kind: FactKind::BlockingCall,
+            target: FactTarget::Function {
+                symbol: symbol.into(),
+            },
+            source: "std-rt".into(),
+            confidence: 0.9,
+            reasons: vec![format!("`{callee}` is a blocking-shaped call")],
+            evidence: Some(callee.into()),
+        }
+    }
+
+    fn spawned_work_fact(symbol: &str, callee: &str) -> AirFact {
+        AirFact {
+            kind: FactKind::SpawnedWork,
+            target: FactTarget::Function {
+                symbol: symbol.into(),
+            },
+            source: "std-rt".into(),
+            confidence: 0.9,
+            reasons: vec![format!("`{callee}` is a spawn-shaped call")],
+            evidence: Some(callee.into()),
+        }
+    }
+
+    // ---------- RW005 ----------
+
+    #[test]
+    fn rw005_fires_when_hot_path_function_has_blocking_call() {
+        let air = air_with_file(
+            Some("crate::frame"),
+            "src/frame.rs",
+            vec![func("crate::frame::tick", "src/frame.rs", 17)],
+            vec![
+                hot_path_marker_fact("crate::frame::tick"),
+                blocking_call_fact("crate::frame::tick", "std::fs::read"),
+            ],
+        );
+        let diags = rw005(&air, CheckMode::Human);
+        assert_eq!(diags.len(), 1);
+        let d = &diags[0];
+        assert_eq!(d.rule_id, "RW005");
+        assert_eq!(d.severity, Severity::Fatal);
+        assert_eq!(d.span.line_start, 17);
+        assert!(d.message.contains("crate::frame::tick"));
+        assert!(d.message.contains("std::fs::read"));
+        assert!(
+            d.why.iter().any(|w| w.contains("HotPath")),
+            "expected HotPath marker reason; got {:?}",
+            d.why
+        );
+        assert!(
+            d.why.iter().any(|w| w.contains("blocking-shaped")),
+            "expected loader reason; got {:?}",
+            d.why
+        );
+        assert!(
+            d.why
+                .iter()
+                .any(|w| w.contains("starve") || w.contains("non-blocking")),
+            "expected hot-path explanation in why; got {:?}",
+            d.why
+        );
+        assert!(
+            d.suggested_fix
+                .as_deref()
+                .map(|s| s.contains("tokio::fs") || s.contains("worker"))
+                .unwrap_or(false),
+            "expected actionable fix; got {:?}",
+            d.suggested_fix
+        );
+    }
+
+    #[test]
+    fn rw005_quiet_when_hot_path_has_no_blocking_call() {
+        let air = air_with_file(
+            Some("crate::frame"),
+            "src/frame.rs",
+            vec![func("crate::frame::tick", "src/frame.rs", 17)],
+            vec![hot_path_marker_fact("crate::frame::tick")],
+        );
+        assert!(rw005(&air, CheckMode::Human).is_empty());
+    }
+
+    #[test]
+    fn rw005_quiet_when_blocking_call_outside_hot_path() {
+        let air = air_with_file(
+            Some("crate::handler"),
+            "src/handler.rs",
+            vec![func("crate::handler::do_it", "src/handler.rs", 5)],
+            vec![blocking_call_fact("crate::handler::do_it", "std::fs::read")],
+        );
+        assert!(rw005(&air, CheckMode::Human).is_empty());
+    }
+
+    #[test]
+    fn rw005_emits_one_diagnostic_per_blocking_fact() {
+        let air = air_with_file(
+            Some("crate::frame"),
+            "src/frame.rs",
+            vec![func("crate::frame::tick", "src/frame.rs", 17)],
+            vec![
+                hot_path_marker_fact("crate::frame::tick"),
+                blocking_call_fact("crate::frame::tick", "std::fs::read"),
+                blocking_call_fact("crate::frame::tick", "std::thread::sleep"),
+                blocking_call_fact("crate::frame::tick", "Command::output"),
+            ],
+        );
+        let diags = rw005(&air, CheckMode::Human);
+        assert_eq!(diags.len(), 3);
+        for d in &diags {
+            assert_eq!(d.rule_id, "RW005");
+        }
+    }
+
+    #[test]
+    fn rw005_silent_when_no_hot_path_facts() {
+        let air = air_with_file(
+            Some("crate::handler"),
+            "src/handler.rs",
+            vec![func("crate::handler::create_user", "src/handler.rs", 17)],
+            vec![blocking_call_fact(
+                "crate::handler::create_user",
+                "std::fs::read",
+            )],
+        );
+        assert!(
+            rw005(&air, CheckMode::Human).is_empty(),
+            "no HotPath markers anywhere in the workspace → silent"
+        );
+    }
+
+    #[test]
+    fn rw005_agent_strict_keeps_fatal() {
+        let air = air_with_file(
+            Some("crate::frame"),
+            "src/frame.rs",
+            vec![func("crate::frame::tick", "src/frame.rs", 17)],
+            vec![
+                hot_path_marker_fact("crate::frame::tick"),
+                blocking_call_fact("crate::frame::tick", "std::fs::read"),
+            ],
+        );
+        let diags = rw005(&air, CheckMode::AgentStrict);
+        assert_eq!(diags.len(), 1);
+        assert_eq!(
+            diags[0].severity,
+            Severity::Fatal,
+            "RW005 is already Fatal in Human mode; agent-strict must not lower it"
+        );
+    }
+
+    // ---------- RW006 ----------
+
+    #[test]
+    fn rw006_fires_when_hot_path_function_spawns() {
+        let air = air_with_file(
+            Some("crate::frame"),
+            "src/frame.rs",
+            vec![func("crate::frame::tick", "src/frame.rs", 21)],
+            vec![
+                hot_path_marker_fact("crate::frame::tick"),
+                spawned_work_fact("crate::frame::tick", "tokio::spawn"),
+            ],
+        );
+        let diags = rw006(&air, CheckMode::Human);
+        assert_eq!(diags.len(), 1);
+        let d = &diags[0];
+        assert_eq!(d.rule_id, "RW006");
+        assert_eq!(d.severity, Severity::Fatal);
+        assert_eq!(d.span.line_start, 21);
+        assert!(d.message.contains("crate::frame::tick"));
+        assert!(d.message.contains("tokio::spawn"));
+        assert!(d.message.contains("uncontrolled"));
+        assert!(
+            d.why.iter().any(|w| w.contains("HotPath")),
+            "expected HotPath marker reason; got {:?}",
+            d.why
+        );
+        assert!(
+            d.why.iter().any(|w| w.contains("spawn-shaped")),
+            "expected loader reason; got {:?}",
+            d.why
+        );
+        assert!(
+            d.why.iter().any(|w| w.contains("unbounded task pressure")),
+            "expected hot-loop spawn explanation; got {:?}",
+            d.why
+        );
+    }
+
+    #[test]
+    fn rw006_quiet_when_hot_path_has_no_spawn() {
+        let air = air_with_file(
+            Some("crate::frame"),
+            "src/frame.rs",
+            vec![func("crate::frame::tick", "src/frame.rs", 21)],
+            vec![hot_path_marker_fact("crate::frame::tick")],
+        );
+        assert!(rw006(&air, CheckMode::Human).is_empty());
+    }
+
+    #[test]
+    fn rw006_quiet_when_spawn_outside_hot_path() {
+        let air = air_with_file(
+            Some("crate::handler"),
+            "src/handler.rs",
+            vec![func("crate::handler::create", "src/handler.rs", 5)],
+            vec![spawned_work_fact("crate::handler::create", "tokio::spawn")],
+        );
+        assert!(rw006(&air, CheckMode::Human).is_empty());
+    }
+
+    #[test]
+    fn rw006_emits_one_diagnostic_per_spawn_fact() {
+        let air = air_with_file(
+            Some("crate::frame"),
+            "src/frame.rs",
+            vec![func("crate::frame::tick", "src/frame.rs", 21)],
+            vec![
+                hot_path_marker_fact("crate::frame::tick"),
+                spawned_work_fact("crate::frame::tick", "tokio::spawn"),
+                spawned_work_fact("crate::frame::tick", "std::thread::spawn"),
+            ],
+        );
+        let diags = rw006(&air, CheckMode::Human);
+        assert_eq!(diags.len(), 2);
+        for d in &diags {
+            assert_eq!(d.rule_id, "RW006");
+        }
+    }
+
+    #[test]
+    fn rw006_silent_when_no_hot_path_facts() {
+        let air = air_with_file(
+            Some("crate::handler"),
+            "src/handler.rs",
+            vec![func("crate::handler::create", "src/handler.rs", 5)],
+            vec![spawned_work_fact("crate::handler::create", "tokio::spawn")],
+        );
+        assert!(
+            rw006(&air, CheckMode::Human).is_empty(),
+            "no HotPath markers anywhere in the workspace → silent"
+        );
+    }
+
+    #[test]
+    fn rw006_agent_strict_keeps_fatal() {
+        let air = air_with_file(
+            Some("crate::frame"),
+            "src/frame.rs",
+            vec![func("crate::frame::tick", "src/frame.rs", 21)],
+            vec![
+                hot_path_marker_fact("crate::frame::tick"),
+                spawned_work_fact("crate::frame::tick", "tokio::spawn"),
+            ],
+        );
+        let diags = rw006(&air, CheckMode::AgentStrict);
+        assert_eq!(diags.len(), 1);
+        assert_eq!(
+            diags[0].severity,
+            Severity::Fatal,
+            "RW006 is already Fatal in Human mode; agent-strict must not lower it"
+        );
     }
 }

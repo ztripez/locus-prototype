@@ -78,6 +78,18 @@ use serde::{Deserialize, Serialize};
 ///
 ///   Closes the silent-error coverage gap that FL003 (which only sees
 ///   `.ok()` / `.err()` method-call shape) couldn't reach.
+/// - **11**: user-declared fact markers. Adds `HintKind::MarksFact`
+///   for `// ot: marks <fact_kind>` source hints — the user marks a
+///   function as having a `FactKind` the loader tier can't infer
+///   without framework knowledge (`hot_path`, `request_context`,
+///   `boundary_entry`, `runtime_state_owner`, `background_worker`),
+///   or annotates their own helper as a custom recogniser for an
+///   already-produced kind (`external_io`, `persistence_write`,
+///   `blocking_call`). The new `markers` loader translates these
+///   hints into `AirFact` entries the consuming paradigms read the
+///   same way they read std-rt's facts. Bridges the gap between the
+///   architectural concepts already in `FactKind` and framework-
+///   specific recognisers that haven't shipped yet.
 /// - **10**: `match` arm bodies + closure-arg shape. Adds:
 ///     - `AirItem::MatchArm` — for every arm of every `match` expression
 ///       the visitor sees, records the pattern text, whether it contains
@@ -94,7 +106,7 @@ use serde::{Deserialize, Serialize};
 ///       argument with `_`, and a body shape. Lets FL006 (`map_err`
 ///       losing source context) flag closures that throw the original
 ///       error away.
-pub const AIR_SCHEMA_VERSION: u32 = 10;
+pub const AIR_SCHEMA_VERSION: u32 = 11;
 
 // ot: canonical
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -580,6 +592,24 @@ pub enum HintKind {
         rule: String,
         reason: Option<String>,
         expires: Option<String>,
+    },
+    /// User-declared fact marker — `// ot: marks <fact_kind>` above a
+    /// function tells Locus "treat this function as having `<fact_kind>`."
+    /// The `markers` loader translates each `MarksFact` hint into an
+    /// `AirFact` targeting the function the hint binds to. Used for
+    /// fact kinds the loader tier can't auto-recognise without
+    /// framework knowledge (`hot_path`, `request_context`,
+    /// `boundary_entry`, `runtime_state_owner`, `background_worker`)
+    /// and for letting users annotate their own helpers as carrying
+    /// the kinds std-rt only recognises in stdlib (`external_io`,
+    /// `persistence_write`, `blocking_call`).
+    ///
+    /// `fact_kind` carries the snake_case spec name (`"hot_path"`,
+    /// `"request_context"`, …) — the loader does the mapping to
+    /// [`FactKind`] so unknown markers degrade gracefully (logged but
+    /// not promoted to a fact).
+    MarksFact {
+        fact_kind: String,
     },
     Unknown,
 }

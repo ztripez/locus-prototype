@@ -14,6 +14,13 @@
 //! - [`ob003`]: same shape for event-emission macros — `event!`, `emit!`,
 //!   `publish!`, `tracing::event!` by default — gated by
 //!   `event_owner_paths`.
+//! - [`ob004`]: a function symbol carries a `FactKind::BoundaryEntry`
+//!   marker but no `FactKind::Logging` fact targets the same symbol —
+//!   silent boundary entries make outage triage and request tracing
+//!   impossible. Opt-in lives in the `// ot: marks boundary_entry`
+//!   source hint; no lockfile field is needed.
+
+use std::collections::HashSet;
 
 use locus_air::{
     AirCallSite, AirFact, AirItem, AirSpan, AirWorkspace, CallKind, FactKind, FactTarget,
@@ -207,6 +214,85 @@ pub fn ob003(air: &AirWorkspace, section: &ObSection, mode: CheckMode) -> Vec<Di
         "paradigms.OB.event_owner_paths",
         mode,
     )
+}
+
+/// OB004 — boundary entry without observability.
+///
+/// Cross-references `FactKind::BoundaryEntry` markers (emitted by the
+/// `markers` loader from `// ot: marks boundary_entry` source hints)
+/// with `FactKind::Logging` facts on the same function symbol. Every
+/// boundary entry — the public surface where data crosses into the
+/// system — should emit at least one log line, span, metric, or event
+/// so failure / success / latency is traceable.
+///
+/// Opt-in is the user's act of placing the `boundary_entry` marker;
+/// the rule needs no lockfile field. If no boundary-entry markers
+/// exist anywhere in the workspace, OB004 is silent.
+///
+/// Severity: Warning by default; Fatal under `--agent-strict`.
+pub fn ob004(air: &AirWorkspace, _section: &ObSection, mode: CheckMode) -> Vec<Diagnostic> {
+    let mut boundary_entries: HashSet<&str> = HashSet::new();
+    let mut logged: HashSet<&str> = HashSet::new();
+    for fact in &air.facts {
+        let FactTarget::Function { symbol } = &fact.target else {
+            continue;
+        };
+        match fact.kind {
+            FactKind::BoundaryEntry => {
+                boundary_entries.insert(symbol.as_str());
+            }
+            FactKind::Logging => {
+                logged.insert(symbol.as_str());
+            }
+            _ => {}
+        }
+    }
+    if boundary_entries.is_empty() {
+        return Vec::new();
+    }
+
+    let mut missing: Vec<&str> = boundary_entries
+        .iter()
+        .filter(|sym| !logged.contains(*sym))
+        .copied()
+        .collect();
+    // Stable ordering so multiple-diagnostic tests (and human output)
+    // don't depend on HashSet iteration order.
+    missing.sort_unstable();
+
+    let mut out = Vec::new();
+    for symbol in missing {
+        let span = match lookup_function(air, symbol) {
+            Some((_, fn_span)) => fn_span,
+            None => AirSpan::new("<unknown>", 0, 0),
+        };
+        out.push(Diagnostic {
+            rule_id: "OB004".to_string(),
+            severity: mode.elevate(Severity::Warning),
+            span,
+            concept: None,
+            message: format!(
+                "boundary entry function `{symbol}` has no observability — \
+                 every entry should emit at least one logging / metric / \
+                 event call"
+            ),
+            why: vec![
+                format!("function `{symbol}` carries `BoundaryEntry` marker"),
+                format!("no `Logging` fact targets `{symbol}`"),
+                "boundary entries are the audit / debug surface — silent \
+                 entries make outage triage and request tracing impossible"
+                    .to_string(),
+            ],
+            suggested_fix: Some(format!(
+                "emit at least one structured log line at the entry of \
+                 `{symbol}` (e.g. `tracing::info!(\"entering boundary\", \
+                 request_id = %id)`), or a metric counter increment, or a \
+                 span. The `paradigms.OB` lockfile section enumerates what \
+                 counts as logging in this codebase."
+            )),
+        });
+    }
+    out
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -714,5 +800,143 @@ mod tests {
         let diags = ob003(&air, &section, CheckMode::AgentStrict);
         assert_eq!(diags.len(), 1);
         assert_eq!(diags[0].severity, Severity::Fatal);
+    }
+
+    // ─── OB004 ───────────────────────────────────────────────────────────
+
+    fn boundary_entry_marker_fact(symbol: &str) -> AirFact {
+        AirFact {
+            kind: FactKind::BoundaryEntry,
+            target: FactTarget::Function {
+                symbol: symbol.into(),
+            },
+            source: "markers".into(),
+            confidence: 1.0,
+            reasons: vec!["// ot: marks boundary_entry".into()],
+            evidence: None,
+        }
+    }
+
+    fn logging_fact(symbol: &str, callee: &str) -> AirFact {
+        AirFact {
+            kind: FactKind::Logging,
+            target: FactTarget::Function {
+                symbol: symbol.into(),
+            },
+            source: "std-rt".into(),
+            confidence: 0.9,
+            reasons: vec![format!("calls `{callee}!`")],
+            evidence: Some(callee.into()),
+        }
+    }
+
+    #[test]
+    fn ob004_fires_when_boundary_entry_has_no_logging() {
+        let air = air_with(
+            Some("x::api::http"),
+            vec![func("x::api::http::handle", "t.rs", 5)],
+            vec![boundary_entry_marker_fact("x::api::http::handle")],
+        );
+        let diags = ob004(&air, &ObSection::default(), CheckMode::Human);
+        assert_eq!(diags.len(), 1);
+        assert_eq!(diags[0].rule_id, "OB004");
+        assert_eq!(diags[0].severity, Severity::Warning);
+        assert!(
+            diags[0].message.contains("x::api::http::handle"),
+            "expected symbol in message; got {}",
+            diags[0].message
+        );
+        assert!(
+            diags[0]
+                .why
+                .iter()
+                .any(|w| w.contains("BoundaryEntry") && w.contains("marker")),
+            "expected BoundaryEntry marker reason in why; got {:?}",
+            diags[0].why
+        );
+        assert!(
+            diags[0].why.iter().any(|w| w.contains("no `Logging` fact")),
+            "expected logging-absence reason in why; got {:?}",
+            diags[0].why
+        );
+        assert_eq!(diags[0].span.file, "t.rs");
+        assert_eq!(diags[0].span.line_start, 5);
+    }
+
+    #[test]
+    fn ob004_quiet_when_boundary_entry_has_logging() {
+        let air = air_with(
+            Some("x::api::http"),
+            vec![func("x::api::http::handle", "t.rs", 5)],
+            vec![
+                boundary_entry_marker_fact("x::api::http::handle"),
+                logging_fact("x::api::http::handle", "tracing::info"),
+            ],
+        );
+        assert!(ob004(&air, &ObSection::default(), CheckMode::Human).is_empty());
+    }
+
+    #[test]
+    fn ob004_quiet_when_only_logging_no_boundary_entry() {
+        let air = air_with(
+            Some("x::domain::user"),
+            vec![func("x::domain::user::greet", "t.rs", 5)],
+            vec![logging_fact("x::domain::user::greet", "tracing::info")],
+        );
+        assert!(ob004(&air, &ObSection::default(), CheckMode::Human).is_empty());
+    }
+
+    #[test]
+    fn ob004_silent_when_no_boundary_entry_facts_in_workspace() {
+        let air = air_with(
+            Some("x::domain::user"),
+            vec![func("x::domain::user::greet", "t.rs", 5)],
+            Vec::new(),
+        );
+        assert!(ob004(&air, &ObSection::default(), CheckMode::Human).is_empty());
+    }
+
+    #[test]
+    fn ob004_agent_strict_elevates_warning_to_fatal() {
+        let air = air_with(
+            Some("x::api::http"),
+            vec![func("x::api::http::handle", "t.rs", 5)],
+            vec![boundary_entry_marker_fact("x::api::http::handle")],
+        );
+        let diags = ob004(&air, &ObSection::default(), CheckMode::AgentStrict);
+        assert_eq!(diags.len(), 1);
+        assert_eq!(diags[0].severity, Severity::Fatal);
+    }
+
+    #[test]
+    fn ob004_multiple_boundary_entries_without_logging_produce_one_each() {
+        let air = air_with(
+            Some("x::api::http"),
+            vec![
+                func("x::api::http::create", "t.rs", 5),
+                func("x::api::http::update", "t.rs", 12),
+                func("x::api::http::delete", "t.rs", 19),
+                func("x::api::http::read", "t.rs", 26),
+            ],
+            vec![
+                boundary_entry_marker_fact("x::api::http::create"),
+                boundary_entry_marker_fact("x::api::http::update"),
+                boundary_entry_marker_fact("x::api::http::delete"),
+                // `read` is a boundary entry that DOES log — must be quiet.
+                boundary_entry_marker_fact("x::api::http::read"),
+                logging_fact("x::api::http::read", "tracing::info"),
+            ],
+        );
+        let diags = ob004(&air, &ObSection::default(), CheckMode::Human);
+        assert_eq!(diags.len(), 3);
+        let symbols: Vec<&str> = diags.iter().map(|d| d.message.as_str()).collect();
+        assert!(symbols.iter().any(|m| m.contains("create")));
+        assert!(symbols.iter().any(|m| m.contains("update")));
+        assert!(symbols.iter().any(|m| m.contains("delete")));
+        assert!(
+            !symbols.iter().any(|m| m.contains("::read`")),
+            "boundary entry with logging should not be flagged; got {:?}",
+            symbols
+        );
     }
 }

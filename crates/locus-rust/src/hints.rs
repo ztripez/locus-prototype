@@ -100,8 +100,42 @@ fn parse_hint_body(body: &str) -> HintKind {
                 expires,
             }
         }
+        "marks" => {
+            // `// ot: marks <fact_kind>` — accept the snake_case
+            // canonical names plus a few common typo / casing
+            // variants so users don't have to memorise the exact
+            // string. The `markers` loader does the FactKind mapping
+            // and degrades unknown values gracefully.
+            let raw = tokens.next().unwrap_or("");
+            let normalised = normalise_fact_kind(raw);
+            HintKind::MarksFact {
+                fact_kind: normalised,
+            }
+        }
         _ => HintKind::Unknown,
     }
+}
+
+/// Canonicalise the user-typed `fact_kind` token to its snake_case
+/// spec name. Accepts kebab-case, PascalCase, and snake_case; unknown
+/// inputs pass through unchanged so the loader can log them as
+/// "unknown marker".
+fn normalise_fact_kind(s: &str) -> String {
+    // Lowercase + drop hyphens (kebab-case → snake_case). For
+    // PascalCase like "HotPath", insert underscores before uppercase
+    // letters. Then lowercase.
+    let mut out = String::with_capacity(s.len() + 4);
+    for (i, ch) in s.chars().enumerate() {
+        if ch == '-' {
+            out.push('_');
+        } else if ch.is_ascii_uppercase() && i > 0 && !out.ends_with('_') {
+            out.push('_');
+            out.push(ch.to_ascii_lowercase());
+        } else {
+            out.push(ch.to_ascii_lowercase());
+        }
+    }
+    out
 }
 
 /// Pull `key="value"` out of a free-form hint body.
@@ -192,6 +226,48 @@ fn x() {}
             hints.is_empty(),
             "hint inside raw-string literal must not be picked up; got {hints:?}"
         );
+    }
+
+    #[test]
+    fn marks_hint_records_normalised_fact_kind() {
+        let cases = [
+            ("// ot: marks hot_path\nfn x() {}\n", "hot_path"),
+            ("// ot: marks hot-path\nfn x() {}\n", "hot_path"),
+            ("// ot: marks HotPath\nfn x() {}\n", "hot_path"),
+            (
+                "// ot: marks request_context\nfn x() {}\n",
+                "request_context",
+            ),
+            ("// ot: marks BoundaryEntry\nfn x() {}\n", "boundary_entry"),
+            (
+                "// ot: marks BackgroundWorker\nfn x() {}\n",
+                "background_worker",
+            ),
+        ];
+        for (src, expected) in cases {
+            let hints = scan_hints(src, "t.rs");
+            assert_eq!(hints.len(), 1, "src `{src}` produced {hints:?}");
+            match &hints[0].kind {
+                HintKind::MarksFact { fact_kind } => {
+                    assert_eq!(fact_kind, expected, "src `{src}`");
+                }
+                other => panic!("expected MarksFact for `{src}`, got {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn marks_hint_with_unknown_fact_kind_degrades_to_lowercased_text() {
+        // Unknown / future fact kinds round-trip as lowercase snake_case
+        // so the loader can log them rather than the scanner silently
+        // dropping them.
+        let hints = scan_hints("// ot: marks PolicyDecision\nfn x() {}\n", "t.rs");
+        match &hints[0].kind {
+            HintKind::MarksFact { fact_kind } => {
+                assert_eq!(fact_kind, "policy_decision");
+            }
+            other => panic!("expected MarksFact, got {other:?}"),
+        }
     }
 
     #[test]

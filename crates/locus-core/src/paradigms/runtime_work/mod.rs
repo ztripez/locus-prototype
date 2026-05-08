@@ -11,10 +11,15 @@
 //!   type outside any declared runtime-owner module.
 //! - RW004: `OnceCell` / `Lazy` / named-singleton type outside any declared
 //!   runtime-owner module.
+//! - RW005: blocking call inside a function the user marked `// ot: marks
+//!   hot_path` — blocking ops in a hot loop / frame budget.
+//! - RW006: spawn inside a function the user marked `// ot: marks hot_path`
+//!   — uncontrolled per-iteration task pressure.
 //!
 //! `init` returns an empty section: runtime-owner locations are a user
-//! declaration, not an inference. The rules stay silent until the user
-//! populates `runtime_owner_paths`.
+//! declaration, not an inference. RW001–RW004 stay silent until the user
+//! populates `runtime_owner_paths`. RW005 / RW006 are gated by the user's
+//! `// ot: marks hot_path` annotations (no lockfile entry needed).
 
 // ot: canonical
 
@@ -47,6 +52,8 @@ impl Paradigm for RuntimeWork {
         diags.extend(rules::rw002(air, &section, mode));
         diags.extend(rules::rw003(air, &section, mode));
         diags.extend(rules::rw004(air, &section, mode));
+        diags.extend(rules::rw005(air, mode));
+        diags.extend(rules::rw006(air, mode));
         diags
     }
 }

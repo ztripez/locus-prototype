@@ -13,7 +13,7 @@ mod type_render;
 mod visitor;
 
 pub use hints::scan_hints;
-pub use loaders::StdRtLoader;
+pub use loaders::{MarkersLoader, StdRtLoader};
 pub use module_path::{derive_module_path, package_to_crate_name};
 pub use type_render::{render_path, render_type};
 pub use visitor::collect_items;
@@ -82,11 +82,24 @@ pub fn scan_raw(workspace_root: &Path) -> Result<AirWorkspace, ScanError> {
     Ok(AirWorkspace::new(packages))
 }
 
-/// The default loader stack applied by [`scan`]. Currently a single
-/// [`StdRtLoader`]; framework-specific loaders (reqwest, sqlx, ...) will
-/// be added here as they land.
+/// The default loader stack applied by [`scan`]:
+///
+/// 1. [`StdRtLoader`] — language-level recognisers (stdlib `*::spawn`,
+///    `*::env::var`, `std::fs::*`, `std::thread::sleep`, `Command::*`,
+///    `TcpStream::*`, print/log macros). Produces six `FactKind`s.
+/// 2. [`MarkersLoader`] — promotes user-declared `// ot: marks
+///    <fact_kind>` source hints into `AirFact` entries. Lets users
+///    annotate functions with `hot_path` / `request_context` /
+///    `boundary_entry` / etc. that the loader tier can't auto-detect
+///    without framework knowledge.
+///
+/// Framework-specific loaders (reqwest, sqlx, axum, bevy, ...) plug
+/// in here as they land.
 pub fn default_loaders() -> Vec<Box<dyn locus_core::Loader>> {
-    vec![Box::new(loaders::std_rt::StdRtLoader)]
+    vec![
+        Box::new(loaders::std_rt::StdRtLoader),
+        Box::new(loaders::markers::MarkersLoader),
+    ]
 }
 
 fn apply_default_loaders(air: &mut AirWorkspace) {

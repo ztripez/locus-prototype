@@ -9,6 +9,9 @@
 //! - OB001: raw print/dbg in non-test, non-observer code.
 //! - OB002: metric-emission macro outside the accepted metric owner module.
 //! - OB003: event-emission macro outside the accepted event owner module.
+//! - OB004: boundary-entry function (carrying a `// ot: marks
+//!   boundary_entry` source hint) with no `Logging` fact targeting it.
+//!   Opt-in is the marker itself; no lockfile field gates the rule.
 
 // ot: canonical
 
@@ -46,6 +49,7 @@ impl Paradigm for Observability {
         let mut diags = rules::ob001(air, &section, mode);
         diags.extend(rules::ob002(air, &section, mode));
         diags.extend(rules::ob003(air, &section, mode));
+        diags.extend(rules::ob004(air, &section, mode));
         diags
     }
 }
