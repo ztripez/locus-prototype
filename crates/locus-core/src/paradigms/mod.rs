@@ -25,6 +25,7 @@ pub mod test_architecture;
 pub mod utility_discipline;
 
 use crate::diagnostics::{CheckMode, Diagnostic};
+use crate::init::Suggestion;
 use crate::lockfile::Lockfile;
 use locus_air::AirWorkspace;
 
@@ -43,6 +44,12 @@ pub trait Paradigm {
     /// for accepted ownership; missing sections mean "nothing accepted yet,"
     /// which is normal before `locus init` has been run.
     fn check(&self, air: &AirWorkspace, lockfile: &Lockfile, mode: CheckMode) -> Vec<Diagnostic>;
+    /// Emit init-time onboarding suggestions for this paradigm. Default
+    /// returns no suggestions; paradigms override to propose layer paths,
+    /// concept clusters, threshold dial-ins, or vacancy nudges.
+    fn suggest(&self, _air: &AirWorkspace, _lockfile: &Lockfile) -> Vec<Suggestion> {
+        Vec::new()
+    }
 }
 
 /// All paradigms wired into this build of Locus. OT and DG are fully
@@ -72,4 +79,34 @@ pub fn registry() -> Vec<Box<dyn Paradigm>> {
         Box::new(test_architecture::TestArchitecture),
         Box::new(utility_discipline::UtilityDiscipline),
     ]
+}
+
+#[cfg(test)]
+mod suggest_default_tests {
+    use super::*;
+    use locus_air::AirWorkspace;
+
+    struct Stub;
+    impl Paradigm for Stub {
+        fn name(&self) -> &'static str {
+            "Stub"
+        }
+        fn rule_prefix(&self) -> &'static str {
+            "ZZ"
+        }
+        fn init(&self, _: &AirWorkspace) -> serde_json::Value {
+            serde_json::Value::Null
+        }
+        fn check(&self, _: &AirWorkspace, _: &Lockfile, _: CheckMode) -> Vec<Diagnostic> {
+            Vec::new()
+        }
+    }
+
+    #[test]
+    fn default_suggest_returns_empty() {
+        let p = Stub;
+        let air = AirWorkspace::new(Vec::new());
+        let lf = Lockfile::empty();
+        assert!(p.suggest(&air, &lf).is_empty());
+    }
 }
