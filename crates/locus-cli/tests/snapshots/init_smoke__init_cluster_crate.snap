@@ -23,7 +23,16 @@ wrote <PATH>/locus.lock
   TA Test Architecture Ownership: (empty)
   UT Utility / Shared Module Discipline: (empty)
 auto-applied: 0 source hints promoted
-unresolved: 7
+unresolved: 8
+
+[concept] cluster `user` ambiguous — cluster_crate::domain::User
+  confidence 0.75; review members
+  if same concept:
+    locus accept canonical cluster_crate::domain::User --concept user
+    locus accept boundary cluster_crate::api::UserResponse --concept user
+  if separate concepts:
+    locus accept canonical cluster_crate::domain::User --concept user
+    locus accept canonical cluster_crate::api::UserResponse --concept user_userresponse
 
 [layer] domain layer detected, but no paradigms onboarded
   required by BO, ER, FL, RM

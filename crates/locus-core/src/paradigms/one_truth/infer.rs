@@ -192,7 +192,7 @@ fn stem_of(name: &str) -> String {
     name.to_string()
 }
 
-fn matched_suffix(name: &str) -> Option<&'static str> {
+pub(super) fn matched_suffix(name: &str) -> Option<&'static str> {
     BOUNDARY_SUFFIXES
         .iter()
         .copied()
@@ -359,6 +359,222 @@ fn symbol_matches_any(needle: &str, accepted: &std::collections::BTreeSet<&str>)
         let tail = sym.rsplit("::").next().unwrap_or(sym);
         tail == trimmed || *sym == trimmed
     })
+}
+
+/// Outcome of [`elect_canonical`]. Carries the chosen index, its score, and
+/// the runner-up's score so callers can read the margin and skip ambiguous
+/// clusters (margin < 0.2).
+#[derive(Debug, Clone, Copy)]
+pub struct ElectionOutcome {
+    pub canonical_index: usize,
+    pub score: f32,
+    pub runner_up_score: f32,
+}
+
+impl ElectionOutcome {
+    pub fn margin(&self) -> f32 {
+        self.score - self.runner_up_score
+    }
+}
+
+/// Elect a heuristic canonical from a cluster that has no hinted
+/// [`InferredRole::Canonical`] member. Scores each member on
+/// name-stem match, module-path layer, boundary suffix, derive
+/// signals, and conversion direction. Returns `None` if no member
+/// scores meaningfully better than the rest (margin < 0.2).
+pub fn elect_canonical(cluster: &ConceptCluster, air: &AirWorkspace) -> Option<ElectionOutcome> {
+    if cluster.members.is_empty() {
+        return None;
+    }
+    // Pre-compute conversion endpoints once. Each entry is
+    // `(from_short_name, to_short_name)` where the short names are the
+    // last `::`-segment of the rendered conversion endpoint text.
+    let mut conv_edges: Vec<(String, String)> = Vec::new();
+    for pkg in &air.packages {
+        for file in &pkg.files {
+            for item in &file.items {
+                if let locus_air::AirItem::Conversion(c) = item {
+                    let from = short_name(&c.from);
+                    let to = short_name(&c.to);
+                    conv_edges.push((from, to));
+                }
+            }
+        }
+    }
+    let scores: Vec<f32> = cluster
+        .members
+        .iter()
+        .map(|m| score_member(m, &cluster.stem, &conv_edges))
+        .collect();
+
+    // Find best + runner-up.
+    let mut best_idx = 0usize;
+    let mut best = f32::NEG_INFINITY;
+    let mut second = f32::NEG_INFINITY;
+    for (i, &s) in scores.iter().enumerate() {
+        if s > best {
+            second = best;
+            best = s;
+            best_idx = i;
+        } else if s > second {
+            second = s;
+        }
+    }
+    let outcome = ElectionOutcome {
+        canonical_index: best_idx,
+        score: best,
+        runner_up_score: if scores.len() > 1 {
+            second
+        } else {
+            f32::NEG_INFINITY
+        },
+    };
+    if scores.len() > 1 && outcome.margin() < 0.2 {
+        return None;
+    }
+    Some(outcome)
+}
+
+fn score_member(m: &ClusterMember, stem: &str, conv_edges: &[(String, String)]) -> f32 {
+    let mut score = 0.0f32;
+    // Name equals stem (no boundary suffix).
+    if m.name.eq_ignore_ascii_case(stem) {
+        score += 0.3;
+    }
+    // Boundary suffix.
+    if matched_suffix(&m.name).is_some() {
+        score -= 0.3;
+    }
+    // Module-path signal: domain segments boost; api/dto/transport segments penalise.
+    for seg in m.symbol.split("::") {
+        match seg {
+            "domain" | "core" | "model" | "models" => score += 0.3,
+            "api" | "dto" | "dtos" | "transport" => score -= 0.2,
+            _ => {}
+        }
+    }
+    // Inbound conversions: count how many edges point TO this member's short name.
+    let short = short_name(&m.symbol);
+    let inbound = conv_edges.iter().filter(|(_from, to)| to == &short).count() as f32;
+    score += 0.1 * inbound;
+    score
+}
+
+fn short_name(text: &str) -> String {
+    text.trim()
+        .rsplit("::")
+        .next()
+        .unwrap_or(text.trim())
+        .to_string()
+}
+
+#[cfg(test)]
+mod election_tests {
+    use super::*;
+    use locus_air::AirSpan;
+
+    fn member(name: &str, symbol: &str, fields: &[&str]) -> ClusterMember {
+        ClusterMember {
+            symbol: symbol.into(),
+            name: name.into(),
+            role: InferredRole::Unknown,
+            span: AirSpan::new("t.rs", 1, 1),
+            file_path: "t.rs".into(),
+            field_overlap: 1.0,
+            fields: fields.iter().map(|s| (*s).to_string()).collect(),
+            reasons: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn elects_unsuffixed_domain_member_over_dto_in_api() {
+        let cluster = ConceptCluster {
+            concept_id: "user".into(),
+            stem: "User".into(),
+            confidence: 0.0,
+            members: vec![
+                member("UserDto", "x::api::UserDto", &["id", "email"]),
+                member("User", "x::domain::User", &["id", "email", "created_at"]),
+            ],
+        };
+        let air = locus_air::AirWorkspace::new(Vec::new());
+        let outcome = elect_canonical(&cluster, &air).expect("expected election");
+        assert_eq!(outcome.canonical_index, 1);
+        assert!(outcome.margin() >= 0.2);
+    }
+
+    #[test]
+    fn returns_none_when_margin_too_small() {
+        // Two indistinguishable members → no clear election.
+        let cluster = ConceptCluster {
+            concept_id: "user".into(),
+            stem: "User".into(),
+            confidence: 0.0,
+            members: vec![
+                member("User", "x::core::User", &["id"]),
+                member("UserAlt", "x::core::UserAlt", &["id"]),
+            ],
+        };
+        let air = locus_air::AirWorkspace::new(Vec::new());
+        // UserAlt has no boundary suffix and same module signals — the
+        // unsuffixed-stem bonus on User dominates by 0.3 vs 0.0, which IS
+        // ≥ 0.2 so this elects User. To get a tied case, give them both
+        // the boundary signature.
+        let cluster_tied = ConceptCluster {
+            concept_id: "user".into(),
+            stem: "User".into(),
+            confidence: 0.0,
+            members: vec![
+                member("UserDto", "x::api::UserDto", &["id"]),
+                member("UserResponse", "x::api::UserResponse", &["id"]),
+            ],
+        };
+        let _ = elect_canonical(&cluster, &air); // unused; ensure compile
+        assert!(elect_canonical(&cluster_tied, &air).is_none());
+    }
+
+    #[test]
+    fn inbound_conversion_boosts_canonical_score() {
+        let cluster = ConceptCluster {
+            concept_id: "user".into(),
+            stem: "User".into(),
+            confidence: 0.0,
+            members: vec![
+                member("UserDto", "x::api::UserDto", &["id"]),
+                member("User", "x::domain::User", &["id"]),
+            ],
+        };
+        // Two From<...> for User edges → +0.2 to User.
+        let air = locus_air::AirWorkspace::new(Vec::new());
+        let with_no_edges = elect_canonical(&cluster, &air).unwrap();
+        // Now with edges. Build a fake AIR fragment that contains the
+        // conversions inline.
+        use locus_air::{AirConversion, AirFile, AirItem, AirPackage, ConversionMechanism};
+        let conv = |from: &str, to: &str| {
+            AirItem::Conversion(AirConversion {
+                from: from.into(),
+                to: to.into(),
+                mechanism: ConversionMechanism::FallibleAdapter,
+                symbol: format!("impl TryFrom<{from}> for {to}"),
+                span: AirSpan::new("t.rs", 1, 1),
+            })
+        };
+        let air2 = locus_air::AirWorkspace::new(vec![AirPackage {
+            name: "x".into(),
+            version: "0.0.1".into(),
+            root_dir: "/tmp/x".into(),
+            files: vec![AirFile {
+                path: "t.rs".into(),
+                module_path: Some("x".into()),
+                items: vec![conv("UserDto", "User"), conv("UserPayload", "User")],
+                hints: Vec::new(),
+                parse_error: None,
+                line_count: 1,
+            }],
+        }]);
+        let with_edges = elect_canonical(&cluster, &air2).unwrap();
+        assert!(with_edges.score > with_no_edges.score);
+    }
 }
 
 #[cfg(test)]

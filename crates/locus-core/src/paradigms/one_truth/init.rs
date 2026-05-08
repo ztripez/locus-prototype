@@ -129,6 +129,21 @@ fn collect_converters(
     out
 }
 
+fn is_boundary_like(member: &ClusterMember, canonical: &ClusterMember) -> bool {
+    use crate::paradigms::one_truth::infer::matched_suffix;
+    if matched_suffix(&member.name).is_some() {
+        return true;
+    }
+    for seg in member.symbol.split("::") {
+        if matches!(seg, "api" | "dto" | "dtos" | "transport") {
+            return true;
+        }
+    }
+    // Field overlap with the canonical (already computed against the
+    // cluster's reference type) ≥ 0.5 implies structural similarity.
+    member.field_overlap >= 0.5 && member.symbol != canonical.symbol
+}
+
 fn endpoints_accepted(c: &AirConversion, accepted: &BTreeSet<&str>) -> bool {
     // Conversion endpoints arrive as type-text strings. Match them against
     // the suffix of accepted symbols so `User` lines up with
@@ -165,23 +180,59 @@ pub fn suggest(air: &AirWorkspace, lockfile: &Lockfile) -> Vec<Suggestion> {
         if section.concepts.contains_key(&cluster.concept_id) {
             continue;
         }
-        let canonical = match cluster
+        // Two paths:
+        //  1. Hinted: at least one member is `InferredRole::Canonical`. Use the
+        //     existing hint-tagged members directly (and apply no penalty).
+        //  2. Heuristic: no hint. Elect a canonical via signals; treat the rest
+        //     as boundary candidates if they look boundary-shaped. Dock 0.1
+        //     from cluster confidence to reflect the guess.
+        let hinted_canonical = cluster
             .members
             .iter()
-            .find(|m| m.role == InferredRole::Canonical)
-        {
-            Some(c) => c,
-            None => continue,
+            .find(|m| m.role == InferredRole::Canonical);
+
+        let (canonical_idx, hinted_path) = match hinted_canonical {
+            Some(c) => {
+                let idx = cluster
+                    .members
+                    .iter()
+                    .position(|m| std::ptr::eq(m, c))
+                    .unwrap();
+                (idx, true)
+            }
+            None => match super::infer::elect_canonical(cluster, air) {
+                Some(o) => (o.canonical_index, false),
+                None => continue,
+            },
         };
-        let boundaries: Vec<&ClusterMember> = cluster
-            .members
-            .iter()
-            .filter(|m| m.role == InferredRole::Boundary)
-            .collect();
+        let canonical = &cluster.members[canonical_idx];
+
+        let boundaries: Vec<&ClusterMember> = if hinted_path {
+            cluster
+                .members
+                .iter()
+                .filter(|m| m.role == InferredRole::Boundary)
+                .collect()
+        } else {
+            cluster
+                .members
+                .iter()
+                .enumerate()
+                .filter(|(i, _)| *i != canonical_idx)
+                .map(|(_, m)| m)
+                .filter(|m| is_boundary_like(m, canonical))
+                .collect()
+        };
         if boundaries.is_empty() {
             continue;
         }
-        let confidence = cluster.confidence;
+
+        let confidence_base = cluster.confidence;
+        let confidence = if hinted_path {
+            confidence_base
+        } else {
+            (confidence_base - 0.1).max(0.0)
+        };
         if confidence < MID_CONFIDENCE {
             continue;
         }
@@ -316,6 +367,34 @@ mod suggest_tests {
             suggestions
                 .iter()
                 .all(|s| s.headline.starts_with("cluster "))
+        );
+    }
+
+    #[test]
+    fn elects_canonical_in_hint_less_cluster() {
+        let workspace = std::path::Path::new("../../tests/fixtures/cluster-crate");
+        if !workspace.exists() {
+            eprintln!("cluster-crate fixture missing; skipping");
+            return;
+        }
+        let air = locus_rust::scan(workspace).expect("scan cluster-crate");
+        let lf = Lockfile::empty();
+        let suggestions = suggest(&air, &lf);
+        let user_concept = suggestions
+            .iter()
+            .find(|s| s.category == SuggestionCategory::Concept && s.headline.contains("user"));
+        assert!(
+            user_concept.is_some(),
+            "expected a heuristic [concept] suggestion for `user` cluster; got {:?}",
+            suggestions
+        );
+        let s = user_concept.unwrap();
+        // Verify the elected canonical is User (the unsuffixed name in the
+        // domain module), not UserResponse.
+        let cmds = s.options[0].commands.join("\n");
+        assert!(
+            cmds.contains("locus accept canonical cluster_crate::domain::User"),
+            "expected User as elected canonical; got commands:\n{cmds}"
         );
     }
 

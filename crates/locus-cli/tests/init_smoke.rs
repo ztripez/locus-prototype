@@ -25,14 +25,9 @@ fn init_against_sample_crate_emits_expected_checklist() {
 /// Snapshot the `locus init` output for a workspace that contains a
 /// concept-shaped cluster (`User` + `UserResponse` + a `From` impl) but no
 /// `// ot:` hints. The snapshot is the regression baseline; we also assert
-/// the layer-suggestion block carries the cluster-crate domain glob.
-///
-/// The current `init` flow auto-promotes hints into the OT section before
-/// calling `suggest()`, and `suggest()` requires at least one hinted
-/// `Canonical` member to fire. A hint-less fixture therefore emits no
-/// `[concept]` block — the snapshot reflects this. Relaxing that
-/// requirement (e.g. picking a heuristic canonical when the cluster has a
-/// converter) is tracked separately.
+/// the layer-suggestion block carries the cluster-crate domain glob, and
+/// that heuristic OT canonical election surfaces a `[concept]` suggestion
+/// proposing `cluster_crate::domain::User` as the canonical.
 #[test]
 fn init_against_cluster_crate_snapshots_checklist() {
     let bin = env!("CARGO_BIN_EXE_locus");
@@ -58,6 +53,14 @@ fn init_against_cluster_crate_snapshots_checklist() {
         stdout.contains("cluster_crate::domain::*"),
         "expected layer suggestion to mention the cluster-crate domain glob; got:\n{stdout}"
     );
+    assert!(
+        stdout.contains("[concept]"),
+        "expected heuristic election to surface a [concept] suggestion; got:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("cluster_crate::domain::User"),
+        "expected election to nominate cluster_crate::domain::User as canonical; got:\n{stdout}"
+    );
 }
 
 /// Round-trip the OT acceptance flow: the cluster-crate fixture starts
@@ -77,12 +80,17 @@ fn cluster_round_trip_persists_accepted_concept() {
     // First run: lockfile gets created with empty OT section. `init` exits
     // non-zero when unresolved suggestions remain, so we use `.output()`
     // (no exit-code enforcement) instead of `.assert()`.
-    let _ = Command::new(bin)
+    let first_run = Command::new(bin)
         .arg("init")
         .arg("--workspace")
         .arg(workspace_dir.path())
         .output()
         .unwrap();
+    let first_out = String::from_utf8_lossy(&first_run.stdout).to_string();
+    assert!(
+        first_out.contains("[concept]"),
+        "expected heuristic election to surface a [concept] suggestion on first init; got:\n{first_out}"
+    );
     let lockfile_path = workspace_dir.path().join("locus.lock");
     let initial = std::fs::read_to_string(&lockfile_path).unwrap();
     assert!(
