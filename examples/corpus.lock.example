@@ -1,0 +1,70 @@
+{
+  "version": 1,
+  "paradigms": {
+    "FL": {
+      "invariant_owner_paths": [
+        "*::tests::*",
+        "*::test::*",
+        "*::main"
+      ]
+    },
+    "OB": {
+      "observer_paths": [
+        "*::tests::*",
+        "*::test::*",
+        "*::main",
+        "*::cli::*",
+        "*::bin::*"
+      ]
+    },
+    "TA": {
+      "test_paths": [
+        "*::tests::*",
+        "*::test::*"
+      ]
+    },
+    "RW": {
+      "runtime_owner_paths": [
+        "*::main",
+        "*::bootstrap::*",
+        "bevy_mcp::*",
+        "*::server::*",
+        "*::tests::*",
+        "*::test::*"
+      ]
+    },
+    "UT": {
+      "utility_paths": [
+        "*::util::*",
+        "*::utils::*",
+        "*::helpers::*",
+        "*::common::*"
+      ],
+      "forbidden_imports": [
+        "*::domain::*",
+        "*::handler::*"
+      ]
+    },
+    "DC": {
+      "require_public_docs": false,
+      "exempt_paths": [
+        "*::tests::*",
+        "*::test::*"
+      ]
+    },
+    "ER": {
+      "forbidden_error_types": [
+        "String",
+        "&str",
+        "Box<dyn Error>",
+        "Box<dyn std::error::Error>",
+        "anyhow::Error"
+      ]
+    },
+    "DA": {
+      "enabled": false,
+      "accepted_single_impl": []
+    }
+  },
+  "exceptions": []
+}

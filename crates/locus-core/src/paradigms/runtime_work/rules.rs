@@ -43,12 +43,17 @@ pub fn rw001(air: &AirWorkspace, section: &RwSection, mode: CheckMode) -> Vec<Di
         let Some((module_path, fn_span)) = lookup_function(air, symbol) else {
             continue;
         };
+        // Match either the file's `module_path` or the function symbol
+        // itself — inline `mod tests {}` blocks live at a deeper symbol
+        // path than the file, so a `*::tests::*` pattern would silently
+        // miss them if we only checked the file. Same fix FL002–FL005
+        // got via `containing_module_of`.
         if section
             .runtime_owner_paths
             .iter()
-            .any(|pat| matches_pattern(pat, module_path))
+            .any(|pat| matches_pattern(pat, module_path) || matches_pattern(pat, symbol))
         {
-            continue; // file is itself a runtime owner
+            continue; // file or function is itself a runtime owner
         }
         out.push(diagnostic_for(fact, symbol, module_path, fn_span, mode));
     }
