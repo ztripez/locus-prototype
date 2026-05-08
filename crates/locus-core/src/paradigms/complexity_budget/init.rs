@@ -46,9 +46,7 @@ pub fn suggest(air: &AirWorkspace, lockfile: &Lockfile) -> Vec<Suggestion> {
             why: vec!["p95 differs from default by >1.5×; consider explicit cap".into()],
             options: vec![CommandOption {
                 label: "set explicit cap".into(),
-                commands: vec![format!(
-                    "locus cx set-default-max-function-lines {suggested}"
-                )],
+                commands: vec![format!("locus cx set-default --max-lines {suggested}")],
             }],
             prefixes: vec![CX_PREFIX.into()],
         }]

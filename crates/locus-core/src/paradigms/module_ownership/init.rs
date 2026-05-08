@@ -45,7 +45,7 @@ pub fn suggest(air: &AirWorkspace, lockfile: &Lockfile) -> Vec<Suggestion> {
             why: vec!["p95 above default by >1.5×".into()],
             options: vec![CommandOption {
                 label: "set explicit cap".into(),
-                commands: vec![format!("locus mo set-default-max-public-types {suggested}")],
+                commands: vec![format!("locus mo set-default --max-types {suggested}")],
             }],
             prefixes: vec![MO_PREFIX.into()],
         }]
