@@ -627,6 +627,12 @@ struct InitArgs {
     /// Refuse to overwrite an existing locus.lock.
     #[arg(long)]
     no_overwrite: bool,
+    /// Comma-separated paradigm prefixes the user explicitly acknowledges
+    /// as empty. Each prefix is appended to `Lockfile.acknowledged_empty`
+    /// (silencing LOCUS002 for that paradigm). Already-present prefixes
+    /// are silently deduped. Example: `--acknowledge-empty RW,DA`.
+    #[arg(long, value_name = "PREFIXES")]
+    acknowledge_empty: Option<String>,
 }
 
 // ot: boundary cli.emit-air cli
@@ -1451,7 +1457,13 @@ fn init(args: InitArgs) -> Result<()> {
     let air = locus_rust::scan(&args.workspace)
         .with_context(|| format!("scan failed: {}", args.workspace.display()))?;
 
-    let mut lockfile = Lockfile::empty();
+    // Start from the existing lockfile so previously-acknowledged prefixes
+    // and accepted decisions survive a re-run.
+    let mut lockfile = Lockfile::load_or_empty(&args.workspace)
+        .with_context(|| format!("load lockfile from {}", args.workspace.display()))?;
+
+    // Re-run paradigm `init` to refresh paradigm sections from a fresh scan
+    // (today only OT writes a non-empty section).
     let registry = registry();
     for paradigm in &registry {
         let section = paradigm.init(&air);
@@ -1459,6 +1471,14 @@ fn init(args: InitArgs) -> Result<()> {
             lockfile
                 .paradigms
                 .insert(paradigm.rule_prefix().to_string(), section);
+        }
+    }
+
+    if let Some(raw) = args.acknowledge_empty.as_deref() {
+        for prefix in parse_prefix_list(raw) {
+            if !lockfile.acknowledged_empty.iter().any(|p| p == &prefix) {
+                lockfile.acknowledged_empty.push(prefix);
+            }
         }
     }
 
@@ -1640,4 +1660,64 @@ fn report_text<W: Write>(out: &mut W, diags: &[Diagnostic]) -> io::Result<()> {
         "summary: {fatal} error(s), {warning} warning(s), {advisory} advisory."
     )?;
     Ok(())
+}
+
+fn parse_prefix_list(raw: &str) -> Vec<String> {
+    raw.split(',')
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_uppercase())
+        .collect()
+}
+
+#[cfg(test)]
+mod parse_prefix_list_tests {
+    use super::*;
+
+    #[test]
+    fn splits_and_uppercases() {
+        assert_eq!(parse_prefix_list("rw,da"), vec!["RW", "DA"]);
+    }
+
+    #[test]
+    fn trims_whitespace_and_drops_empties() {
+        assert_eq!(parse_prefix_list("  RW , , FO  "), vec!["RW", "FO"]);
+    }
+
+    #[test]
+    fn empty_input_returns_empty() {
+        assert!(parse_prefix_list("").is_empty());
+        assert!(parse_prefix_list(" , ").is_empty());
+    }
+}
+
+#[cfg(test)]
+mod init_acknowledge_empty_tests {
+    use super::*;
+    use locus_core::lockfile::LOCKFILE_NAME;
+
+    #[test]
+    fn acknowledge_empty_persists_into_lockfile() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
+        // Minimal cargo workspace so `locus_rust::scan` succeeds.
+        std::fs::write(
+            dir.join("Cargo.toml"),
+            "[package]\nname = \"x\"\nversion = \"0.0.1\"\nedition = \"2024\"\n[lib]\npath = \"src/lib.rs\"\n",
+        )
+        .unwrap();
+        std::fs::create_dir_all(dir.join("src")).unwrap();
+        std::fs::write(dir.join("src/lib.rs"), "").unwrap();
+
+        let args = InitArgs {
+            workspace: dir.to_path_buf(),
+            no_overwrite: false,
+            acknowledge_empty: Some("rw, da".into()),
+        };
+        init(args).unwrap();
+
+        let lockfile_bytes = std::fs::read(dir.join(LOCKFILE_NAME)).unwrap();
+        let lf: Lockfile = serde_json::from_slice(&lockfile_bytes).unwrap();
+        assert_eq!(lf.acknowledged_empty, vec!["RW", "DA"]);
+    }
 }

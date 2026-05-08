@@ -315,6 +315,7 @@ dependencies = [
  "locus-core",
  "locus-rust",
  "serde_json",
+ "tempfile",
  "thiserror",
 ]
 
