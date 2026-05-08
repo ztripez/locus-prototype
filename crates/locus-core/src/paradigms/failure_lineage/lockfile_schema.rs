@@ -95,6 +95,21 @@ pub struct FlSection {
     /// `::*` wildcard.
     #[serde(default = "default_silent_discard_allowed_callees")]
     pub silent_discard_allowed_callees: Vec<String>,
+
+    /// Module patterns matching `AirFile.module_path` (or a function
+    /// symbol's containing module) for files that legitimately implement
+    /// retry policies — modules that own backoff, max-attempts, jitter,
+    /// or other declared retry semantics. FL012 stays silent until this
+    /// list is populated; once populated, every retry-shaped loop
+    /// (`AirItem::RetryLoop` with `propagates: true` and `has_break:
+    /// true`) outside the listed paths is flagged as an ad-hoc retry
+    /// without an accepted policy.
+    ///
+    /// Pattern syntax mirrors `invariant_owner_paths`. Recommended
+    /// starter when populating: `["*::retry::*", "*::backoff::*"]` plus
+    /// any project-specific retry-policy modules.
+    #[serde(default)]
+    pub retry_policy_owner_paths: Vec<String>,
 }
 
 impl Default for FlSection {
@@ -106,6 +121,7 @@ impl Default for FlSection {
             invariant_owner_paths: Vec::new(),
             silent_discard_callees: default_silent_discard_callees(),
             silent_discard_allowed_callees: default_silent_discard_allowed_callees(),
+            retry_policy_owner_paths: Vec::new(),
         }
     }
 }

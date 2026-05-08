@@ -35,17 +35,31 @@
 //!   `Empty`, `Literal`, or `Call` outside `invariant_owner_paths`. Reads
 //!   [`AirItem::MatchArm`] — every `Err` variant is matched by `_` and
 //!   the failure is silently routed to a default-producing body.
+//! - [`fl010`]: a `.unwrap_or(...)` / `.or(...)` call whose default
+//!   argument is a `Literal` or `Call` outside `invariant_owner_paths`.
+//!   Reads [`AirItem::FallbackCall`] (AIR v12). The
+//!   "invalid input silently replaced with a valid default" anti-pattern —
+//!   distinct from FL002's `unwrap_or_default()` (no-arg) form, which
+//!   is covered by `forbidden_callees`. FL010 deliberately skips
+//!   `default_shape` `Empty` (FL002's territory), `Block` and `Other`
+//!   (might be doing real work; conservative).
 //! - [`fl011`]: a bare `_ => <silent>` arm whose body is `Empty`,
 //!   `Literal`, or `Call` outside `invariant_owner_paths`. The
 //!   "unknown enum variant routed to a default" anti-pattern — distinct
 //!   from FL007 because the pattern is the bare wildcard, not an `Err`
 //!   variant.
+//! - [`fl012`]: a `loop` / `for` / `while` whose body uses `?` and has
+//!   at least one `break`, outside `retry_policy_owner_paths`. Reads
+//!   [`AirItem::RetryLoop`] (AIR v12). The "ad-hoc retry without
+//!   accepted policy" anti-pattern — fallible work being repeated
+//!   until success with no declared backoff / max-attempts / jitter.
 //!
 //! Future FL rules will tackle the patterns AIR still can't see: spawned-task
 //! failures with no sink (richer fact production).
 
 use locus_air::{
-    AirCallSite, AirClosureMethodCall, AirItem, AirMatchArm, AirWorkspace, ArmBodyShape, CallKind,
+    AirCallSite, AirClosureMethodCall, AirFallbackCall, AirItem, AirMatchArm, AirRetryLoop,
+    AirWorkspace, ArmBodyShape, CallKind, LoopKind,
 };
 
 use super::lockfile_schema::{FlSection, containing_module_of, matches_pattern};
@@ -1127,11 +1141,239 @@ fn diagnostic_for_fl011(arm: &AirMatchArm, module_path: &str, mode: CheckMode) -
     }
 }
 
+/// FL010 — invalid input silently converted into a valid default state.
+///
+/// Reads [`AirItem::FallbackCall`] items (AIR v12). Fires when the
+/// callee is `unwrap_or` or `or` AND the default-arg shape is
+/// `Literal` or `Call`. Skips:
+///
+/// - `unwrap_or_default` — FL002's territory (covered by the default
+///   `forbidden_callees` list).
+/// - `default_shape == Empty` — same case as `unwrap_or_default`, no
+///   explicit default.
+/// - `default_shape == Block` or `Other` — multi-statement fallback
+///   blocks might be doing real work (logging, propagation,
+///   compensating action). Conservative skip; the deterministic
+///   blocking rule shouldn't speculate about block contents.
+///
+/// Severity: `mode.elevate(Severity::Warning)` — Warning in human,
+/// Fatal under `--agent-strict`.
+///
+/// Lockfile-driven silence: stays quiet until `invariant_owner_paths`
+/// is populated, mirroring every other FL silent-discard rule.
+pub fn fl010(air: &AirWorkspace, section: &FlSection, mode: CheckMode) -> Vec<Diagnostic> {
+    if section.invariant_owner_paths.is_empty() {
+        return Vec::new();
+    }
+
+    let mut out = Vec::new();
+    for pkg in &air.packages {
+        for file in &pkg.files {
+            let Some(module_path) = file.module_path.as_deref() else {
+                continue;
+            };
+            for item in &file.items {
+                let AirItem::FallbackCall(call) = item else {
+                    continue;
+                };
+                if !is_fl010_callee(&call.callee) {
+                    continue;
+                }
+                if !is_fl010_default_shape(call.default_shape) {
+                    continue;
+                }
+                if callsite_in_invariant_owner(
+                    module_path,
+                    call.function.as_deref(),
+                    &section.invariant_owner_paths,
+                ) {
+                    continue;
+                }
+                out.push(diagnostic_for_fl010(call, module_path, mode));
+            }
+        }
+    }
+    out
+}
+
+/// True for the FL010-relevant fallback callees. `unwrap_or_default`
+/// is deliberately excluded — FL002 covers the no-arg form.
+fn is_fl010_callee(callee: &str) -> bool {
+    matches!(callee, "unwrap_or" | "or")
+}
+
+/// True when the default-arg shape is one FL010 fires on. `Empty`
+/// means the call had no default arg (i.e. `unwrap_or_default()`),
+/// which FL002 already covers. `Block` and `Other` could be doing
+/// real recovery work, so the deterministic rule passes on them.
+fn is_fl010_default_shape(shape: ArmBodyShape) -> bool {
+    matches!(shape, ArmBodyShape::Literal | ArmBodyShape::Call)
+}
+
+fn diagnostic_for_fl010(call: &AirFallbackCall, module_path: &str, mode: CheckMode) -> Diagnostic {
+    let function_label = call
+        .function
+        .as_deref()
+        .unwrap_or("<unknown enclosing function>");
+    let shape_label = body_shape_label(call.default_shape);
+    let shape_token = fallback_shape_token(call.default_shape);
+    Diagnostic {
+        rule_id: "FL010".to_string(),
+        severity: mode.elevate(Severity::Warning),
+        span: call.span.clone(),
+        concept: None,
+        message: format!(
+            ".{}(...) returns a silent {shape_token} default in `{module_path}` \
+             (fn `{function_label}`) — invalid input gets converted to valid state",
+            call.callee,
+        ),
+        why: vec![
+            format!("module `{module_path}`"),
+            format!("enclosing function: `{function_label}`"),
+            format!("callee `{}`", call.callee),
+            format!("default-arg shape: {shape_label}"),
+            "the failure path is silently replaced with a default value".into(),
+            format!(
+                "no `paradigms.FL.invariant_owner_paths` entry covers `{module_path}` \
+                 — the rule treats this site as a non-owner"
+            ),
+        ],
+        suggested_fix: Some(format!(
+            "propagate the failure with `?`; or map the error to a typed \
+             domain error (e.g. `.map_err(MyError::from)?`); or, if \
+             `{module_path}` is a legitimate fallback owner (supervisor, \
+             startup-asserting bin entry), add it to \
+             `paradigms.FL.invariant_owner_paths`. For a one-off accepted \
+             default, suppress with `// ot: allow FL010 reason=\"…\" \
+             expires=\"YYYY-MM-DD\"`"
+        )),
+    }
+}
+
+/// Render `default_shape` as a snake_case token suitable for the
+/// FL010 headline message — mirrors how FL011/FL007 use
+/// `body_shape_label` but without spaces for the "silent X default"
+/// phrasing.
+fn fallback_shape_token(shape: ArmBodyShape) -> &'static str {
+    match shape {
+        ArmBodyShape::Empty => "empty",
+        ArmBodyShape::Literal => "literal",
+        ArmBodyShape::Call => "call",
+        ArmBodyShape::Return => "return",
+        ArmBodyShape::Propagate => "propagate",
+        ArmBodyShape::Block => "block",
+        ArmBodyShape::Other => "other",
+    }
+}
+
+/// FL012 — retry-shaped loop without accepted retry policy.
+///
+/// Reads [`AirItem::RetryLoop`] items (AIR v12). Fires when:
+///
+/// - `propagates: true` (the loop body uses `?`),
+/// - `has_break: true` (there's a success-exit path), and
+/// - the file's `module_path` (or the function's containing module)
+///   is **not** in `retry_policy_owner_paths`.
+///
+/// The user declares which modules legitimately implement retry policies
+/// (backoff, max attempts, jitter). Loops elsewhere are likely ad-hoc
+/// retries — repeated fallible work without the cross-cutting policy
+/// concerns a real retry needs.
+///
+/// Severity: `mode.elevate(Severity::Warning)` — Warning in human,
+/// Fatal under `--agent-strict`.
+///
+/// Lockfile-driven silence: stays quiet until `retry_policy_owner_paths`
+/// is populated. Same UX shape as the other FL lockfile-driven rules.
+pub fn fl012(air: &AirWorkspace, section: &FlSection, mode: CheckMode) -> Vec<Diagnostic> {
+    if section.retry_policy_owner_paths.is_empty() {
+        return Vec::new();
+    }
+
+    let mut out = Vec::new();
+    for pkg in &air.packages {
+        for file in &pkg.files {
+            let Some(module_path) = file.module_path.as_deref() else {
+                continue;
+            };
+            for item in &file.items {
+                let AirItem::RetryLoop(loopy) = item else {
+                    continue;
+                };
+                if !loopy.propagates {
+                    continue;
+                }
+                if !loopy.has_break {
+                    continue;
+                }
+                if callsite_in_invariant_owner(
+                    module_path,
+                    loopy.function.as_deref(),
+                    &section.retry_policy_owner_paths,
+                ) {
+                    continue;
+                }
+                out.push(diagnostic_for_fl012(loopy, module_path, mode));
+            }
+        }
+    }
+    out
+}
+
+fn diagnostic_for_fl012(loopy: &AirRetryLoop, module_path: &str, mode: CheckMode) -> Diagnostic {
+    let function_label = loopy
+        .function
+        .as_deref()
+        .unwrap_or("<unknown enclosing function>");
+    let kind_label = loop_kind_label(loopy.loop_kind);
+    Diagnostic {
+        rule_id: "FL012".to_string(),
+        severity: mode.elevate(Severity::Warning),
+        span: loopy.span.clone(),
+        concept: None,
+        message: format!(
+            "retry-shaped {kind_label} loop in `{module_path}` (fn `{function_label}`) \
+             — propagation + break with no declared retry policy"
+        ),
+        why: vec![
+            format!("module `{module_path}`"),
+            format!("enclosing function: `{function_label}`"),
+            format!("loop kind: `{kind_label}`"),
+            "loop body uses `?` and contains `break` — fits the \
+             retry-without-policy shape"
+                .into(),
+            format!(
+                "no `paradigms.FL.retry_policy_owner_paths` entry covers \
+                 `{module_path}` — the rule treats this site as ad-hoc"
+            ),
+        ],
+        suggested_fix: Some(format!(
+            "extract the retry into a declared retry-policy module that \
+             owns backoff, max attempts, and jitter; or, if `{module_path}` \
+             is a legitimate retry owner, add it to \
+             `paradigms.FL.retry_policy_owner_paths`. For a one-off accepted \
+             retry, suppress with `// ot: allow FL012 reason=\"…\" \
+             expires=\"YYYY-MM-DD\"`"
+        )),
+    }
+}
+
+/// Render a [`LoopKind`] for diagnostic messages. Lower-case so the
+/// headline reads "retry-shaped loop / for / while loop in `…`".
+fn loop_kind_label(kind: LoopKind) -> &'static str {
+    match kind {
+        LoopKind::Loop => "loop",
+        LoopKind::For => "for",
+        LoopKind::While => "while",
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use locus_air::{
-        AIR_SCHEMA_VERSION, AirFile, AirFunction, AirPackage, AirSpan, AirWorkspace, Visibility,
+        AIR_SCHEMA_VERSION, AirFallbackCall, AirFile, AirFunction, AirPackage, AirRetryLoop,
+        AirSpan, AirWorkspace, ArmBodyShape, LoopKind, Visibility,
     };
 
     fn func(name: &str, return_type: Option<&str>) -> AirItem {
@@ -2624,5 +2866,373 @@ mod tests {
         let diags = fl011(&air, &fl_arm_section(), CheckMode::AgentStrict);
         assert_eq!(diags.len(), 1);
         assert_eq!(diags[0].severity, Severity::Fatal);
+    }
+
+    // ---- fl010 / fl012 helpers ----
+
+    fn fallback_call(
+        callee: &str,
+        shape: ArmBodyShape,
+        function: Option<&str>,
+        line: u32,
+    ) -> AirItem {
+        AirItem::FallbackCall(AirFallbackCall {
+            callee: callee.to_string(),
+            default_shape: shape,
+            function: function.map(|s| s.to_string()),
+            span: AirSpan::new("src/domain/user.rs", line, line),
+        })
+    }
+
+    fn retry_loop(
+        kind: LoopKind,
+        propagates: bool,
+        has_break: bool,
+        function: Option<&str>,
+        line: u32,
+    ) -> AirItem {
+        AirItem::RetryLoop(AirRetryLoop {
+            loop_kind: kind,
+            propagates,
+            has_break,
+            function: function.map(|s| s.to_string()),
+            span: AirSpan::new("src/domain/user.rs", line, line),
+        })
+    }
+
+    /// Onboarded baseline for FL012 — populates `retry_policy_owner_paths`
+    /// with a single supervisor pattern. Mirrors `fl_arm_section`'s shape.
+    fn fl012_section() -> FlSection {
+        FlSection {
+            retry_policy_owner_paths: vec!["x::retry::*".into()],
+            ..Default::default()
+        }
+    }
+
+    // ---- fl010 behavioural tests ----
+
+    #[test]
+    fn fl010_fires_on_unwrap_or_with_literal_default() {
+        // `result.unwrap_or(0)` outside any invariant owner.
+        let air = air_with_module(
+            "x::domain::user",
+            vec![fallback_call(
+                "unwrap_or",
+                ArmBodyShape::Literal,
+                Some("x::domain::user::greet"),
+                42,
+            )],
+        );
+        let diags = fl010(&air, &fl_arm_section(), CheckMode::Human);
+        assert_eq!(diags.len(), 1, "expected one FL010 diag, got {diags:?}");
+        assert_eq!(diags[0].rule_id, "FL010");
+        assert_eq!(diags[0].severity, Severity::Warning);
+        assert!(diags[0].concept.is_none());
+        assert_eq!(diags[0].span.line_start, 42);
+        assert!(
+            diags[0].message.contains(".unwrap_or(...)"),
+            "message should surface the callee; got: {}",
+            diags[0].message,
+        );
+        assert!(diags[0].message.contains("silent literal default"));
+        assert!(diags[0].message.contains("x::domain::user"));
+        assert!(diags[0].message.contains("x::domain::user::greet"));
+        assert!(
+            diags[0]
+                .why
+                .iter()
+                .any(|w| w.contains("callee `unwrap_or`")),
+            "why list should record the callee; got: {:?}",
+            diags[0].why,
+        );
+        assert!(
+            diags[0]
+                .why
+                .iter()
+                .any(|w| w.contains("default-arg shape: literal default")),
+            "why list should record the default-arg shape; got: {:?}",
+            diags[0].why,
+        );
+    }
+
+    #[test]
+    fn fl010_fires_on_or_with_call_default() {
+        // `option.or(Vec::new())` — callee `or`, shape `Call`. Still silent.
+        let air = air_with_module(
+            "x::domain::user",
+            vec![fallback_call(
+                "or",
+                ArmBodyShape::Call,
+                Some("x::domain::user::collect"),
+                7,
+            )],
+        );
+        let diags = fl010(&air, &fl_arm_section(), CheckMode::Human);
+        assert_eq!(diags.len(), 1);
+        assert!(diags[0].message.contains(".or(...)"));
+        assert!(diags[0].message.contains("silent call default"));
+    }
+
+    #[test]
+    fn fl010_quiet_on_unwrap_or_default_no_arg_form() {
+        // `unwrap_or_default()` (Empty) is FL002's territory via the
+        // default `forbidden_callees` list. FL010 must skip it even
+        // when the callee string slips through here.
+        let air = air_with_module(
+            "x::domain::user",
+            vec![
+                fallback_call(
+                    "unwrap_or_default",
+                    ArmBodyShape::Empty,
+                    Some("x::domain::user::greet"),
+                    1,
+                ),
+                // And FL010 also shouldn't fire when default_shape is Empty
+                // even on `unwrap_or` (defensive — the visitor wouldn't
+                // emit this combination, but the rule must still skip).
+                fallback_call(
+                    "unwrap_or",
+                    ArmBodyShape::Empty,
+                    Some("x::domain::user::greet"),
+                    2,
+                ),
+            ],
+        );
+        assert!(fl010(&air, &fl_arm_section(), CheckMode::Human).is_empty());
+    }
+
+    #[test]
+    fn fl010_quiet_when_default_shape_is_block_or_other() {
+        // Multi-statement fallback block / unrecognised shape — could be
+        // doing real recovery work. FL010 stays conservative.
+        let air = air_with_module(
+            "x::domain::user",
+            vec![
+                fallback_call(
+                    "unwrap_or",
+                    ArmBodyShape::Block,
+                    Some("x::domain::user::greet"),
+                    1,
+                ),
+                fallback_call(
+                    "unwrap_or",
+                    ArmBodyShape::Other,
+                    Some("x::domain::user::greet"),
+                    2,
+                ),
+                fallback_call(
+                    "unwrap_or",
+                    ArmBodyShape::Return,
+                    Some("x::domain::user::greet"),
+                    3,
+                ),
+                fallback_call(
+                    "unwrap_or",
+                    ArmBodyShape::Propagate,
+                    Some("x::domain::user::greet"),
+                    4,
+                ),
+            ],
+        );
+        assert!(fl010(&air, &fl_arm_section(), CheckMode::Human).is_empty());
+    }
+
+    #[test]
+    fn fl010_silent_when_invariant_owner_paths_empty() {
+        let air = air_with_module(
+            "x::domain::user",
+            vec![fallback_call(
+                "unwrap_or",
+                ArmBodyShape::Literal,
+                Some("x::domain::user::greet"),
+                42,
+            )],
+        );
+        assert!(fl010(&air, &FlSection::default(), CheckMode::Human).is_empty());
+    }
+
+    #[test]
+    fn fl010_agent_strict_elevates_warning_to_fatal() {
+        let air = air_with_module(
+            "x::domain::user",
+            vec![fallback_call(
+                "unwrap_or",
+                ArmBodyShape::Literal,
+                Some("x::domain::user::greet"),
+                42,
+            )],
+        );
+        let diags = fl010(&air, &fl_arm_section(), CheckMode::AgentStrict);
+        assert_eq!(diags.len(), 1);
+        assert_eq!(diags[0].severity, Severity::Fatal);
+    }
+
+    #[test]
+    fn fl010_per_symbol_carve_out_for_inline_test_modules() {
+        // File `module_path` is `x::domain::user` (doesn't match
+        // `*::tests::*`). The function symbol is
+        // `x::domain::user::tests::it_works` whose containing module is
+        // `x::domain::user::tests` — that's what `*::tests::*` carves out.
+        let air = air_with_module(
+            "x::domain::user",
+            vec![fallback_call(
+                "unwrap_or",
+                ArmBodyShape::Literal,
+                Some("x::domain::user::tests::it_works"),
+                7,
+            )],
+        );
+        // Without the carve-out, FL010 fires.
+        let diags = fl010(&air, &fl_arm_section(), CheckMode::Human);
+        assert_eq!(diags.len(), 1);
+        // With `*::tests::*` carved out, it disappears.
+        let owner_section = FlSection {
+            invariant_owner_paths: vec!["*::tests::*".into()],
+            ..Default::default()
+        };
+        assert!(fl010(&air, &owner_section, CheckMode::Human).is_empty());
+    }
+
+    // ---- fl012 behavioural tests ----
+
+    #[test]
+    fn fl012_fires_on_loop_with_propagation_and_break() {
+        // `loop { try_thing()?; if ok { break; } }` outside any retry-policy owner.
+        let air = air_with_module(
+            "x::domain::user",
+            vec![retry_loop(
+                LoopKind::Loop,
+                true,
+                true,
+                Some("x::domain::user::poll"),
+                33,
+            )],
+        );
+        let diags = fl012(&air, &fl012_section(), CheckMode::Human);
+        assert_eq!(diags.len(), 1, "expected one FL012 diag, got {diags:?}");
+        assert_eq!(diags[0].rule_id, "FL012");
+        assert_eq!(diags[0].severity, Severity::Warning);
+        assert!(diags[0].concept.is_none());
+        assert_eq!(diags[0].span.line_start, 33);
+        assert!(
+            diags[0].message.contains("retry-shaped loop loop"),
+            "message should surface the loop kind; got: {}",
+            diags[0].message,
+        );
+        assert!(diags[0].message.contains("x::domain::user"));
+        assert!(diags[0].message.contains("x::domain::user::poll"));
+        assert!(
+            diags[0]
+                .why
+                .iter()
+                .any(|w| w.contains("uses `?` and contains `break`")),
+            "why should explain the retry shape; got: {:?}",
+            diags[0].why,
+        );
+    }
+
+    #[test]
+    fn fl012_fires_on_for_loop_with_propagation_and_break() {
+        // `for _ in 0..N { try_thing()?; if maybe { break; } }`.
+        let air = air_with_module(
+            "x::domain::user",
+            vec![retry_loop(
+                LoopKind::For,
+                true,
+                true,
+                Some("x::domain::user::poll"),
+                3,
+            )],
+        );
+        let diags = fl012(&air, &fl012_section(), CheckMode::Human);
+        assert_eq!(diags.len(), 1);
+        assert!(diags[0].message.contains("retry-shaped for loop"));
+        assert!(
+            diags[0].why.iter().any(|w| w.contains("loop kind: `for`")),
+            "why should record the loop kind; got: {:?}",
+            diags[0].why,
+        );
+    }
+
+    #[test]
+    fn fl012_quiet_when_loop_propagates_but_has_no_break() {
+        // `for x in xs { do_thing(x)?; }` — propagates but never breaks.
+        // Just an iterator, not a retry.
+        let air = air_with_module(
+            "x::domain::user",
+            vec![retry_loop(
+                LoopKind::For,
+                true,
+                false,
+                Some("x::domain::user::process"),
+                3,
+            )],
+        );
+        assert!(fl012(&air, &fl012_section(), CheckMode::Human).is_empty());
+    }
+
+    #[test]
+    fn fl012_quiet_when_loop_breaks_but_has_no_propagation() {
+        // `loop { if cond { break; } }` — breaks but no `?`. No fallible op.
+        let air = air_with_module(
+            "x::domain::user",
+            vec![retry_loop(
+                LoopKind::Loop,
+                false,
+                true,
+                Some("x::domain::user::wait"),
+                3,
+            )],
+        );
+        assert!(fl012(&air, &fl012_section(), CheckMode::Human).is_empty());
+    }
+
+    #[test]
+    fn fl012_quiet_in_declared_retry_policy_owner() {
+        // `x::retry::backoff` matches the `x::retry::*` owner pattern.
+        let air = air_with_module(
+            "x::retry::backoff",
+            vec![retry_loop(
+                LoopKind::Loop,
+                true,
+                true,
+                Some("x::retry::backoff::run"),
+                3,
+            )],
+        );
+        assert!(fl012(&air, &fl012_section(), CheckMode::Human).is_empty());
+    }
+
+    #[test]
+    fn fl012_silent_when_retry_policy_owner_paths_empty() {
+        let air = air_with_module(
+            "x::domain::user",
+            vec![retry_loop(
+                LoopKind::Loop,
+                true,
+                true,
+                Some("x::domain::user::poll"),
+                3,
+            )],
+        );
+        assert!(fl012(&air, &FlSection::default(), CheckMode::Human).is_empty());
+    }
+
+    #[test]
+    fn fl012_agent_strict_elevates_warning_to_fatal() {
+        let air = air_with_module(
+            "x::domain::user",
+            vec![retry_loop(
+                LoopKind::While,
+                true,
+                true,
+                Some("x::domain::user::poll"),
+                33,
+            )],
+        );
+        let diags = fl012(&air, &fl012_section(), CheckMode::AgentStrict);
+        assert_eq!(diags.len(), 1);
+        assert_eq!(diags[0].severity, Severity::Fatal);
+        assert!(diags[0].message.contains("retry-shaped while loop"));
     }
 }

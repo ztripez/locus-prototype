@@ -78,6 +78,24 @@ use serde::{Deserialize, Serialize};
 ///
 ///   Closes the silent-error coverage gap that FL003 (which only sees
 ///   `.ok()` / `.err()` method-call shape) couldn't reach.
+/// - **12**: closes the "tractable visitor work" gap from the audit.
+///   Adds three new `AirItem` variants:
+///     - `AirItem::FallbackCall` — `unwrap_or(literal)` /
+///       `unwrap_or(call)` / `or(literal)` shapes where the
+///       method's first argument is a default-producing
+///       expression. Distinct from `ClosureMethodCall` (closure
+///       arg) and `SilentDiscard` (`let _ = ...`); fills FL010's
+///       "invalid input converted to valid default" detection.
+///     - `AirItem::RetryLoop` — `loop` / `for` / `while`
+///       expressions whose body contains both an `Expr::Try`
+///       (a `?` propagating a Result) and an `Expr::Break`.
+///       Catches FL012's "retry loops without an accepted retry
+///       policy" shape.
+///     - `AirItem::ScrutineeLiteral` — literal expressions
+///       appearing as match-arm patterns or as the RHS of a
+///       binary `==`/`!=` against a non-literal. Closes CF002
+///       (magic decision constants) and CF003 (hardcoded
+///       provider/model/topic IDs).
 /// - **11**: user-declared fact markers. Adds `HintKind::MarksFact`
 ///   for `// ot: marks <fact_kind>` source hints — the user marks a
 ///   function as having a `FactKind` the loader tier can't infer
@@ -106,7 +124,7 @@ use serde::{Deserialize, Serialize};
 ///       argument with `_`, and a body shape. Lets FL006 (`map_err`
 ///       losing source context) flag closures that throw the original
 ///       error away.
-pub const AIR_SCHEMA_VERSION: u32 = 11;
+pub const AIR_SCHEMA_VERSION: u32 = 12;
 
 // ot: canonical
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -171,6 +189,9 @@ pub enum AirItem {
     PartialIfLet(AirPartialIfLet),
     MatchArm(AirMatchArm),
     ClosureMethodCall(AirClosureMethodCall),
+    FallbackCall(AirFallbackCall),
+    RetryLoop(AirRetryLoop),
+    ScrutineeLiteral(AirScrutineeLiteral),
 }
 
 // ot: canonical
@@ -470,6 +491,117 @@ pub struct AirClosureMethodCall {
     /// Enclosing function's symbol, if known.
     pub function: Option<String>,
     pub span: AirSpan,
+}
+
+/// A method call whose first argument is a *default-producing*
+/// expression — `result.unwrap_or(0)`, `option.or(Default::default())`,
+/// `result.or_else_with(some_fn)`. Distinct from
+/// [`AirClosureMethodCall`] (closure arg, captured separately) and
+/// [`AirSilentDiscard`] (no binding at all).
+///
+/// Used by FL010 to flag the "invalid input converted to a valid
+/// default state" pattern: `result.unwrap_or(literal)` outside a
+/// declared invariant-owner module is an agent shortcut that hides
+/// the failure path. The shape captured in [`Self::default_shape`]
+/// lets rules distinguish a literal default (most likely silent) from
+/// a multi-statement fallback block (might be doing real work).
+// ot: canonical
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AirFallbackCall {
+    /// Bare method name (`unwrap_or`, `or`, `unwrap_or_default`).
+    pub callee: String,
+    /// Heuristic shape of the first-argument default expression.
+    /// `unwrap_or_default` — which takes no argument — is recorded
+    /// with `default_shape = Empty`.
+    pub default_shape: ArmBodyShape,
+    /// Enclosing function's symbol, if known.
+    pub function: Option<String>,
+    pub span: AirSpan,
+}
+
+/// A loop construct (`loop {}`, `for ... {}`, `while ... {}`) whose
+/// body contains both error propagation (`?`) and an explicit `break`.
+/// FL012 fires on this shape — it's the visitor's structural signal
+/// for "retry without accepted policy": something fallible is being
+/// repeated until it succeeds, with no declared retry policy or
+/// backoff strategy.
+// ot: canonical
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AirRetryLoop {
+    /// What kind of loop this is. Useful for diagnostic phrasing
+    /// (`for _ in 0..N` reads differently from `loop`).
+    pub loop_kind: LoopKind,
+    /// `true` when the loop body uses `?` somewhere (transitively).
+    /// FL012 requires this — otherwise the loop is just a plain
+    /// counter / iterator, not a retry.
+    pub propagates: bool,
+    /// `true` when the loop body has at least one `break` expression.
+    /// FL012 requires this — without `break`, `loop {}` doesn't
+    /// have a success-exit path.
+    pub has_break: bool,
+    /// Enclosing function's symbol, if known.
+    pub function: Option<String>,
+    pub span: AirSpan,
+}
+
+// ot: canonical
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[serde(rename_all = "snake_case")]
+pub enum LoopKind {
+    /// `loop { ... }`
+    Loop,
+    /// `for x in iter { ... }`
+    For,
+    /// `while cond { ... }`
+    While,
+}
+
+/// A literal expression appearing as a *scrutinee* — a match-arm
+/// pattern (`match x { "active" => ... }`) or the right-hand side of
+/// a binary `==`/`!=` comparison against a non-literal expression
+/// (`if role == "admin" { ... }`).
+///
+/// CF002 (magic decision constants) and CF003 (hardcoded
+/// provider/model/topic IDs) consume these to flag string/int
+/// literals used as decision keys outside a declared config layer.
+/// The visitor records the literal value verbatim so the rule can
+/// pattern-match it against a forbidden-value list.
+// ot: canonical
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AirScrutineeLiteral {
+    /// The literal value, rendered as text (`"active"`, `42`,
+    /// `3.14`, `true`). String literals retain their surrounding
+    /// quotes so callers can distinguish `"42"` from `42`.
+    pub value: String,
+    /// Type of the literal — string, int, float, or bool.
+    pub kind: LiteralKind,
+    /// Where the literal appeared. `MatchArm` means it was a pattern
+    /// in a match arm; `BinaryCompare` means it was the RHS of a
+    /// `==`/`!=` against a path / field / method-call expression.
+    pub context: LiteralContext,
+    /// Enclosing function's symbol, if known.
+    pub function: Option<String>,
+    pub span: AirSpan,
+}
+
+// ot: canonical
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[serde(rename_all = "snake_case")]
+pub enum LiteralKind {
+    Str,
+    Int,
+    Float,
+    Bool,
+}
+
+// ot: canonical
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[serde(rename_all = "snake_case")]
+pub enum LiteralContext {
+    /// `match x { "active" => ..., }`
+    MatchArm,
+    /// `if role == "admin" { ... }`, `flag != 0`, …
+    BinaryCompare,
 }
 
 // ot: canonical

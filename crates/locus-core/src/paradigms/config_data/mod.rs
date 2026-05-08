@@ -2,15 +2,22 @@
 //!
 //! Spec: `docs/PARADIGMS.md` §"Paradigm 2: Config/Data Ownership". Reads the
 //! declared config layer from `paradigms.CF` in `locus.lock` and flags
-//! environment-variable reads emitted by the AIR visitor as
-//! `ActionKind::EnvRead` from any file outside that layer.
+//! decision-data ownership leaks: env reads, magic decision constants,
+//! and hardcoded provider/model/topic IDs outside that layer.
 //!
 //! Phase scope so far:
 //! - CF001: environment-variable read outside the config layer.
-//! - CF002: filesystem-walk rule, reserved for a future filesystem-aware
-//!   loader. Lockfile fields ship today (`config_file_patterns`,
-//!   `accepted_config_files`) so users can pre-populate; the rule body
-//!   is a no-op stub until the loader lands.
+//! - CF002: magic decision constant (str/int/float scrutinee literal in a
+//!   match arm or `==`/`!=` comparison) outside the config layer.
+//!   Configurable via `forbidden_literal_kinds`.
+//! - CF003: hardcoded provider/model/topic ID — string scrutinee literal
+//!   matching a user-declared `forbidden_id_patterns` entry — outside the
+//!   config layer.
+//!
+//! Future direction: the historical filesystem-walk concept (stray
+//! `.yaml`/`.toml` files outside accepted locations) stays parked behind
+//! the `config_file_patterns` / `accepted_config_files` lockfile fields
+//! pending a filesystem-aware loader.
 
 // ot: canonical
 
@@ -43,7 +50,9 @@ impl Paradigm for ConfigData {
     fn check(&self, air: &AirWorkspace, lockfile: &Lockfile, mode: CheckMode) -> Vec<Diagnostic> {
         let section: lockfile_schema::CfSection =
             lockfile.paradigm_section(CF_PREFIX).unwrap_or_default();
-        rules::cf001(air, &section, mode)
-        // TODO(cf002): wire when filesystem-aware loaders land
+        let mut out = rules::cf001(air, &section, mode);
+        out.extend(rules::cf002(air, &section, mode));
+        out.extend(rules::cf003(air, &section, mode));
+        out
     }
 }

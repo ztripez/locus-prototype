@@ -5,10 +5,11 @@
 
 use crate::type_render::{render_path, render_type};
 use locus_air::{
-    ActionKind, AirCallSite, AirClosureMethodCall, AirConversion, AirField, AirFunction, AirImpl,
-    AirImport, AirItem, AirMatchArm, AirPartialIfLet, AirSilentDiscard, AirSpan, AirTruthAction,
-    AirType, AirVariant, ArmBodyShape, CallKind, ConversionMechanism, DiscardKind, TypeKind,
-    Visibility,
+    ActionKind, AirCallSite, AirClosureMethodCall, AirConversion, AirFallbackCall, AirField,
+    AirFunction, AirImpl, AirImport, AirItem, AirMatchArm, AirPartialIfLet, AirRetryLoop,
+    AirScrutineeLiteral, AirSilentDiscard, AirSpan, AirTruthAction, AirType, AirVariant,
+    ArmBodyShape, CallKind, ConversionMechanism, DiscardKind, LiteralContext, LiteralKind,
+    LoopKind, TypeKind, Visibility,
 };
 use quote::ToTokens;
 use syn::{
@@ -615,6 +616,20 @@ fn scan_expr(expr: &Expr, function: &str, file_path: &str, out: &mut Vec<AirItem
                     function: Some(function.to_string()),
                     span: span_of(file_path, arm.span()),
                 }));
+                // ScrutineeLiteral: a literal-pattern arm (CF002 /
+                // CF003 territory). Only fires for patterns that are
+                // bare literals — `Pat::Lit("active")`, `Pat::Lit(42)`.
+                // Tuple/struct patterns containing literals don't emit
+                // here (they'd need recursive walking; defer).
+                if let Some((value, kind)) = literal_value_of_pat(&arm.pat) {
+                    out.push(AirItem::ScrutineeLiteral(AirScrutineeLiteral {
+                        value,
+                        kind,
+                        context: LiteralContext::MatchArm,
+                        function: Some(function.to_string()),
+                        span: span_of(file_path, arm.span()),
+                    }));
+                }
             }
             scan_expr(&m.expr, function, file_path, out);
             for arm in &m.arms {
@@ -632,6 +647,24 @@ fn scan_expr(expr: &Expr, function: &str, file_path: &str, out: &mut Vec<AirItem
                     confidence: 0.7,
                     reasons: vec!["string-literal equality on field expression".into()],
                 }));
+            }
+            // ScrutineeLiteral on binary `==`/`!=`: capture the literal
+            // side when the *other* side isn't a literal. This is the
+            // CF002 / CF003 detection surface — `if role == "admin"`
+            // and similar magic-constant comparisons.
+            for (lit_side, other_side) in [(&b.left, &b.right), (&b.right, &b.left)] {
+                if let Some((value, kind)) = literal_value_of_expr(lit_side)
+                    && !is_literal_expr(other_side)
+                {
+                    out.push(AirItem::ScrutineeLiteral(AirScrutineeLiteral {
+                        value,
+                        kind,
+                        context: LiteralContext::BinaryCompare,
+                        function: Some(function.to_string()),
+                        span: span_of(file_path, b.span()),
+                    }));
+                    break;
+                }
             }
             scan_expr(&b.left, function, file_path, out);
             scan_expr(&b.right, function, file_path, out);
@@ -722,6 +755,28 @@ fn scan_expr(expr: &Expr, function: &str, file_path: &str, out: &mut Vec<AirItem
                     span: span_of(file_path, m.span()),
                 }));
             }
+            // FallbackCall: emit for `unwrap_or` family — methods whose
+            // first arg is a default-producing expression (literal /
+            // call). FL010 fires on these to catch the "invalid input
+            // converted to a valid default" pattern. `unwrap_or_default`
+            // takes no arg and is recorded with `Empty` shape so rules
+            // can distinguish it from explicit-default forms.
+            let method_name = m.method.to_string();
+            if matches!(
+                method_name.as_str(),
+                "unwrap_or" | "unwrap_or_default" | "or"
+            ) {
+                let default_shape = match m.args.first() {
+                    Some(arg) => classify_body(arg),
+                    None => ArmBodyShape::Empty,
+                };
+                out.push(AirItem::FallbackCall(AirFallbackCall {
+                    callee: method_name,
+                    default_shape,
+                    function: Some(function.to_string()),
+                    span: span_of(file_path, m.span()),
+                }));
+            }
             scan_expr(&m.receiver, function, file_path, out);
             for a in &m.args {
                 scan_expr(a, function, file_path, out);
@@ -741,8 +796,144 @@ fn scan_expr(expr: &Expr, function: &str, file_path: &str, out: &mut Vec<AirItem
         }
         Expr::Try(t) => scan_expr(&t.expr, function, file_path, out),
         Expr::Unary(u) => scan_expr(&u.expr, function, file_path, out),
+        // Loop constructs — emit `RetryLoop` if the body looks like a
+        // retry shape (uses `?` and has a `break`). FL012 consumes
+        // these. We always emit the item with the propagates / has_break
+        // flags so the rule can decide.
+        Expr::Loop(l) => {
+            let propagates = block_has_propagate(&l.body);
+            let has_break = block_has_break(&l.body);
+            out.push(AirItem::RetryLoop(AirRetryLoop {
+                loop_kind: LoopKind::Loop,
+                propagates,
+                has_break,
+                function: Some(function.to_string()),
+                span: span_of(file_path, l.span()),
+            }));
+            for stmt in &l.body.stmts {
+                scan_stmt(stmt, function, file_path, out);
+            }
+        }
+        Expr::ForLoop(f) => {
+            let propagates = block_has_propagate(&f.body);
+            let has_break = block_has_break(&f.body);
+            out.push(AirItem::RetryLoop(AirRetryLoop {
+                loop_kind: LoopKind::For,
+                propagates,
+                has_break,
+                function: Some(function.to_string()),
+                span: span_of(file_path, f.span()),
+            }));
+            scan_expr(&f.expr, function, file_path, out);
+            for stmt in &f.body.stmts {
+                scan_stmt(stmt, function, file_path, out);
+            }
+        }
+        Expr::While(w) => {
+            let propagates = block_has_propagate(&w.body);
+            let has_break = block_has_break(&w.body);
+            out.push(AirItem::RetryLoop(AirRetryLoop {
+                loop_kind: LoopKind::While,
+                propagates,
+                has_break,
+                function: Some(function.to_string()),
+                span: span_of(file_path, w.span()),
+            }));
+            scan_expr(&w.cond, function, file_path, out);
+            for stmt in &w.body.stmts {
+                scan_stmt(stmt, function, file_path, out);
+            }
+        }
         _ => {}
     }
+}
+
+fn block_has_propagate(block: &syn::Block) -> bool {
+    block.stmts.iter().any(stmt_has_propagate)
+}
+
+fn block_has_break(block: &syn::Block) -> bool {
+    block.stmts.iter().any(stmt_has_break)
+}
+
+fn stmt_has_break(stmt: &Stmt) -> bool {
+    match stmt {
+        Stmt::Local(l) => l
+            .init
+            .as_ref()
+            .is_some_and(|init| expr_has_break(&init.expr)),
+        Stmt::Expr(e, _) => expr_has_break(e),
+        Stmt::Macro(_) | Stmt::Item(_) => false,
+    }
+}
+
+fn expr_has_break(expr: &Expr) -> bool {
+    match expr {
+        Expr::Break(_) => true,
+        Expr::If(i) => {
+            i.then_branch.stmts.iter().any(stmt_has_break)
+                || i.else_branch
+                    .as_ref()
+                    .is_some_and(|(_, e)| expr_has_break(e))
+        }
+        Expr::Match(m) => m.arms.iter().any(|arm| expr_has_break(&arm.body)),
+        Expr::Block(b) => b.block.stmts.iter().any(stmt_has_break),
+        Expr::Paren(p) => expr_has_break(&p.expr),
+        // Don't recurse into nested loops — a `break` inside an inner
+        // loop is for that loop, not the outer one. Same reasoning the
+        // rust borrow-checker uses.
+        Expr::Loop(_) | Expr::ForLoop(_) | Expr::While(_) => false,
+        _ => false,
+    }
+}
+
+/// Extract (rendered_value, kind) if `pat` is a literal pattern —
+/// `Pat::Lit("active")`, `Pat::Lit(42)`, `Pat::Lit(true)`. Returns
+/// `None` for tuple / struct / range / wildcard patterns.
+fn literal_value_of_pat(pat: &Pat) -> Option<(String, LiteralKind)> {
+    let Pat::Lit(lit) = pat else { return None };
+    classify_literal(lit)
+}
+
+/// Extract (rendered_value, kind) if `expr` is a literal expression.
+fn literal_value_of_expr(expr: &Expr) -> Option<(String, LiteralKind)> {
+    if let Expr::Lit(lit) = expr {
+        return classify_literal(lit);
+    }
+    if let Expr::Unary(u) = expr {
+        // Negative numeric literals — `-1`, `-3.14` — are technically
+        // unary expressions wrapping a positive literal. Render the
+        // whole expression so the rule sees `-1` not `1`.
+        if let syn::UnOp::Neg(_) = u.op
+            && let Expr::Lit(_) = &*u.expr
+            && let Some((_, k)) = classify_literal(if let Expr::Lit(l) = &*u.expr {
+                l
+            } else {
+                unreachable!()
+            })
+        {
+            return Some((expr.to_token_stream().to_string(), k));
+        }
+    }
+    None
+}
+
+fn classify_literal(lit: &ExprLit) -> Option<(String, LiteralKind)> {
+    let kind = match &lit.lit {
+        Lit::Str(_) => LiteralKind::Str,
+        Lit::Int(_) => LiteralKind::Int,
+        Lit::Float(_) => LiteralKind::Float,
+        Lit::Bool(_) => LiteralKind::Bool,
+        // Char / ByteStr / Byte / Verbatim aren't decision-shaped
+        // values in practice; skip them so CF002 / CF003 stay focused.
+        _ => return None,
+    };
+    Some((lit.to_token_stream().to_string(), kind))
+}
+
+fn is_literal_expr(expr: &Expr) -> bool {
+    matches!(expr, Expr::Lit(_))
+        || matches!(expr, Expr::Unary(u) if matches!(u.op, syn::UnOp::Neg(_)) && matches!(&*u.expr, Expr::Lit(_)))
 }
 
 /// True when `pat` contains at least one wildcard binder (`_`) anywhere
@@ -1237,5 +1428,211 @@ mod tests {
             }
         "#});
         assert!(closure_method_calls(&items).is_empty());
+    }
+
+    // ---- FallbackCall emission ----
+
+    fn fallback_calls(items: &[AirItem]) -> Vec<&AirFallbackCall> {
+        items
+            .iter()
+            .filter_map(|i| match i {
+                AirItem::FallbackCall(c) => Some(c),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn unwrap_or_with_literal_records_literal_default_shape() {
+        let items = items_for(indoc! {r#"
+            fn run(x: Result<i32, String>) -> i32 {
+                x.unwrap_or(0)
+            }
+        "#});
+        let calls = fallback_calls(&items);
+        let uo = calls.iter().find(|c| c.callee == "unwrap_or").unwrap();
+        assert_eq!(uo.default_shape, ArmBodyShape::Literal);
+    }
+
+    #[test]
+    fn unwrap_or_with_call_records_call_default_shape() {
+        let items = items_for(indoc! {r#"
+            fn run(x: Result<Vec<i32>, String>) -> Vec<i32> {
+                x.unwrap_or(Vec::new())
+            }
+        "#});
+        let calls = fallback_calls(&items);
+        let uo = calls.iter().find(|c| c.callee == "unwrap_or").unwrap();
+        assert_eq!(uo.default_shape, ArmBodyShape::Call);
+    }
+
+    #[test]
+    fn unwrap_or_default_records_empty_default_shape() {
+        let items = items_for(indoc! {r#"
+            fn run(x: Result<i32, String>) -> i32 {
+                x.unwrap_or_default()
+            }
+        "#});
+        let calls = fallback_calls(&items);
+        let uod = calls
+            .iter()
+            .find(|c| c.callee == "unwrap_or_default")
+            .unwrap();
+        assert_eq!(uod.default_shape, ArmBodyShape::Empty);
+    }
+
+    #[test]
+    fn or_method_records_fallback_call_too() {
+        let items = items_for(indoc! {r#"
+            fn run(x: Option<i32>) -> Option<i32> {
+                x.or(Some(0))
+            }
+        "#});
+        let calls = fallback_calls(&items);
+        assert!(calls.iter().any(|c| c.callee == "or"));
+    }
+
+    // ---- RetryLoop emission ----
+
+    fn retry_loops(items: &[AirItem]) -> Vec<&AirRetryLoop> {
+        items
+            .iter()
+            .filter_map(|i| match i {
+                AirItem::RetryLoop(l) => Some(l),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn loop_with_propagate_and_break_records_retry_shape() {
+        let items = items_for(indoc! {r#"
+            fn run() -> Result<i32, String> {
+                loop {
+                    let v = try_thing()?;
+                    if v > 0 {
+                        break;
+                    }
+                }
+                Ok(0)
+            }
+        "#});
+        let loops = retry_loops(&items);
+        assert_eq!(loops.len(), 1);
+        assert_eq!(loops[0].loop_kind, LoopKind::Loop);
+        assert!(loops[0].propagates);
+        assert!(loops[0].has_break);
+    }
+
+    #[test]
+    fn for_loop_with_propagate_no_break_still_emits_retry_loop_item() {
+        let items = items_for(indoc! {r#"
+            fn run() -> Result<(), String> {
+                for _ in 0..3 {
+                    try_thing()?;
+                }
+                Ok(())
+            }
+        "#});
+        let loops = retry_loops(&items);
+        assert_eq!(loops.len(), 1);
+        assert_eq!(loops[0].loop_kind, LoopKind::For);
+        assert!(loops[0].propagates);
+        assert!(!loops[0].has_break);
+    }
+
+    #[test]
+    fn while_loop_records_kind() {
+        let items = items_for(indoc! {r#"
+            fn run() -> Result<(), String> {
+                while !done() {
+                    try_thing()?;
+                    if maybe_break() {
+                        break;
+                    }
+                }
+                Ok(())
+            }
+        "#});
+        let loops = retry_loops(&items);
+        assert_eq!(loops.len(), 1);
+        assert_eq!(loops[0].loop_kind, LoopKind::While);
+        assert!(loops[0].propagates);
+        assert!(loops[0].has_break);
+    }
+
+    // ---- ScrutineeLiteral emission ----
+
+    fn scrutinee_literals(items: &[AirItem]) -> Vec<&AirScrutineeLiteral> {
+        items
+            .iter()
+            .filter_map(|i| match i {
+                AirItem::ScrutineeLiteral(l) => Some(l),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn match_arm_string_literal_pattern_records_scrutinee_literal() {
+        let items = items_for(indoc! {r#"
+            fn run(s: &str) {
+                match s {
+                    "active" => println!("a"),
+                    "inactive" => println!("i"),
+                    _ => (),
+                }
+            }
+        "#});
+        let lits = scrutinee_literals(&items);
+        let strs: Vec<&str> = lits.iter().map(|l| l.value.as_str()).collect();
+        assert!(strs.iter().any(|v| v.contains("active")));
+        assert!(strs.iter().any(|v| v.contains("inactive")));
+        assert!(lits.iter().all(|l| l.kind == LiteralKind::Str));
+        assert!(lits.iter().all(|l| l.context == LiteralContext::MatchArm));
+    }
+
+    #[test]
+    fn match_arm_int_literal_pattern_records_int_kind() {
+        let items = items_for(indoc! {r#"
+            fn run(n: i32) {
+                match n {
+                    0 => "zero",
+                    42 => "answer",
+                    _ => "other",
+                }
+            }
+        "#});
+        let lits = scrutinee_literals(&items);
+        assert!(
+            lits.iter()
+                .any(|l| l.value.contains("42") && l.kind == LiteralKind::Int)
+        );
+    }
+
+    #[test]
+    fn binary_eq_with_literal_rhs_records_scrutinee_literal() {
+        let items = items_for(indoc! {r#"
+            fn run(role: &str) -> bool {
+                role == "admin"
+            }
+        "#});
+        let lits = scrutinee_literals(&items);
+        let admin = lits.iter().find(|l| l.value.contains("admin")).unwrap();
+        assert_eq!(admin.kind, LiteralKind::Str);
+        assert_eq!(admin.context, LiteralContext::BinaryCompare);
+    }
+
+    #[test]
+    fn binary_compare_two_literals_does_not_emit_scrutinee_literal() {
+        // `if 1 == 2 { ... }` — both sides are literals; this isn't a
+        // decision against runtime data, so we don't record it.
+        let items = items_for(indoc! {r#"
+            fn run() -> bool {
+                1 == 2
+            }
+        "#});
+        let lits = scrutinee_literals(&items);
+        assert!(lits.is_empty());
     }
 }

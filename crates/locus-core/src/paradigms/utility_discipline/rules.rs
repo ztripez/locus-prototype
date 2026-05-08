@@ -215,6 +215,9 @@ pub fn ut003(air: &AirWorkspace, section: &UtSection, mode: CheckMode) -> Vec<Di
                     AirItem::PartialIfLet(p) => p.span.clone(),
                     AirItem::MatchArm(a) => a.span.clone(),
                     AirItem::ClosureMethodCall(c) => c.span.clone(),
+                    AirItem::FallbackCall(c) => c.span.clone(),
+                    AirItem::RetryLoop(l) => l.span.clone(),
+                    AirItem::ScrutineeLiteral(l) => l.span.clone(),
                 })
                 .next()
                 .unwrap_or_else(|| locus_air::AirSpan::new(file.path.clone(), 1, 1));

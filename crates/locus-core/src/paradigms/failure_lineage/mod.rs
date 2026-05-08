@@ -27,9 +27,18 @@
 //! - FL007: catch-all `Err(_) => <silent>` match arm whose body is
 //!   `Empty`, `Literal`, or `Call`, outside `invariant_owner_paths` —
 //!   every `Err` variant routed to a silent default.
+//! - FL010: a `FallbackCall` (`.unwrap_or(...)` / `.or(...)`) whose
+//!   default-arg shape is `Literal` or `Call`, outside
+//!   `invariant_owner_paths` — invalid input silently converted into a
+//!   valid default state. The no-arg `unwrap_or_default()` form is
+//!   FL002's territory; FL010 covers the explicit-default form.
 //! - FL011: bare `_ => <silent>` match arm whose body is `Empty`,
 //!   `Literal`, or `Call`, outside `invariant_owner_paths` — unknown
 //!   enum variants silently routed to a default sink.
+//! - FL012: a `RetryLoop` (`loop` / `for` / `while`) whose body
+//!   contains both `?`-propagation and `break`, outside
+//!   `retry_policy_owner_paths` — retry-shaped control flow with no
+//!   declared retry policy.
 //! - FL013: a function returning `Result<_, String>` / `Result<_, &str>`
 //!   that contains a stringifying call site (`to_string` / `format!` /
 //!   `format` / `display`) — lossy error stringification at the source.
@@ -72,7 +81,9 @@ impl Paradigm for FailureLineage {
         out.extend(rules::fl005(air, &section, mode));
         out.extend(rules::fl006(air, &section, mode));
         out.extend(rules::fl007(air, &section, mode));
+        out.extend(rules::fl010(air, &section, mode));
         out.extend(rules::fl011(air, &section, mode));
+        out.extend(rules::fl012(air, &section, mode));
         out.extend(rules::fl013(air, &section, mode));
         out
     }
