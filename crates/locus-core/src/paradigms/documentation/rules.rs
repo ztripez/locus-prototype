@@ -248,8 +248,8 @@ pub fn dc002(air: &AirWorkspace, section: &DcSection, mode: CheckMode) -> Vec<Di
     out
 }
 
-// ot: allow DC004 reason="docstring deliberately quotes the bare marker syntax DC004 fires on" expires="2099-01-01"
-// ot: allow DC002 reason="docstring deliberately quotes residue-shaped planning markers as examples" expires="2099-01-01"
+// locus: allow DC004 reason="docstring deliberately quotes the bare marker syntax DC004 fires on" expires="2099-01-01"
+// locus: allow DC002 reason="docstring deliberately quotes residue-shaped planning markers as examples" expires="2099-01-01"
 /// DC004 — public item's doc carries an owner-less follow-up marker.
 ///
 /// For every `AirItem::Type` and `AirItem::Function` whose `doc.is_some()`

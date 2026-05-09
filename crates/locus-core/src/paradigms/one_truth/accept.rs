@@ -1,6 +1,6 @@
 //! `locus accept` — symbol-by-symbol promotion into the OT lockfile.
 //!
-//! Used when a codebase isn't yet annotated with `// ot:` hints and the user
+//! Used when a codebase isn't yet annotated with `// locus:` hints and the user
 //! wants to record canonicals/boundaries by name. All operations validate
 //! against AIR (the symbol must exist) and the existing OT section (no silent
 //! collisions).

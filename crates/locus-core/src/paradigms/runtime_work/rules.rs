@@ -8,11 +8,11 @@
 //! - [`rw004`]: `static` / `OnceCell` / `Lazy`-shaped global outside the
 //!   runtime-ownership boundary.
 //! - [`rw005`]: blocking call inside a function carrying a `HotPath`
-//!   marker fact (`// ot: marks hot_path`).
+//!   marker fact (`// locus: fact hot_path`).
 //! - [`rw006`]: spawn inside a function carrying a `HotPath` marker fact.
 //!
 //! RW001–RW004 are lockfile-driven (they wait for `runtime_owner_paths`).
-//! RW005 / RW006 are marker-driven instead: the user's `// ot: marks
+//! RW005 / RW006 are marker-driven instead: the user's `// locus: fact
 //! hot_path` hint *is* the opt-in, so they fire as soon as a marked
 //! function picks up a blocking-call or spawn fact.
 
@@ -458,7 +458,7 @@ fn rw004_diagnostic(
 
 /// Collect the symbols of every function that has a `FactKind::HotPath`
 /// fact targeting it. The markers loader emits these for any function the
-/// user annotated with `// ot: marks hot_path`.
+/// user annotated with `// locus: fact hot_path`.
 fn collect_hot_path_symbols(air: &AirWorkspace) -> HashSet<String> {
     let mut set = HashSet::new();
     for fact in &air.facts {
@@ -474,7 +474,7 @@ fn collect_hot_path_symbols(air: &AirWorkspace) -> HashSet<String> {
 
 /// RW005 — blocking call inside a function the user marked as `hot_path`.
 ///
-/// The user's `// ot: marks hot_path` annotation is what opts a function
+/// The user's `// locus: fact hot_path` annotation is what opts a function
 /// into this rule: as soon as a function has BOTH a `FactKind::HotPath`
 /// marker and a `FactKind::BlockingCall` fact, we fire. This is the
 /// already-actionable subset of Paradigm 14's "blocking ops in
@@ -574,7 +574,7 @@ fn rw005_diagnostic(
 ///
 /// Severity: Fatal — same structural posture as RW005.
 ///
-/// Not lockfile-gated: the user's `// ot: marks hot_path` annotation is
+/// Not lockfile-gated: the user's `// locus: fact hot_path` annotation is
 /// what opts a function into this rule.
 pub fn rw006(air: &AirWorkspace, mode: CheckMode) -> Vec<Diagnostic> {
     let hot = collect_hot_path_symbols(air);

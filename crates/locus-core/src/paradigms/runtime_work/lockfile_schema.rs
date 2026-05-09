@@ -11,7 +11,7 @@
 //! assertion, not a guess. An empty `runtime_owner_paths` keeps the rule
 //! silent — same lockfile-driven posture as CR/DG/UT.
 
-// ot: canonical
+// locus: ot canonical
 
 use serde::{Deserialize, Serialize};
 
@@ -70,7 +70,7 @@ impl Default for RwSection {
 impl RwSection {
     /// True when the user hasn't declared any runtime owners — RW001/002/
     /// 003/004 all need that declaration. RW005/006 use the marker
-    /// mechanism (`// ot: marks hot_path`) which is independent of this
+    /// mechanism (`// locus: fact hot_path`) which is independent of this
     /// section, so the paradigm-level vacancy diagnostic specifically
     /// targets the lockfile-driven rules.
     pub fn is_vacant(&self) -> bool {

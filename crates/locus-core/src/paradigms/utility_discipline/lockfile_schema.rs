@@ -11,7 +11,7 @@
 //! not a guess. An empty `utility_paths` keeps the rule silent — same UX as
 //! DG's lockfile-driven rules.
 
-// ot: canonical
+// locus: ot canonical
 
 use serde::{Deserialize, Serialize};
 

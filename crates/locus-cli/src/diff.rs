@@ -15,7 +15,7 @@
 //! Modified-but-uncommitted files (`git diff --name-only HEAD`) are
 //! also included so local development flows match CI behaviour.
 
-// ot: canonical
+// locus: ot canonical
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};

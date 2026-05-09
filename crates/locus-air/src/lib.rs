@@ -5,7 +5,7 @@
 //! consumes them. Schema is versioned via [`AirWorkspace::schema_version`] —
 //! bump on any breaking field change.
 //!
-//! Self-application: every AIR type below is `// ot: canonical`. They are the
+//! Self-application: every AIR type below is `// locus: ot canonical`. They are the
 //! one accepted representation of "source facts in a workspace." No shadow
 //! variants of these types should exist anywhere in the Locus codebase.
 
@@ -144,7 +144,7 @@ use serde::{Deserialize, Serialize};
 ///       (magic decision constants) and CF003 (hardcoded
 ///       provider/model/topic IDs).
 /// - **11**: user-declared fact markers. Adds `HintKind::MarksFact`
-///   for `// ot: marks <fact_kind>` source hints — the user marks a
+///   for `// locus: fact <fact_kind>` source hints — the user marks a
 ///   function as having a `FactKind` the loader tier can't infer
 ///   without framework knowledge (`hot_path`, `request_context`,
 ///   `boundary_entry`, `runtime_state_owner`, `background_worker`),
@@ -173,7 +173,7 @@ use serde::{Deserialize, Serialize};
 ///       error away.
 pub const AIR_SCHEMA_VERSION: u32 = 13;
 
-// ot: canonical
+// locus: ot canonical
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AirWorkspace {
     pub schema_version: u32,
@@ -197,7 +197,7 @@ impl AirWorkspace {
     }
 }
 
-// ot: canonical
+// locus: ot canonical
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AirPackage {
     pub name: String,
@@ -206,7 +206,7 @@ pub struct AirPackage {
     pub files: Vec<AirFile>,
 }
 
-// ot: canonical
+// locus: ot canonical
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AirFile {
     pub path: String,
@@ -220,7 +220,7 @@ pub struct AirFile {
     pub line_count: u32,
 }
 
-// ot: canonical
+// locus: ot canonical
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind")]
 pub enum AirItem {
@@ -241,7 +241,7 @@ pub enum AirItem {
     ScrutineeLiteral(AirScrutineeLiteral),
 }
 
-// ot: canonical
+// locus: ot canonical
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AirType {
     // Renamed in JSON to avoid colliding with the AirItem external tag (also `kind`).
@@ -278,7 +278,7 @@ pub struct AirType {
     pub doc: Option<String>,
 }
 
-// ot: canonical
+// locus: ot canonical
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 pub enum TypeKind {
     /// Record / product type. Rust `struct`, TS `class`/`interface`-as-shape,
@@ -300,7 +300,7 @@ pub enum TypeKind {
     Trait,
 }
 
-// ot: canonical
+// locus: ot canonical
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AirField {
     pub name: String,
@@ -308,7 +308,7 @@ pub struct AirField {
     pub visibility: Visibility,
 }
 
-// ot: canonical
+// locus: ot canonical
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AirVariant {
     pub name: String,
@@ -321,7 +321,7 @@ pub struct AirVariant {
 /// tier that maps here (Rust `pub(crate)`, Java package-private,
 /// Go uppercase-but-crate-internal-by-convention, TS
 /// non-exported-but-module-visible).
-// ot: canonical
+// locus: ot canonical
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 pub enum Visibility {
     /// Visible to all consumers across package/module boundaries.
@@ -338,7 +338,7 @@ pub enum Visibility {
     Private,
 }
 
-// ot: canonical
+// locus: ot canonical
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AirFunction {
     pub name: String,
@@ -376,7 +376,7 @@ pub struct AirFunction {
 /// rules that care about a specific syntactic surface (BO004 cares
 /// about Rust derives specifically) match against it; rules that
 /// just want "any decorator named X" can ignore source.
-// ot: canonical
+// locus: ot canonical
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AirDecorator {
     pub source: DecoratorSource,
@@ -392,7 +392,7 @@ pub struct AirDecorator {
     pub args: Vec<String>,
 }
 
-// ot: canonical
+// locus: ot canonical
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "snake_case")]
 pub enum DecoratorSource {
@@ -413,7 +413,7 @@ pub enum DecoratorSource {
 /// interface. Renamed in v13 from `AirImplBlock` to lift the Rust-only
 /// `impl Trait for Type` shape into a language-agnostic
 /// "implements interface" / "method bag on type" concept.
-// ot: canonical
+// locus: ot canonical
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AirImplBlock {
     /// `Some("path::to::Interface")` when this block implements an
@@ -445,7 +445,7 @@ fn default_impl_dispatch() -> ImplDispatch {
     ImplDispatch::Static
 }
 
-// ot: canonical
+// locus: ot canonical
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "snake_case")]
 pub enum ImplDispatch {
@@ -463,7 +463,7 @@ pub enum ImplDispatch {
     Dynamic,
 }
 
-// ot: canonical
+// locus: ot canonical
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AirConversion {
     pub from: String,
@@ -490,7 +490,7 @@ pub struct AirConversion {
 ///   want to distinguish factory functions from arbitrary free
 ///   functions emit this variant; otherwise they fall back to
 ///   `FreeFunction`.
-// ot: canonical
+// locus: ot canonical
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ConversionMechanism {
@@ -501,7 +501,7 @@ pub enum ConversionMechanism {
     FactoryFunction,
 }
 
-// ot: canonical
+// locus: ot canonical
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AirUsage {
     pub from_symbol: String,
@@ -511,7 +511,7 @@ pub struct AirUsage {
     pub span: AirSpan,
 }
 
-// ot: canonical
+// locus: ot canonical
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 pub enum UsageKind {
     FunctionParam,
@@ -519,7 +519,7 @@ pub enum UsageKind {
     FieldType,
 }
 
-// ot: canonical
+// locus: ot canonical
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AirTruthAction {
     pub action: ActionKind,
@@ -535,7 +535,7 @@ pub struct AirTruthAction {
 /// `DiscriminatedMatch` so other adapters (TS discriminated-union
 /// `switch`, Python `match` on dataclasses, Go type-switch, Swift
 /// `enum` match) emit naturally.
-// ot: canonical
+// locus: ot canonical
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash, PartialOrd, Ord)]
 #[serde(rename_all = "snake_case")]
 pub enum ActionKind {
@@ -557,7 +557,7 @@ pub enum ActionKind {
     Normalize,
 }
 
-// ot: canonical
+// locus: ot canonical
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AirCallSite {
     /// Rendered path text of the callee. For `tokio::spawn(f)` this is
@@ -573,7 +573,7 @@ pub struct AirCallSite {
     pub span: AirSpan,
 }
 
-// ot: canonical
+// locus: ot canonical
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "snake_case")]
 pub enum CallKind {
@@ -596,7 +596,7 @@ pub enum CallKind {
 /// expressions (`let _ = some_field;` / `let _ = Block { ... };`) are
 /// recorded with `kind = Other` and a `None` callee so FL004 can choose
 /// to ignore them by default.
-// ot: canonical
+// locus: ot canonical
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AirSilentDiscard {
     /// Rendered callee text — same convention as [`AirCallSite::callee`]
@@ -611,7 +611,7 @@ pub struct AirSilentDiscard {
     pub span: AirSpan,
 }
 
-// ot: canonical
+// locus: ot canonical
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "snake_case")]
 pub enum DiscardKind {
@@ -640,7 +640,7 @@ pub enum DiscardKind {
 /// else handling the err). Renamed in v13 from `AirPartialResultMatch` to
 /// lift the Rust-only `if let` shape into a language-agnostic
 /// "partial result match" concept.
-// ot: canonical
+// locus: ot canonical
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AirPartialResultMatch {
     /// Which branch of the `Result` shape *was* handled. The
@@ -653,7 +653,7 @@ pub struct AirPartialResultMatch {
     pub span: AirSpan,
 }
 
-// ot: canonical
+// locus: ot canonical
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "snake_case")]
 pub enum ResultMatchVariant {
@@ -671,7 +671,7 @@ pub enum ResultMatchVariant {
 /// `AirItem::MatchArm` per arm so paradigm rules can reason about the
 /// shape of each arm's body — specifically whether a `Result`-shape arm
 /// silently swallows the unmatched case.
-// ot: canonical
+// locus: ot canonical
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AirMatchArm {
     /// The match expression's scrutinee, rendered as text.
@@ -694,7 +694,7 @@ pub struct AirMatchArm {
 /// the difference between an arm that *handles* its case (returns,
 /// propagates, computes something) and an arm that silently swallows
 /// (unit body, literal default, `Default::default()` call).
-// ot: canonical
+// locus: ot canonical
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "snake_case")]
 pub enum ArmBodyShape {
@@ -727,7 +727,7 @@ pub enum ArmBodyShape {
 /// `result.unwrap_or_else(|e| ...)`, `option.or_else(|| ...)`, etc.
 /// FL006 uses [`Self::closure_discards_arg`] to flag `map_err(|_|)`-shape
 /// closures that throw the original error away.
-// ot: canonical
+// locus: ot canonical
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AirClosureMethodCall {
     /// Bare method name — same convention as [`AirCallSite::callee`] for
@@ -758,7 +758,7 @@ pub struct AirClosureMethodCall {
 /// the failure path. The shape captured in [`Self::default_shape`]
 /// lets rules distinguish a literal default (most likely silent) from
 /// a multi-statement fallback block (might be doing real work).
-// ot: canonical
+// locus: ot canonical
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AirFallbackCall {
     /// Architectural classification of the fallback shape — added in
@@ -783,7 +783,7 @@ pub struct AirFallbackCall {
 }
 
 /// Architectural shape of a fallback / value-or-default operation.
-// ot: canonical
+// locus: ot canonical
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "snake_case")]
 pub enum FallbackPattern {
@@ -809,7 +809,7 @@ pub enum FallbackPattern {
 /// for "retry without accepted policy": something fallible is being
 /// repeated until it succeeds, with no declared retry policy or
 /// backoff strategy.
-// ot: canonical
+// locus: ot canonical
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AirRetryLoop {
     /// What kind of loop this is. Useful for diagnostic phrasing
@@ -828,7 +828,7 @@ pub struct AirRetryLoop {
     pub span: AirSpan,
 }
 
-// ot: canonical
+// locus: ot canonical
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "snake_case")]
 pub enum LoopKind {
@@ -850,7 +850,7 @@ pub enum LoopKind {
 /// literals used as decision keys outside a declared config layer.
 /// The visitor records the literal value verbatim so the rule can
 /// pattern-match it against a forbidden-value list.
-// ot: canonical
+// locus: ot canonical
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AirScrutineeLiteral {
     /// The literal value, rendered as text (`"active"`, `42`,
@@ -868,7 +868,7 @@ pub struct AirScrutineeLiteral {
     pub span: AirSpan,
 }
 
-// ot: canonical
+// locus: ot canonical
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "snake_case")]
 pub enum LiteralKind {
@@ -878,7 +878,7 @@ pub enum LiteralKind {
     Bool,
 }
 
-// ot: canonical
+// locus: ot canonical
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "snake_case")]
 pub enum LiteralContext {
@@ -888,7 +888,7 @@ pub enum LiteralContext {
     BinaryCompare,
 }
 
-// ot: canonical
+// locus: ot canonical
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AirFact {
     pub kind: FactKind,
@@ -915,7 +915,7 @@ pub struct AirFact {
 /// external-io call is the same fact whether it's `reqwest`, `tonic`,
 /// or `surf`. Loaders bridge specific frameworks → these normalized
 /// kinds; paradigms only ever see the normalized kinds.
-// ot: canonical
+// locus: ot canonical
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub enum FactKind {
     /// A function or call site that spawns concurrent work
@@ -957,7 +957,7 @@ pub enum FactKind {
     BackgroundWorker,
 }
 
-// ot: canonical
+// locus: ot canonical
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "scope")]
 pub enum FactTarget {
@@ -969,7 +969,7 @@ pub enum FactTarget {
     Span(AirSpan),
 }
 
-// ot: canonical
+// locus: ot canonical
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AirImport {
     /// Fully-rendered import path as the language adapter wrote it.
@@ -994,7 +994,7 @@ pub struct AirImport {
     pub span: AirSpan,
 }
 
-// ot: canonical
+// locus: ot canonical
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AirHint {
     pub kind: HintKind,
@@ -1003,7 +1003,7 @@ pub struct AirHint {
     pub target_span: Option<AirSpan>,
 }
 
-// ot: canonical
+// locus: ot canonical
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "category", rename_all = "kebab-case")]
 pub enum HintKind {
@@ -1022,7 +1022,7 @@ pub enum HintKind {
         reason: Option<String>,
         expires: Option<String>,
     },
-    /// User-declared fact marker — `// ot: marks <fact_kind>` above a
+    /// User-declared fact marker — `// locus: fact <fact_kind>` above a
     /// function tells Locus "treat this function as having `<fact_kind>`."
     /// The `markers` loader translates each `MarksFact` hint into an
     /// `AirFact` targeting the function the hint binds to. Used for
@@ -1043,7 +1043,7 @@ pub enum HintKind {
     Unknown,
 }
 
-// ot: canonical
+// locus: ot canonical
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct AirSpan {
     pub file: String,

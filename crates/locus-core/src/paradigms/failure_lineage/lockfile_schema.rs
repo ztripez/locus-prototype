@@ -16,7 +16,7 @@
 //! Both lists default to empty and FL001 stays silent until the user has
 //! onboarded their codebase — same UX shape as DG / UT lockfile-driven rules.
 
-// ot: canonical
+// locus: ot canonical
 
 use serde::{Deserialize, Serialize};
 
@@ -73,7 +73,7 @@ pub struct FlSection {
     /// error, returns `Option`), `.err()` (drops the success), and
     /// `.unwrap_or_else` when paired with a closure that ignores its
     /// argument (we can't see the closure body, so the conservative call
-    /// is to flag it and let the user accept it via `// ot: allow FL003`).
+    /// is to flag it and let the user accept it via `// locus: allow FL003`).
     ///
     /// Note: bare-name matching means we'll see `.ok()` on `Option`-shaped
     /// receivers too. Most std types have no `.ok()` method — `Option`

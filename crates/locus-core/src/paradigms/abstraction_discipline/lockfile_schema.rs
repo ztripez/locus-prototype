@@ -18,7 +18,7 @@
 //! suffixes; users can pin individual exceptions to
 //! `accepted_abstraction_names`.
 
-// ot: canonical
+// locus: ot canonical
 
 use serde::{Deserialize, Serialize};
 

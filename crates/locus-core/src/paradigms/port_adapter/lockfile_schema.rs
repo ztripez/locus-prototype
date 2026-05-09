@@ -15,7 +15,7 @@
 //! justified at all?", PA asks "if it's a port, is it physically split from
 //! its adapter?". Different framings; users can disable whichever they prefer.
 
-// ot: canonical
+// locus: ot canonical
 
 use serde::{Deserialize, Serialize};
 

@@ -9,7 +9,7 @@
 
 Locus recently flipped to a noisy default: empty paradigm sections fire `LOCUS002`, and structural/numeric rules (CX, MO, ER, DC, AB) fire on un-onboarded code with built-in defaults. That stops LLMs from cheating by ignoring vacant rules — but it also means the very first thing an agent (or human) sees on a fresh repo is a wall of warnings.
 
-`locus init` is the bridge from "wall of warnings" to "Locus understands this codebase." Today it only promotes `// ot:` source hints into `locus.lock` and adds canonicals/boundaries from a fresh scan. That covers OT and almost nothing else; 18 of the 19 paradigms remain vacant after a clean `locus init`.
+`locus init` is the bridge from "wall of warnings" to "Locus understands this codebase." Today it only promotes `// locus:` source hints into `locus.lock` and adds canonicals/boundaries from a fresh scan. That covers OT and almost nothing else; 18 of the 19 paradigms remain vacant after a clean `locus init`.
 
 This spec redefines `locus init` as a **scan-and-report** command that, in addition to its current source-hint promotion behaviour, prints a checklist of the *exact CLI commands* an agent should run next to make the lockfile sound for this codebase. Agents (or humans) execute commands one at a time and re-run `locus init` until the checklist is empty.
 
@@ -19,7 +19,7 @@ These choices were settled during brainstorming and are not up for debate inside
 
 - **No daemon, no JSON-RPC, no MCP server.** Each agent turn is one CLI invocation reading terse stdout. Token cost has to stay low.
 - **No persistent architecture model on disk.** Only `locus.lock` (and the existing `.locus/last-check.json` from `check`) live in the workspace. Heuristic state is transient — recomputed every `init` run from `AirWorkspace + Lockfile`.
-- **`init` never auto-writes inferred decisions.** Only strictly-mechanical promotions (existing `// ot:` source hints) commit silently. Every heuristic-detected layer / cluster / feature / threshold becomes a `locus <verb> ...` command on the checklist; the agent decides whether to run it.
+- **`init` never auto-writes inferred decisions.** Only strictly-mechanical promotions (existing `// locus:` source hints) commit silently. Every heuristic-detected layer / cluster / feature / threshold becomes a `locus <verb> ...` command on the checklist; the agent decides whether to run it.
 - **Aggressive name+shape clustering with confirmation.** Heuristics propose; the agent confirms by running the suggested `accept` command, or splits a cluster by running two `accept` commands instead of one.
 - **Per-paradigm `init.rs`** owns each paradigm's heuristics. OT already has `crates/locus-core/src/paradigms/one_truth/init.rs`; the pattern extends to the other 18 paradigms.
 - **Text output only for now.** A `--format json` mode can come later if a programmatic consumer appears; not in this spec.
@@ -29,7 +29,7 @@ These choices were settled during brainstorming and are not up for debate inside
 A run of `locus init --workspace .` does the following, in order:
 
 1. **Scan.** Build `AirWorkspace`. Load existing `locus.lock` (or empty).
-2. **Promote source hints (existing behaviour).** Apply `// ot: canonical`, `// ot: boundary`, `// ot: converter` hints into `locus.lock`. This is the only auto-write step. Existing accepted entries are preserved; entries with no source backing them and no `--prune` flag are kept (matching today's behaviour).
+2. **Promote source hints (existing behaviour).** Apply `// locus: ot canonical`, `// locus: ot boundary`, `// locus: ot converter` hints into `locus.lock`. This is the only auto-write step. Existing accepted entries are preserved; entries with no source backing them and no `--prune` flag are kept (matching today's behaviour).
 3. **Run heuristics per paradigm.** Each paradigm's `init.rs` exposes:
    ```rust
    pub fn suggest(
@@ -144,7 +144,7 @@ The detailed heuristic per paradigm:
 
 ### Boundary Ownership (BO) — domain & canonical paths
 - Detect `domain_paths` from path conventions: any module matching `*::domain::*` or `*::core::*` not already in `acknowledged_empty`.
-- Detect `canonical_paths` from `// ot: canonical` annotations and from OT `concepts` that have a canonical symbol.
+- Detect `canonical_paths` from `// locus: ot canonical` annotations and from OT `concepts` that have a canonical symbol.
 - Suggest `locus bo add-domain-path "<glob>"` for each detected layer; if none detected, emit a `[layer]` suggestion with the literal placeholder.
 
 ### Error Taxonomy (ER), Failure Lineage (FL), Responsibility (RM), Port/Adapter (PA)

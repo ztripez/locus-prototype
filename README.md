@@ -53,7 +53,7 @@ Language adapters emit normalized source facts into AIR, the Architecture Interm
 - call sites (function / method / macro) with rendered callee text and enclosing function,
 - conversions (`From`, `TryFrom`, inherent methods, free functions),
 - truth actions (construct, enum-match, string-compare, validate, normalize),
-- source hints (`// ot: canonical | boundary | converter | protocol-translation | generated-boundary | allow`),
+- source hints — paradigm-scoped (`// locus: ot canonical`, `// locus: ot boundary <concept> <boundary>`, `// locus: ot converter`, `// locus: ot protocol-translation reason="…"`, `// locus: ot generated-boundary`) and generic (`// locus: allow XX### reason="…" expires="…"`, `// locus: fact <fact_kind>`),
 - normalized loader facts (`spawned_work`, `config_read`, `logging` today; `external_io`, `persistence_write`, `blocking_call`, `hot_path`, `request_context`, `boundary_entry`, `runtime_state_owner`, `background_worker` reserved for future loaders).
 
 What's *not* yet in AIR (planned, tracked in `CLAUDE.md` roadmap): general literal capture beyond truth actions, full branch / arm-body inspection, discarded-binding (`let _ =`) tracking, retry-loop shape detection. These limit how deeply some rules can match the spec.

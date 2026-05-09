@@ -10,7 +10,7 @@
 //! single-implementation by design (real ports, marker traits, intentional
 //! seams). Future DA rules will hang their own fields here.
 
-// ot: canonical
+// locus: ot canonical
 
 use serde::{Deserialize, Serialize};
 

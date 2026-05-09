@@ -5,7 +5,7 @@
 //! else — explicit allowlists invert poorly when most of the workspace is
 //! fine and only a few crossings are wrong.
 
-// ot: canonical
+// locus: ot canonical
 
 use serde::{Deserialize, Serialize};
 

@@ -43,7 +43,7 @@
 //!   that contains a stringifying call site (`to_string` / `format!` /
 //!   `format` / `display`) — lossy error stringification at the source.
 
-// ot: canonical
+// locus: ot canonical
 
 use super::Paradigm;
 use crate::diagnostics::{CheckMode, Diagnostic, vacant_paradigm_diagnostic};

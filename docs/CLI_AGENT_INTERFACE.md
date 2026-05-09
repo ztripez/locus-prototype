@@ -143,7 +143,7 @@ Valid acceptance path:
 Do not fix by:
   - adding a second User-like type,
   - moving the same construction into a generic helper,
-  - adding `// ot: allow` without an expiry and reason.
+  - adding `// locus: allow` without an expiry and reason.
 ```
 
 ## `locus query`

@@ -15,7 +15,7 @@
 //! the section. Until then DA001 stays silent, same lockfile-driven UX as
 //! DG/MO/CX.
 
-// ot: canonical
+// locus: ot canonical
 
 use super::Paradigm;
 use crate::diagnostics::{CheckMode, Diagnostic, vacant_paradigm_diagnostic};

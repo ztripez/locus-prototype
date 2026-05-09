@@ -8,7 +8,7 @@
 //! (test modules, generated code, FFI shims) without disabling the rule
 //! entirely.
 
-// ot: canonical
+// locus: ot canonical
 
 use serde::{Deserialize, Serialize};
 
@@ -56,7 +56,7 @@ impl Default for DcSection {
     }
 }
 
-// ot: allow DC002 reason="doc deliberately quotes the marker patterns it filters on" expires="2099-01-01"
+// locus: allow DC002 reason="doc deliberately quotes the marker patterns it filters on" expires="2099-01-01"
 /// Seeded marker list for DC004 — the canonical "needs follow-up" markers
 /// that should always carry a parenthesised owner reference (e.g.
 /// `mark(alice):`, `mark(#123):` — see DC004 for the actual marker text).
@@ -65,7 +65,7 @@ pub fn default_unowned_marker_patterns() -> Vec<String> {
     vec!["TODO".into(), "FIXME".into(), "HACK".into(), "XXX".into()]
 }
 
-// ot: allow DC002 reason="documentation deliberately quotes residue phrases for the alias-matching example" expires="2099-01-01"
+// locus: allow DC002 reason="documentation deliberately quotes residue phrases for the alias-matching example" expires="2099-01-01"
 /// One entry in the DC002 forbidden-phrase list. Matched case-insensitively
 /// as a substring of an item's doc text. `confidence` drives
 /// [`crate::diagnostics::Severity::from_confidence`] — values below `0.50`
@@ -100,8 +100,8 @@ fn default_phrase_confidence() -> f32 {
     0.75
 }
 
-// ot: allow DC002 reason="documentation deliberately quotes the residue phrases it filters on" expires="2099-01-01"
-// ot: allow DC004 reason="docstring deliberately quotes the bare marker family DC004 fires on" expires="2099-01-01"
+// locus: allow DC002 reason="documentation deliberately quotes the residue phrases it filters on" expires="2099-01-01"
+// locus: allow DC004 reason="docstring deliberately quotes the bare marker family DC004 fires on" expires="2099-01-01"
 /// Seeded forbidden-phrase list — high-signal LLM-transcript residue and
 /// stale planning markers. Confidences chosen per
 /// `docs/PARADIGMS.md` §"Paradigm 17" so that the strongest signals

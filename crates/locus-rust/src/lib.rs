@@ -87,7 +87,7 @@ pub fn scan_raw(workspace_root: &Path) -> Result<AirWorkspace, ScanError> {
 /// 1. [`StdRtLoader`] — language-level recognisers (stdlib `*::spawn`,
 ///    `*::env::var`, `std::fs::*`, `std::thread::sleep`, `Command::*`,
 ///    `TcpStream::*`, print/log macros). Produces six `FactKind`s.
-/// 2. [`MarkersLoader`] — promotes user-declared `// ot: marks
+/// 2. [`MarkersLoader`] — promotes user-declared `// locus: fact
 ///    <fact_kind>` source hints into `AirFact` entries. Lets users
 ///    annotate functions with `hot_path` / `request_context` /
 ///    `boundary_entry` / etc. that the loader tier can't auto-detect

@@ -13,7 +13,7 @@
 //! `config_paths` defaults empty: CF is silent until the user declares the
 //! config layer — same lockfile-driven posture as DG, UT, and BO.
 
-// ot: canonical
+// locus: ot canonical
 
 use serde::{Deserialize, Serialize};
 

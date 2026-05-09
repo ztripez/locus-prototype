@@ -1,6 +1,6 @@
 use crate::{User, UserId};
 
-// ot: boundary identity.user api.v1
+// locus: ot boundary identity.user api.v1
 #[derive(Serialize, Deserialize)]
 pub struct UserDto {
     pub id: String,

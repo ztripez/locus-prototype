@@ -16,9 +16,9 @@
 //! default) deliberately, same as DG. Without an MO section, MO001/MO002
 //! stay silent so un-onboarded code isn't bombarded with file-shape
 //! warnings. MO003/MO004 are pure structural checks driven by hints, so
-//! they fire as soon as the source carries the relevant `// ot:` comments.
+//! they fire as soon as the source carries the relevant `// locus:` comments.
 
-// ot: canonical
+// locus: ot canonical
 
 use super::Paradigm;
 use crate::diagnostics::{CheckMode, Diagnostic};

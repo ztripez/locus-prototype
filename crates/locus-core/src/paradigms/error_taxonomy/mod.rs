@@ -19,7 +19,7 @@
 //! - ER007: a variant name appears on two or more `*Error*` enums in the
 //!   workspace (taxonomy drift). Heuristic and lockfile-free.
 
-// ot: canonical
+// locus: ot canonical
 
 use super::Paradigm;
 use crate::diagnostics::{CheckMode, Diagnostic, vacant_paradigm_diagnostic};

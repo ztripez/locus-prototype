@@ -9,11 +9,11 @@
 //! - OB001: raw print/dbg in non-test, non-observer code.
 //! - OB002: metric-emission macro outside the accepted metric owner module.
 //! - OB003: event-emission macro outside the accepted event owner module.
-//! - OB004: boundary-entry function (carrying a `// ot: marks
+//! - OB004: boundary-entry function (carrying a `// locus: fact
 //!   boundary_entry` source hint) with no `Logging` fact targeting it.
 //!   Opt-in is the marker itself; no lockfile field gates the rule.
 
-// ot: canonical
+// locus: ot canonical
 
 use super::Paradigm;
 use crate::diagnostics::{CheckMode, Diagnostic};

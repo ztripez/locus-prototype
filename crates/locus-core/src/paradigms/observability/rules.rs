@@ -17,7 +17,7 @@
 //! - [`ob004`]: a function symbol carries a `FactKind::BoundaryEntry`
 //!   marker but no `FactKind::Logging` fact targets the same symbol —
 //!   silent boundary entries make outage triage and request tracing
-//!   impossible. Opt-in lives in the `// ot: marks boundary_entry`
+//!   impossible. Opt-in lives in the `// locus: fact boundary_entry`
 //!   source hint; no lockfile field is needed.
 
 use std::collections::HashSet;
@@ -219,7 +219,7 @@ pub fn ob003(air: &AirWorkspace, section: &ObSection, mode: CheckMode) -> Vec<Di
 /// OB004 — boundary entry without observability.
 ///
 /// Cross-references `FactKind::BoundaryEntry` markers (emitted by the
-/// `markers` loader from `// ot: marks boundary_entry` source hints)
+/// `markers` loader from `// locus: fact boundary_entry` source hints)
 /// with `FactKind::Logging` facts on the same function symbol. Every
 /// boundary entry — the public surface where data crosses into the
 /// system — should emit at least one log line, span, metric, or event
@@ -814,7 +814,7 @@ mod tests {
             },
             source: "markers".into(),
             confidence: 1.0,
-            reasons: vec!["// ot: marks boundary_entry".into()],
+            reasons: vec!["// locus: fact boundary_entry".into()],
             evidence: None,
         }
     }

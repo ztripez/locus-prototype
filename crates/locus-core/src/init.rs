@@ -9,7 +9,7 @@
 //! Suggestions are *not* fired as `Diagnostic`s — they are init-only and
 //! never affect the rule engine's pass/fail.
 
-// ot: canonical
+// locus: ot canonical
 
 use crate::lockfile::Lockfile;
 use locus_air::AirWorkspace;
@@ -706,8 +706,12 @@ mod cross_paradigm_feature_tests {
         assert!(feat.is_some(), "expected a feature suggestion");
         let s = feat.unwrap();
         let cmds = s.options[0].commands.join("\n");
-        assert!(cmds.contains("locus dg define-feature --name user --module \"user::*\" --public-api \"user::*\""));
-        assert!(cmds.contains("locus dg define-feature --name order --module \"order::*\" --public-api \"order::*\""));
+        assert!(cmds.contains(
+            "locus dg define-feature --name user --module \"user::*\" --public-api \"user::*\""
+        ));
+        assert!(cmds.contains(
+            "locus dg define-feature --name order --module \"order::*\" --public-api \"order::*\""
+        ));
         assert!(cmds.contains("locus dg define-feature --name billing --module \"billing::*\" --public-api \"billing::*\""));
     }
 
@@ -1013,10 +1017,7 @@ mod vacancy_tests {
     /// the user how to populate it.
     #[test]
     fn default_seeds_cover_every_locus002_paradigm() {
-        let prefixes: Vec<&str> = default_vacancy_seeds()
-            .iter()
-            .map(|(p, _, _)| *p)
-            .collect();
+        let prefixes: Vec<&str> = default_vacancy_seeds().iter().map(|(p, _, _)| *p).collect();
         for p in [
             "BO", "CF", "CR", "DA", "DG", "ER", "FL", "FO", "PA", "RM", "RW", "TA", "UT",
         ] {

@@ -22,7 +22,7 @@
 //! ER007 is heuristic and lockfile-free — duplicate variant names across
 //! `*Error*` enums are flagged via a workspace-wide pass.
 
-// ot: canonical
+// locus: ot canonical
 
 use serde::{Deserialize, Serialize};
 

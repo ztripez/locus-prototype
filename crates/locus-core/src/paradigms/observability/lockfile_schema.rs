@@ -31,7 +31,7 @@
 //! has cleared the defaults to disable OB00n) the rule short-circuits — OB
 //! stays silent on un-onboarded code rather than nagging.
 
-// ot: canonical
+// locus: ot canonical
 
 use serde::{Deserialize, Serialize};
 

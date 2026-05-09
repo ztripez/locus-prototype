@@ -38,7 +38,7 @@ the domain-layer suggestion) — leave those as-is, add the rest.
 ### 4. OT singleton-canonical promotion
 **Where:** `crates/locus-core/src/paradigms/one_truth/init.rs`
 `build_ot_section`.
-**Symptom:** A `// ot: canonical` on a type with no name-stem peers
+**Symptom:** A `// locus: ot canonical` on a type with no name-stem peers
 ends up in no cluster (`cluster_concepts` skips buckets with
 `members.len() < 2`) and is silently dropped from the lockfile.
 Self-run on the annotated repo reports `auto-applied: 0 source hints
@@ -50,7 +50,7 @@ the concept id. Guard against double-insert if the cluster path
 already covered the symbol. With this fix, self-run promotes 47
 concepts. Test: `singleton_hinted_canonical_lands_in_section`.
 
-Boundary-only singletons (`// ot: boundary <concept> <bnd>` without
+Boundary-only singletons (`// locus: ot boundary <concept> <bnd>` without
 a domain canonical) are a deeper schema question — `ConceptEntry`
 requires a canonical. Defer.
 
@@ -146,8 +146,8 @@ real one forces narrowing decisions. Want an ADR before implementing.
 
 ### 13. OT cross-crate construction design pass
 `locus-rust` constructs `locus-air` types as part of the AIR adapter
-contract; OT004 fires 169× on these constructions. Today's `// ot:
-converter` annotation is per-impl-block / per-function. Question: is
+contract; OT004 fires 169× on these constructions. Today's `// locus:
+ot converter` annotation is per-impl-block / per-function. Question: is
 `locus-rust` *itself* a converter (one annotation covers the crate),
 or does the AIR-construction concept need a glob form? Probably
 needs a small spec change.

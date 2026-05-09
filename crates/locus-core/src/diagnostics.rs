@@ -4,7 +4,7 @@
 //! diagnostic message itself is built by the rule that produced it — this
 //! type is the *envelope*, not the prose.
 
-// ot: canonical
+// locus: ot canonical
 
 use locus_air::AirSpan;
 use serde::{Deserialize, Serialize};

@@ -29,7 +29,7 @@ use crate::init::Suggestion;
 use crate::lockfile::Lockfile;
 use locus_air::AirWorkspace;
 
-// ot: canonical
+// locus: ot canonical
 pub trait Paradigm {
     /// Human-facing paradigm name, e.g. `"Canonical Domain Ownership"`.
     fn name(&self) -> &'static str;

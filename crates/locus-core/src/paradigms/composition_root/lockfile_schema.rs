@@ -10,7 +10,7 @@
 //! assertion, not a guess. An empty `composition_root_paths` keeps the rule
 //! silent — same UX as DG/UT lockfile-driven rules.
 
-// ot: canonical
+// locus: ot canonical
 
 use serde::{Deserialize, Serialize};
 

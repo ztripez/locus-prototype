@@ -17,7 +17,7 @@
 //! (the canonical fix) or accepts the trait as a non-port utility helper via
 //! `accepted_colocated_traits`.
 
-// ot: canonical
+// locus: ot canonical
 
 use super::Paradigm;
 use crate::diagnostics::{CheckMode, Diagnostic, vacant_paradigm_diagnostic};
