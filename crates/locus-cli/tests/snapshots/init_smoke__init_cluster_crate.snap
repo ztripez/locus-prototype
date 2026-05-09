@@ -1,5 +1,6 @@
 ---
 source: crates/locus-cli/tests/init_smoke.rs
+assertion_line: 50
 expression: stdout
 ---
 wrote <PATH>/locus.lock
@@ -23,7 +24,7 @@ wrote <PATH>/locus.lock
   TA Test Architecture Ownership: (empty)
   UT Utility / Shared Module Discipline: (empty)
 auto-applied: 0 source hints promoted
-unresolved: 8
+unresolved: 13
 
 [concept] cluster `user` ambiguous — cluster_crate::domain::User
   confidence 0.75; review members
@@ -48,8 +49,8 @@ unresolved: 8
 [feature] no features defined; DG/FO will not fire
   top-level modules: api, domain
   define:
-    locus dg define-feature --name api --module "api::*"
-    locus dg define-feature --name domain --module "domain::*"
+    locus dg define-feature --name api --module "api::*" --public-api "api::*"
+    locus dg define-feature --name domain --module "domain::*" --public-api "domain::*"
     # (FO mirrors DG features once these are accepted)
   or skip:
     locus init --acknowledge-empty DG,FO
@@ -60,15 +61,27 @@ unresolved: 8
   or skip:
     locus init --acknowledge-empty AB
 
+[paradigm-vacant] CF (Config / Data Ownership) has no definitions
+  onboard:
+    locus cf add-config-path "<glob>"
+  or skip:
+    locus init --acknowledge-empty CF
+
+[paradigm-vacant] CR (Composition Root) has no definitions
+  onboard:
+    locus cr add-composition-root "<glob>"
+  or skip:
+    locus init --acknowledge-empty CR
+
 [paradigm-vacant] DA (Demand-Driven) has no definitions
   onboard:
-    locus da toggle --enabled true
+    locus da enable
   or skip:
     locus init --acknowledge-empty DA
 
 [paradigm-vacant] DC (Documentation) has no definitions
   onboard:
-    locus dc toggle --require-public-docs true
+    locus dc enable
   or skip:
     locus init --acknowledge-empty DC
 
@@ -78,10 +91,28 @@ unresolved: 8
   or skip:
     locus init --acknowledge-empty OB
 
+[paradigm-vacant] PA (Port / Adapter) has no definitions
+  onboard:
+    locus pa add-application-path "<glob>"
+  or skip:
+    locus init --acknowledge-empty PA
+
 [paradigm-vacant] RW (Runtime Work) has no definitions
   onboard:
     locus rw accept-runtime-owner "<glob>"
   or skip:
     locus init --acknowledge-empty RW
+
+[paradigm-vacant] TA (Test Architecture) has no definitions
+  onboard:
+    locus ta add-test-path "<glob>"
+  or skip:
+    locus init --acknowledge-empty TA
+
+[paradigm-vacant] UT (Utility Discipline) has no definitions
+  onboard:
+    locus ut add-utility-path "<glob>"
+  or skip:
+    locus init --acknowledge-empty UT
 
 re-run `locus init` after applying changes.

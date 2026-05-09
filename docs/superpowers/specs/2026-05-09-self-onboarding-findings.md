@@ -121,3 +121,5 @@ DC, CX, MO, ER, LOCUS002 are local config / write-the-docs work.
    paradigms.
 5. *Then* attempt onboarding. The DG and OT design questions probably
    want their own ADRs before anyone tries to clean up the 528+169.
+
+Follow-up execution plan: `docs/superpowers/plans/2026-05-09-issue-1-epic-execution.md`.

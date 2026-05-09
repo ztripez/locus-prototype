@@ -532,6 +532,19 @@ For every `AirImport`, fire when the importer's `module_path` matches some featu
 
 Always Fatal. A feature's internals are private to it; cross-feature imports must go through the destination's declared public API.
 
+**Onboarding quickstart (to avoid DG003 flood):**
+
+```bash
+# one feature declaration per top-level feature module
+locus dg define-feature --name billing --module "billing::*" --public-api "billing::api::*"
+locus dg define-feature --name identity --module "identity::*" --public-api "identity::api::*"
+
+# minimal bootstrap when a feature has no dedicated api module yet
+locus dg define-feature --name user --module "user::*" --public-api "user::*"
+```
+
+Without `public_api`, every cross-feature import into that feature is treated as an internals reach by design.
+
 #### DG004 — Shared module reaching feature
 
 A module is "shared" if its `module_path` matches any pattern in `shared_paths`. Fires when a shared module's import path matches any feature's `module` pattern.

@@ -13,7 +13,7 @@
 
 use std::collections::BTreeSet;
 
-use locus_air::{AirConversion, AirHint, AirItem, AirWorkspace, HintKind};
+use locus_air::{AirConversion, AirHint, AirItem, AirType, AirWorkspace, HintKind};
 
 use super::infer::{ClusterMember, InferredRole, cluster_concepts};
 use super::lockfile_schema::{
@@ -71,7 +71,60 @@ pub fn build_ot_section(air: &AirWorkspace) -> OtSection {
             },
         );
     }
+
+    // Singleton-canonical promotion: a `// ot: canonical` on a type with no
+    // name-stem peers gets dropped by `cluster_concepts` (which skips
+    // single-member buckets), so walk the AIR for hint-tagged canonicals
+    // not yet in `section` and emit a per-type `ConceptEntry` with empty
+    // boundaries.
+    let already_canonical: BTreeSet<String> = section
+        .concepts
+        .values()
+        .map(|e| e.canonical.symbol.clone())
+        .collect();
+    for pkg in &air.packages {
+        for file in &pkg.files {
+            for item in &file.items {
+                let AirItem::Type(ty) = item else { continue };
+                if already_canonical.contains(&ty.symbol) {
+                    continue;
+                }
+                if !type_has_canonical_hint(file.hints.iter(), ty) {
+                    continue;
+                }
+                let cid = super::infer::stem_concept_id(&ty.name);
+                // Don't clobber an existing concept (the cluster path may
+                // have produced one with the same id but a different
+                // canonical — that wins).
+                section
+                    .concepts
+                    .entry(cid)
+                    .or_insert_with(|| ConceptEntry {
+                        canonical: AcceptedCanonical {
+                            symbol: ty.symbol.clone(),
+                            source: Source::Hint,
+                        },
+                        boundaries: Vec::new(),
+                        converters: Vec::new(),
+                    });
+            }
+        }
+    }
+
     section
+}
+
+fn type_has_canonical_hint<'a, I>(hints: I, ty: &AirType) -> bool
+where
+    I: Iterator<Item = &'a AirHint>,
+{
+    hints
+        .filter(|h| matches!(h.kind, HintKind::Canonical))
+        .any(|h| {
+            h.target_span.as_ref().is_some_and(|t| {
+                t.line_start >= ty.span.line_start && t.line_start <= ty.span.line_end
+            })
+        })
 }
 
 /// Pull the `boundary` token from the type's `// ot: boundary` hint, if any.
@@ -317,6 +370,142 @@ mod tests {
             span: locus_air::AirSpan::new("t.rs", 1, 1),
         };
         assert!(endpoints_accepted(&conv, &s));
+    }
+
+    /// A type annotated with `// ot: canonical` whose name has no
+    /// stem-peers in the workspace gets dropped by the cluster loop
+    /// (`cluster_concepts` skips buckets with `members.len() < 2`).
+    /// `build_ot_section` should still promote it as a singleton concept
+    /// with empty boundaries, so the lockfile records the user's
+    /// intent.
+    #[test]
+    fn singleton_hinted_canonical_lands_in_section() {
+        use locus_air::{
+            AirField, AirFile, AirHint, AirItem, AirPackage, AirSpan, AirType, AirWorkspace,
+            HintKind, TypeKind, Visibility,
+        };
+
+        let ty = AirType {
+            kind: TypeKind::Struct,
+            name: "Account".into(),
+            symbol: "x::domain::Account".into(),
+            symbol_segments: Vec::new(),
+            visibility: Visibility::Public,
+            fields: vec![AirField {
+                name: "id".into(),
+                type_text: "String".into(),
+                visibility: Visibility::Public,
+            }],
+            variants: Vec::new(),
+            decorators: Vec::new(),
+            span: AirSpan::new("src/domain.rs", 5, 8),
+            doc: None,
+        };
+        let hint = AirHint {
+            kind: HintKind::Canonical,
+            raw: "// ot: canonical".into(),
+            span: AirSpan::new("src/domain.rs", 4, 4),
+            target_span: Some(AirSpan::new("src/domain.rs", 5, 5)),
+        };
+        let air = AirWorkspace::new(vec![AirPackage {
+            name: "x".into(),
+            version: "0.0.1".into(),
+            root_dir: "/tmp/x".into(),
+            files: vec![AirFile {
+                path: "src/domain.rs".into(),
+                module_path: Some("x::domain".into()),
+                items: vec![AirItem::Type(ty)],
+                hints: vec![hint],
+                parse_error: None,
+                line_count: 10,
+            }],
+        }]);
+
+        let section = build_ot_section(&air);
+        let entry = section
+            .concepts
+            .get("account")
+            .expect("singleton canonical should land under its stem-derived concept_id");
+        assert_eq!(entry.canonical.symbol, "x::domain::Account");
+        assert_eq!(entry.canonical.source, Source::Hint);
+        assert!(
+            entry.boundaries.is_empty(),
+            "singleton has no peers, so no boundaries"
+        );
+    }
+
+    /// If a hint-tagged canonical also lands in a real cluster, the
+    /// cluster path's entry wins — we don't double-insert or clobber.
+    #[test]
+    fn singleton_promotion_does_not_clobber_cluster_entry() {
+        use locus_air::{
+            AirField, AirFile, AirHint, AirItem, AirPackage, AirSpan, AirType, AirWorkspace,
+            HintKind, TypeKind, Visibility,
+        };
+
+        let mk_ty = |name: &str, symbol: &str, line: u32| AirType {
+            kind: TypeKind::Struct,
+            name: name.into(),
+            symbol: symbol.into(),
+            symbol_segments: Vec::new(),
+            visibility: Visibility::Public,
+            fields: vec![
+                AirField {
+                    name: "id".into(),
+                    type_text: "String".into(),
+                    visibility: Visibility::Public,
+                },
+                AirField {
+                    name: "email".into(),
+                    type_text: "String".into(),
+                    visibility: Visibility::Public,
+                },
+            ],
+            variants: Vec::new(),
+            decorators: Vec::new(),
+            span: AirSpan::new("src/lib.rs", line, line + 5),
+            doc: None,
+        };
+        let canonical_hint = AirHint {
+            kind: HintKind::Canonical,
+            raw: "// ot: canonical".into(),
+            span: AirSpan::new("src/lib.rs", 1, 1),
+            target_span: Some(AirSpan::new("src/lib.rs", 2, 2)),
+        };
+        let boundary_hint = AirHint {
+            kind: HintKind::Boundary {
+                concept: Some("user".into()),
+                boundary: Some("api".into()),
+            },
+            raw: "// ot: boundary user api".into(),
+            span: AirSpan::new("src/lib.rs", 11, 11),
+            target_span: Some(AirSpan::new("src/lib.rs", 12, 12)),
+        };
+        let air = AirWorkspace::new(vec![AirPackage {
+            name: "x".into(),
+            version: "0.0.1".into(),
+            root_dir: "/tmp/x".into(),
+            files: vec![AirFile {
+                path: "src/lib.rs".into(),
+                module_path: Some("x".into()),
+                items: vec![
+                    AirItem::Type(mk_ty("User", "x::User", 2)),
+                    AirItem::Type(mk_ty("UserDto", "x::UserDto", 12)),
+                ],
+                hints: vec![canonical_hint, boundary_hint],
+                parse_error: None,
+                line_count: 20,
+            }],
+        }]);
+
+        let section = build_ot_section(&air);
+        let entry = section
+            .concepts
+            .get("user")
+            .expect("user concept should be present from cluster path");
+        assert_eq!(entry.canonical.symbol, "x::User");
+        assert_eq!(entry.boundaries.len(), 1, "cluster boundary should survive");
+        assert_eq!(section.concepts.len(), 1, "no duplicate insertion");
     }
 
     #[test]
