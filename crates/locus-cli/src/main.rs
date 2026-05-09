@@ -176,6 +176,10 @@ enum Command {
     /// List active and expired exceptions across `// locus: allow` hints and
     /// `Lockfile.exceptions`. Inventory of every suppression in the repo.
     Debt(DebtArgs),
+    /// Print the rule-spec section for a given rule id (e.g. `OT004`).
+    Explain(ExplainArgs),
+    /// Remove expired lockfile exceptions from `locus.lock`.
+    Prune(PruneArgs),
 }
 
 // locus: ot boundary cli.ut cli
@@ -741,6 +745,27 @@ struct DebtArgs {
     /// Emit one JSON object per line instead of human-readable text.
     #[arg(long)]
     json: bool,
+    /// Group output by rule id so hotspot rules are obvious.
+    #[arg(long)]
+    by_rule: bool,
+}
+
+// ot: boundary cli.explain cli
+#[derive(clap::Args, Debug)]
+struct ExplainArgs {
+    /// Rule id to explain, e.g. `OT004`.
+    rule_id: String,
+    /// Workspace root (containing docs/PARADIGMS.md).
+    #[arg(long, default_value = ".")]
+    workspace: PathBuf,
+}
+
+// ot: boundary cli.prune cli
+#[derive(clap::Args, Debug)]
+struct PruneArgs {
+    /// Workspace root (containing Cargo.toml).
+    #[arg(long, default_value = ".")]
+    workspace: PathBuf,
 }
 
 // locus: ot boundary cli.check cli
@@ -795,6 +820,8 @@ fn main() -> Result<()> {
         Command::Ta(cmd) => ta(cmd),
         Command::Ut(cmd) => ut(cmd),
         Command::Debt(args) => debt(args),
+        Command::Explain(args) => explain(args),
+        Command::Prune(args) => prune(args),
     }
 }
 
@@ -1835,6 +1862,16 @@ fn debt(args: DebtArgs) -> Result<()> {
     let entries = collect_exceptions(&air, &lockfile, Some(&today));
 
     if args.json {
+        if args.by_rule {
+            let grouped = group_debt_by_rule(&entries);
+            let stdout = io::stdout();
+            let mut w = BufWriter::new(stdout.lock());
+            for row in grouped {
+                serde_json::to_writer(&mut w, &row)?;
+                w.write_all(b"\n")?;
+            }
+            return Ok(());
+        }
         let stdout = io::stdout();
         let mut w = BufWriter::new(stdout.lock());
         for e in &entries {
@@ -1859,8 +1896,108 @@ fn debt(args: DebtArgs) -> Result<()> {
         return Ok(());
     }
 
-    print_debt_text(&entries);
+    if args.by_rule {
+        print_debt_by_rule_text(&entries);
+    } else {
+        print_debt_text(&entries);
+    }
     Ok(())
+}
+
+fn prune(args: PruneArgs) -> Result<()> {
+    let mut lockfile = Lockfile::load_or_empty(&args.workspace)
+        .with_context(|| format!("load lockfile from {}", args.workspace.display()))?;
+    let today = today_utc();
+    let removed = prune_expired_lockfile_exceptions(&mut lockfile, &today);
+    let written = lockfile
+        .save(&args.workspace)
+        .with_context(|| format!("write lockfile to {}", args.workspace.display()))?;
+    println!("removed {removed} expired lockfile exception(s)");
+    println!("updated {}", written.display());
+    Ok(())
+}
+
+fn prune_expired_lockfile_exceptions(lockfile: &mut Lockfile, today: &str) -> usize {
+    let before = lockfile.exceptions.len();
+    lockfile
+        .exceptions
+        .retain(|ex| ex.expires.as_str() >= today);
+    before.saturating_sub(lockfile.exceptions.len())
+}
+
+fn explain(args: ExplainArgs) -> Result<()> {
+    let docs_path = args.workspace.join("docs").join("PARADIGMS.md");
+    let body = std::fs::read_to_string(&docs_path)
+        .with_context(|| format!("read {}", docs_path.display()))?;
+    let Some(section) = extract_rule_section(&body, &args.rule_id) else {
+        anyhow::bail!(
+            "rule `{}` not found in {}",
+            args.rule_id,
+            docs_path.display()
+        );
+    };
+    println!("{section}");
+    Ok(())
+}
+
+fn extract_rule_section(markdown: &str, rule_id: &str) -> Option<String> {
+    let needle = format!("#### {rule_id} ");
+    let lines: Vec<&str> = markdown.lines().collect();
+    let start = lines
+        .iter()
+        .position(|line| line.trim_start().starts_with(&needle))?;
+    let end = lines
+        .iter()
+        .enumerate()
+        .skip(start + 1)
+        .find_map(|(idx, line)| line.trim_start().starts_with("#### ").then_some(idx))
+        .unwrap_or(lines.len());
+    Some(lines[start..end].join("\n").trim().to_string())
+}
+
+fn group_debt_by_rule(
+    entries: &[locus_core::exceptions::ExceptionEntry],
+) -> Vec<serde_json::Value> {
+    use locus_core::exceptions::ExceptionStatus;
+    use std::collections::BTreeMap;
+
+    let mut rows: BTreeMap<String, (usize, usize, usize, usize)> = BTreeMap::new();
+    for e in entries {
+        let slot = rows.entry(e.rule.clone()).or_insert((0, 0, 0, 0));
+        slot.0 += 1;
+        match e.status {
+            ExceptionStatus::Active => slot.1 += 1,
+            ExceptionStatus::Expired => slot.2 += 1,
+            ExceptionStatus::Unbounded => slot.3 += 1,
+        }
+    }
+
+    rows.into_iter()
+        .map(|(rule, (total, active, expired, unbounded))| {
+            serde_json::json!({
+                "rule": rule,
+                "total": total,
+                "active": active,
+                "expired": expired,
+                "unbounded": unbounded,
+            })
+        })
+        .collect()
+}
+
+fn print_debt_by_rule_text(entries: &[locus_core::exceptions::ExceptionEntry]) {
+    let grouped = group_debt_by_rule(entries);
+    println!("debt by rule ({} rules with suppressions)", grouped.len());
+    for row in grouped {
+        println!(
+            "  {:<6} total {:<4} active {:<4} expired {:<4} unbounded {:<4}",
+            row["rule"].as_str().unwrap_or(""),
+            row["total"].as_u64().unwrap_or(0),
+            row["active"].as_u64().unwrap_or(0),
+            row["expired"].as_u64().unwrap_or(0),
+            row["unbounded"].as_u64().unwrap_or(0)
+        );
+    }
 }
 
 fn print_debt_text(entries: &[locus_core::exceptions::ExceptionEntry]) {
@@ -2137,5 +2274,107 @@ mod render_checklist_tests {
         assert!(out.contains("auto-applied: 4 source hints promoted"));
         assert!(out.contains("unresolved: 0"));
         assert!(!out.contains("re-run"));
+    }
+}
+
+#[cfg(test)]
+mod debt_grouping_tests {
+    use super::*;
+    use locus_core::exceptions::{ExceptionEntry, ExceptionSource, ExceptionStatus};
+
+    fn entry(rule: &str, status: ExceptionStatus) -> ExceptionEntry {
+        ExceptionEntry {
+            source: ExceptionSource::Hint,
+            rule: rule.to_string(),
+            target: "src/lib.rs:1".to_string(),
+            reason: None,
+            expires: None,
+            status,
+        }
+    }
+
+    #[test]
+    fn groups_counts_by_rule_and_status() {
+        let entries = vec![
+            entry("DG003", ExceptionStatus::Active),
+            entry("DG003", ExceptionStatus::Expired),
+            entry("DG003", ExceptionStatus::Unbounded),
+            entry("OT004", ExceptionStatus::Active),
+            entry("OT004", ExceptionStatus::Active),
+        ];
+
+        let rows = group_debt_by_rule(&entries);
+        assert_eq!(rows.len(), 2);
+
+        let dg = rows
+            .iter()
+            .find(|r| r["rule"] == "DG003")
+            .expect("DG003 row");
+        assert_eq!(dg["total"], 3);
+        assert_eq!(dg["active"], 1);
+        assert_eq!(dg["expired"], 1);
+        assert_eq!(dg["unbounded"], 1);
+
+        let ot = rows
+            .iter()
+            .find(|r| r["rule"] == "OT004")
+            .expect("OT004 row");
+        assert_eq!(ot["total"], 2);
+        assert_eq!(ot["active"], 2);
+        assert_eq!(ot["expired"], 0);
+        assert_eq!(ot["unbounded"], 0);
+    }
+}
+
+#[cfg(test)]
+mod prune_tests {
+    use super::*;
+    use locus_core::lockfile::Exception;
+
+    #[test]
+    fn prune_removes_only_expired_lockfile_exceptions() {
+        let mut lockfile = Lockfile::empty();
+        lockfile.exceptions = vec![
+            Exception {
+                rule: "OT004".to_string(),
+                target: "src/lib.rs:1".to_string(),
+                reason: "temporary".to_string(),
+                expires: "2026-01-01".to_string(),
+            },
+            Exception {
+                rule: "DG003".to_string(),
+                target: "src/lib.rs:1".to_string(),
+                reason: "temporary".to_string(),
+                expires: "2026-12-31".to_string(),
+            },
+        ];
+
+        let removed = prune_expired_lockfile_exceptions(&mut lockfile, "2026-05-09");
+        assert_eq!(removed, 1);
+        assert_eq!(lockfile.exceptions.len(), 1);
+        assert_eq!(lockfile.exceptions[0].rule, "DG003");
+    }
+}
+
+#[cfg(test)]
+mod explain_tests {
+    use super::*;
+
+    #[test]
+    fn extract_rule_section_returns_exact_heading_block() {
+        let md = r#"
+## X
+#### OT004 — Name
+line a
+line b
+
+#### DG001 — Next
+line c
+"#;
+        let got = extract_rule_section(md, "OT004").expect("section exists");
+        assert!(got.starts_with("#### OT004 — Name"));
+        assert!(got.contains("line a"));
+        assert!(got.contains("line b"));
+        assert!(!got.contains("DG001"));
     }
 }

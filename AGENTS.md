@@ -8,10 +8,11 @@ This file is the per-repo dev-handoff for Claude Code (and other agents — `CLA
 2. **[`docs/AGENT_GUARDRAILS.md`](docs/AGENT_GUARDRAILS.md)** — non-negotiables for agents working on Locus itself (determinism, no LLM in `check`, no broad ignores, etc.). Read before adding anything to the rule engine.
 3. **[`docs/PARADIGMS.md`](docs/PARADIGMS.md)** — full umbrella spec; every paradigm Locus is meant to guard. Use as the source of truth for paradigm semantics, source-fact taxonomy, and the architectural-authority framing. Paradigm 1 carries summary rule entries (OT001–OT012), source-hint forms, and severity tiers.
 4. **[`docs/project-jumpoff.md`](docs/project-jumpoff.md)** — the original OT-paradigm deep dive. Read for full spec content (CLI command surface, lockfile examples, generator design, exception format). Pre-dates the multi-paradigm reframing, so treat its top-level "Locus is …" framing as historical; the rule definitions and AIR examples remain authoritative.
+5. **[`docs/superpowers/specs/2026-05-09-dogfood-false-positive-ledger.md`](docs/superpowers/specs/2026-05-09-dogfood-false-positive-ledger.md)** — active triage ledger for Epic #1. Use this to track per-rule TP/FP/onboarding/debt classification and strictness-graduation evidence.
 
 ## Project status
 
-19 paradigms registered; **89 rules implemented** (up from 41 — see `docs/PARADIGMS.md` "Implementation status (snapshot)" for the per-paradigm rule list). Two loaders ship: **`std-rt`** produces 6 language-level fact kinds (`SpawnedWork`, `ConfigRead`, `Logging`, `BlockingCall`, `PersistenceWrite`, `ExternalIo` from stdlib patterns); **`markers`** promotes `// locus: fact <fact_kind>` source hints into facts for the 5 kinds the loader tier can't auto-recognise (`HotPath`, `RequestContext`, `BoundaryEntry`, `RuntimeStateOwner`, `BackgroundWorker`). Highlight set:
+19 paradigms registered; **84 rules implemented** (up from 41 — see `docs/PARADIGMS.md` "Implementation status (snapshot)" for the per-paradigm rule list). Two loaders ship: **`std-rt`** produces 6 language-level fact kinds (`SpawnedWork`, `ConfigRead`, `Logging`, `BlockingCall`, `PersistenceWrite`, `ExternalIo` from stdlib patterns); **`markers`** promotes `// locus: fact <fact_kind>` source hints into facts for the 5 kinds the loader tier can't auto-recognise (`HotPath`, `RequestContext`, `BoundaryEntry`, `RuntimeStateOwner`, `BackgroundWorker`). Highlight set:
 
 - **OT** (Canonical Domain Ownership) — OT001–OT012 implemented. End-to-end wiring: AIR emission, paradigm host, lockfile, `locus init / accept canonical|boundary / check` CLI.
 - **DG** (Dependency Graph / Direction) — DG001 (forbidden import), DG002 (dependency cycle via Tarjan SCC), DG003 (cross-feature internals reach), DG004 (shared module reaching feature). Lockfile carries `forbidden_edges`, `features` (with `public_api` patterns), and `shared_paths`. CLI mutators: `locus dg forbid-edge`, `locus dg define-feature`, `locus dg add-shared-path`.
@@ -126,6 +127,10 @@ locus check --workspace . --agent-strict # warnings → fatal
 locus check --workspace . --changed      # filter to PR-modified files
 locus check --workspace . --changed --baseline origin/develop  # custom baseline
 locus check --workspace . --changed --agent-strict  # CI shape: fail only on new violations
+
+
+# Canonical changed-only strict gate (Epic #1 workflow)
+LOCUS_BASELINE=origin/main scripts/check-changed-strict.sh .
 ```
 
 **`--changed` semantics:** combines three git queries — `git diff baseline HEAD` (committed

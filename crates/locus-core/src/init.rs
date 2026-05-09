@@ -82,7 +82,7 @@ fn feature_partition_suggestion(modules: &[String]) -> Suggestion {
     let mut commands: Vec<String> = Vec::new();
     for m in modules {
         commands.push(format!(
-            "locus dg define-feature --name {m} --module \"{m}::*\""
+            "locus dg define-feature --name {m} --module \"{m}::*\" --public-api \"{m}::*\""
         ));
     }
     commands.push("# (FO mirrors DG features once these are accepted)".into());
@@ -706,9 +706,13 @@ mod cross_paradigm_feature_tests {
         assert!(feat.is_some(), "expected a feature suggestion");
         let s = feat.unwrap();
         let cmds = s.options[0].commands.join("\n");
-        assert!(cmds.contains("locus dg define-feature --name user --module \"user::*\""));
-        assert!(cmds.contains("locus dg define-feature --name order --module \"order::*\""));
-        assert!(cmds.contains("locus dg define-feature --name billing --module \"billing::*\""));
+        assert!(cmds.contains(
+            "locus dg define-feature --name user --module \"user::*\" --public-api \"user::*\""
+        ));
+        assert!(cmds.contains(
+            "locus dg define-feature --name order --module \"order::*\" --public-api \"order::*\""
+        ));
+        assert!(cmds.contains("locus dg define-feature --name billing --module \"billing::*\" --public-api \"billing::*\""));
     }
 
     #[test]

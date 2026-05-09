@@ -29,10 +29,10 @@ unresolved: 16
 [feature] no features defined; DG/FO will not fire
   top-level modules: dto, handler, identity, shadow
   define:
-    locus dg define-feature --name dto --module "dto::*"
-    locus dg define-feature --name handler --module "handler::*"
-    locus dg define-feature --name identity --module "identity::*"
-    locus dg define-feature --name shadow --module "shadow::*"
+    locus dg define-feature --name dto --module "dto::*" --public-api "dto::*"
+    locus dg define-feature --name handler --module "handler::*" --public-api "handler::*"
+    locus dg define-feature --name identity --module "identity::*" --public-api "identity::*"
+    locus dg define-feature --name shadow --module "shadow::*" --public-api "shadow::*"
     # (FO mirrors DG features once these are accepted)
   or skip:
     locus init --acknowledge-empty DG,FO

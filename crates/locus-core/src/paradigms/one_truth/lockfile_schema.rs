@@ -16,6 +16,11 @@ pub struct OtSection {
     /// concept-id → entry. Concept ids come from the inferred name stem
     /// (e.g. `user`, `email-address`).
     pub concepts: BTreeMap<String, ConceptEntry>,
+    /// Module/function patterns with converter authority for OT004.
+    /// Useful for adapter surfaces that intentionally construct canonicals
+    /// across crate boundaries.
+    #[serde(default)]
+    pub converter_paths: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

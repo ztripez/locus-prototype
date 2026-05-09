@@ -49,8 +49,8 @@ unresolved: 13
 [feature] no features defined; DG/FO will not fire
   top-level modules: api, domain
   define:
-    locus dg define-feature --name api --module "api::*"
-    locus dg define-feature --name domain --module "domain::*"
+    locus dg define-feature --name api --module "api::*" --public-api "api::*"
+    locus dg define-feature --name domain --module "domain::*" --public-api "domain::*"
     # (FO mirrors DG features once these are accepted)
   or skip:
     locus init --acknowledge-empty DG,FO

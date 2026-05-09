@@ -1,0 +1,66 @@
+{
+  "date": "2026-05-09 (updated 2026-05-09)",
+  "scope": "Locus self-application triage",
+  "legend": {
+    "TP": "true positive architectural problem",
+    "FP": "likely false positive (heuristic/spec drift)",
+    "ONBOARD": "expected until lockfile/onboarding declarations are added",
+    "DEBT": "known, accepted, intentionally deferred",
+    "MIXED": "contains both likely-true and likely-false signals"
+  },
+  "rows": [
+    {
+      "rule": "DG003",
+      "last_observed": "0 (2026-05-09 rerun)",
+      "classification": "ONBOARD ✅",
+      "primary_cause": "Feature onboarding/docs landed; no active DG003 in current self-check snapshot",
+      "next_action": "Keep feature/public_api onboarding path as default in init; recheck each dogfood pass",
+      "owner": "@core",
+      "strictness_note": "Keep Warning→Fatal under --agent-strict; now behaving as intended for changed-only strict"
+    },
+    {
+      "rule": "OT004",
+      "last_observed": "0 (2026-05-09 rerun)",
+      "classification": "ONBOARD ✅",
+      "primary_cause": "Converter authority model explicit via OT.converter_paths; no active OT004 in current self-check snapshot",
+      "next_action": "Keep converter-path onboarding guidance in docs and lockfile mutator flow",
+      "owner": "@core",
+      "strictness_note": "Strict-ready in changed-only mode; remaining risk is onboarding drift, not rule noise"
+    },
+    {
+      "rule": "CX001/CX002/CX007/CX008",
+      "last_observed": "(varies)",
+      "classification": "DEBT",
+      "primary_cause": "Default noisy thresholds on un-onboarded repo",
+      "next_action": "Record per-module overrides where justified",
+      "owner": "@core",
+      "strictness_note": "Good strict candidates after threshold pass"
+    },
+    {
+      "rule": "DC002/DC004",
+      "last_observed": "(varies)",
+      "classification": "MIXED",
+      "primary_cause": "Some real residue, some phrase overreach",
+      "next_action": "Tag FP/TP examples and tighten phrase lists if needed",
+      "owner": "@docs",
+      "strictness_note": "Keep Warning in human mode"
+    },
+    {
+      "rule": "ER001/ER007",
+      "last_observed": "(varies)",
+      "classification": "MIXED",
+      "primary_cause": "Taxonomy drift + intentional legacy spread",
+      "next_action": "Distinguish true drift from migration state",
+      "owner": "@core",
+      "strictness_note": "Strict for new deltas only"
+    }
+  ],
+  "rerun_snapshot_2026_05_09": {
+    "DG003": 0,
+    "OT004": 0,
+    "CX001": 106,
+    "CX002": 27,
+    "ER007": 11,
+    "LOCUS002": 13
+  }
+}

@@ -401,6 +401,14 @@ pub fn ot004(air: &AirWorkspace, section: &OtSection, mode: CheckMode) -> Vec<Di
                 {
                     continue; // construction inside an accepted converter is fine
                 }
+                if section.converter_paths.iter().any(|p| {
+                    a.function
+                        .as_deref()
+                        .is_some_and(|f| matches_symbol_pattern(f, p))
+                        || matches_symbol_pattern(&file.path, p)
+                }) {
+                    continue; // accepted by OT.converter_paths authority
+                }
                 let function_label = a
                     .function
                     .as_deref()
@@ -428,6 +436,16 @@ pub fn ot004(air: &AirWorkspace, section: &OtSection, mode: CheckMode) -> Vec<Di
         }
     }
     out
+}
+
+fn matches_symbol_pattern(value: &str, pattern: &str) -> bool {
+    if pattern == "*" {
+        return true;
+    }
+    if let Some(prefix) = pattern.strip_suffix("::*") {
+        return value == prefix || value.starts_with(&format!("{prefix}::"));
+    }
+    value == pattern
 }
 
 /// Look up the file path of the AIR type whose `symbol` matches `target`.
@@ -1484,7 +1502,10 @@ mod tests {
                     .collect(),
             },
         );
-        OtSection { concepts }
+        OtSection {
+            concepts,
+            ..Default::default()
+        }
     }
 
     #[test]
@@ -1664,7 +1685,10 @@ mod tests {
                     .collect(),
             },
         );
-        OtSection { concepts }
+        OtSection {
+            concepts,
+            ..Default::default()
+        }
     }
 
     #[test]
@@ -1770,7 +1794,10 @@ mod tests {
                 converters: Vec::new(),
             },
         );
-        let section = OtSection { concepts };
+        let section = OtSection {
+            concepts,
+            ..Default::default()
+        };
         assert!(ot003(&air, &section, CheckMode::Human).is_empty());
     }
 
@@ -1896,6 +1923,35 @@ mod tests {
     }
 
     #[test]
+    fn ot004_quiet_for_converter_path_authority() {
+        let air = air_with_files(vec![
+            (
+                "src/identity.rs",
+                vec![ty_in_file(
+                    "crate::identity::User",
+                    "User",
+                    "src/identity.rs",
+                )],
+            ),
+            (
+                "src/adapter.rs",
+                vec![construct_action(
+                    "User",
+                    "crate::adapter::build_user",
+                    "src/adapter.rs",
+                )],
+            ),
+        ]);
+        let mut section = section_with_canonical_and_boundary(
+            "crate::identity::User",
+            "crate::dto::UserDto",
+            &[],
+        );
+        section.converter_paths.push("crate::adapter::*".into());
+        assert!(ot004(&air, &section, CheckMode::Human).is_empty());
+    }
+
+    #[test]
     fn ot004_silent_when_no_canonicals_accepted() {
         let air = air_with_files(vec![(
             "src/handler.rs",
@@ -1991,7 +2047,10 @@ mod tests {
                 converters: Vec::new(),
             },
         );
-        let section = OtSection { concepts };
+        let section = OtSection {
+            concepts,
+            ..Default::default()
+        };
         assert!(ot005(&air, &section, CheckMode::Human).is_empty());
     }
 
@@ -2028,7 +2087,10 @@ mod tests {
                 converters: Vec::new(),
             },
         );
-        OtSection { concepts }
+        OtSection {
+            concepts,
+            ..Default::default()
+        }
     }
 
     fn conversion_in_file(
@@ -2530,7 +2592,10 @@ mod tests {
                     converters: Vec::new(),
                 },
             );
-            OtSection { concepts }
+            OtSection {
+                concepts,
+                ..Default::default()
+            }
         };
         let diags = ot010(&air, &section, CheckMode::Human);
         assert_eq!(diags.len(), 1);
@@ -2577,7 +2642,10 @@ mod tests {
                     converters: Vec::new(),
                 },
             );
-            OtSection { concepts }
+            OtSection {
+                concepts,
+                ..Default::default()
+            }
         };
         assert!(ot010(&air, &section, CheckMode::Human).is_empty());
     }
@@ -2641,7 +2709,10 @@ mod tests {
                     converters: Vec::new(),
                 },
             );
-            OtSection { concepts }
+            OtSection {
+                concepts,
+                ..Default::default()
+            }
         };
         let diags = ot011(&air, &section, CheckMode::Human);
         assert_eq!(diags.len(), 1);
@@ -2676,7 +2747,10 @@ mod tests {
                     converters: Vec::new(),
                 },
             );
-            OtSection { concepts }
+            OtSection {
+                concepts,
+                ..Default::default()
+            }
         };
         assert!(ot011(&air, &section, CheckMode::Human).is_empty());
     }
@@ -2721,7 +2795,10 @@ mod tests {
                     converters: Vec::new(),
                 },
             );
-            OtSection { concepts }
+            OtSection {
+                concepts,
+                ..Default::default()
+            }
         };
         let diags = ot012(&air, &section, CheckMode::Human);
         assert_eq!(diags.len(), 1);
@@ -2769,7 +2846,10 @@ mod tests {
                     converters: Vec::new(),
                 },
             );
-            OtSection { concepts }
+            OtSection {
+                concepts,
+                ..Default::default()
+            }
         };
         assert!(ot012(&air, &section, CheckMode::Human).is_empty());
     }
@@ -2806,7 +2886,10 @@ mod tests {
                     converters: Vec::new(),
                 },
             );
-            OtSection { concepts }
+            OtSection {
+                concepts,
+                ..Default::default()
+            }
         };
         assert!(ot012(&air, &section, CheckMode::Human).is_empty());
     }
