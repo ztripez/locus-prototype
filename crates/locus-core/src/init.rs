@@ -89,7 +89,14 @@ fn feature_partition_suggestion(modules: &[String]) -> Suggestion {
     Suggestion {
         category: SuggestionCategory::Feature,
         headline: "no features defined; DG/FO will not fire".into(),
-        why: vec![format!("top-level modules: {}", modules.join(", "))],
+        why: vec![
+            format!("top-level modules: {}", modules.join(", ")),
+            "empty public_api means the feature surface is not yet declared, \
+             not that every cross-feature import is an architecture bug — \
+             DG003 only flags reaches into internals once features list a \
+             public_api"
+                .into(),
+        ],
         options: vec![
             CommandOption {
                 label: "define".into(),
@@ -713,6 +720,27 @@ mod cross_paradigm_feature_tests {
             "locus dg define-feature --name order --module \"order::*\" --public-api \"order::*\""
         ));
         assert!(cmds.contains("locus dg define-feature --name billing --module \"billing::*\" --public-api \"billing::*\""));
+    }
+
+    #[test]
+    fn feature_suggestion_explains_empty_public_api_meaning() {
+        let air = ws(&["x::user::domain", "x::order::api"]);
+        let lf = Lockfile::empty();
+        let suggestions = cross_paradigm_suggestions(&air, &lf);
+        let feat = suggestions
+            .iter()
+            .find(|s| s.category == SuggestionCategory::Feature)
+            .expect("expected a feature suggestion");
+        let why = feat.why.join("\n");
+        assert!(
+            why.contains("public_api"),
+            "feature suggestion should mention public_api, got: {why}"
+        );
+        assert!(
+            why.contains("not yet declared") || why.contains("not declared"),
+            "feature suggestion should clarify that empty public_api means the feature \
+             surface isn't declared yet (vs. being a swarm of architecture bugs), got: {why}"
+        );
     }
 
     #[test]
