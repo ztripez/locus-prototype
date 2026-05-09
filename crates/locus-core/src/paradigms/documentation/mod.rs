@@ -14,7 +14,7 @@
 //!   `FIXME(#123):`). Active by default thanks to a seeded
 //!   `unowned_marker_patterns` list; clearing it opts out.
 
-// ot: canonical
+// locus: ot canonical
 
 use super::Paradigm;
 use crate::diagnostics::{CheckMode, Diagnostic};

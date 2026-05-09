@@ -9,7 +9,7 @@
 //! Suggestions are *not* fired as `Diagnostic`s — they are init-only and
 //! never affect the rule engine's pass/fail.
 
-// ot: canonical
+// locus: ot canonical
 
 use crate::lockfile::Lockfile;
 use locus_air::AirWorkspace;
@@ -1013,10 +1013,7 @@ mod vacancy_tests {
     /// the user how to populate it.
     #[test]
     fn default_seeds_cover_every_locus002_paradigm() {
-        let prefixes: Vec<&str> = default_vacancy_seeds()
-            .iter()
-            .map(|(p, _, _)| *p)
-            .collect();
+        let prefixes: Vec<&str> = default_vacancy_seeds().iter().map(|(p, _, _)| *p).collect();
         for p in [
             "BO", "CF", "CR", "DA", "DG", "ER", "FL", "FO", "PA", "RM", "RW", "TA", "UT",
         ] {

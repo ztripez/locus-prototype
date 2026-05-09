@@ -10,7 +10,7 @@
 //! sets it (typically to [`DEFAULT_MAX_ACTION_KINDS`]), RM001 fires on any
 //! function whose body mixes more than that many distinct kinds of work.
 
-// ot: canonical
+// locus: ot canonical
 
 use serde::{Deserialize, Serialize};
 

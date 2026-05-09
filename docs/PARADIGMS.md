@@ -98,7 +98,7 @@ This keeps Locus deterministic, extensible, and architecture-focused.
 
 This document is the *target* spec — the full set of paradigms Locus is designed to guard. Not everything below is implemented yet. This section is the live snapshot so contributors can see what's shipped, what's partial, and what's still aspirational.
 
-**AIR coverage today** (schema v13 — language-agnostic naming pass; see `crates/locus-air/src/lib.rs` schema-version history for the full rename map): symbols (with `symbol_segments` for portable matching), types (struct / enum / alias / union / trait), fields, variants, decorators (unified across Rust derives + attrs and equivalents in other languages), doc text, functions (signature + line count + doc + decorators + symbol_segments), `impl` blocks (`AirImplBlock` with `interface` / `target_type` / `dispatch ∈ Static|Structural|Dynamic`), imports (with `path_segments`), call sites (`Function` / `Method` / `Meta` — was `Macro`), discarded bindings (`AirItem::SilentDiscard`; `DiscardKind::Meta` for syntactic / decorator-level discards), partial result matches (`AirItem::PartialResultMatch` with typed `ResultMatchVariant` enum, was `AirItem::PartialIfLet` with String "Ok"|"Err"), `match` arm bodies (`AirItem::MatchArm` with `ArmBodyShape::ErrorPropagation` for `?` / `raise` / `throw` / Go's `if err != nil { return err }`), closure-arg shape on method calls (`AirItem::ClosureMethodCall`), fallback shapes (`AirItem::FallbackCall` with architectural `FallbackPattern { ValueOr, Or, DefaultOr }` plus original callee as evidence), retry-shaped loops (`AirItem::RetryLoop`), scrutinee literals (`AirItem::ScrutineeLiteral`), conversions (`ConversionMechanism { InfallibleAdapter, FallibleAdapter, InstanceMethod, FreeFunction, FactoryFunction }`), truth actions (`Construct` / `DiscriminatedMatch` (was `EnumMatch`) / `StringCompare` / `Validate` / `Normalize`), source hints (`// ot: …` including the new `// ot: marks <fact_kind>` user-marker syntax), normalized loader facts (two loaders ship in the default stack: **`std-rt`** produces six language-level fact kinds — `SpawnedWork` from `*::spawn`, `ConfigRead` from `*::env::var{,_os}`, `Logging` from `print!`/`println!`/log-level macros, `BlockingCall` from `std::fs::read*` / `std::thread::sleep` / `std::process::Command::{output,status,wait}` / `std::net::TcpStream::*`, `PersistenceWrite` from `std::fs::{write,create_dir*,remove_*,copy,rename}`, `ExternalIo` from `std::process::Command::*` / `std::net::*`; **`markers`** promotes `// ot: marks <fact_kind>` source hints into facts for kinds the loader tier can't auto-recognise — `HotPath`, `RequestContext`, `BoundaryEntry`, `RuntimeStateOwner`, `BackgroundWorker` — plus user-declared overrides for the std-rt-recognised kinds. Framework-specific loaders (Bevy, axum, sqlx, tonic, …) plug in alongside these as they land).
+**AIR coverage today** (schema v13 — language-agnostic naming pass; see `crates/locus-air/src/lib.rs` schema-version history for the full rename map): symbols (with `symbol_segments` for portable matching), types (struct / enum / alias / union / trait), fields, variants, decorators (unified across Rust derives + attrs and equivalents in other languages), doc text, functions (signature + line count + doc + decorators + symbol_segments), `impl` blocks (`AirImplBlock` with `interface` / `target_type` / `dispatch ∈ Static|Structural|Dynamic`), imports (with `path_segments`), call sites (`Function` / `Method` / `Meta` — was `Macro`), discarded bindings (`AirItem::SilentDiscard`; `DiscardKind::Meta` for syntactic / decorator-level discards), partial result matches (`AirItem::PartialResultMatch` with typed `ResultMatchVariant` enum, was `AirItem::PartialIfLet` with String "Ok"|"Err"), `match` arm bodies (`AirItem::MatchArm` with `ArmBodyShape::ErrorPropagation` for `?` / `raise` / `throw` / Go's `if err != nil { return err }`), closure-arg shape on method calls (`AirItem::ClosureMethodCall`), fallback shapes (`AirItem::FallbackCall` with architectural `FallbackPattern { ValueOr, Or, DefaultOr }` plus original callee as evidence), retry-shaped loops (`AirItem::RetryLoop`), scrutinee literals (`AirItem::ScrutineeLiteral`), conversions (`ConversionMechanism { InfallibleAdapter, FallibleAdapter, InstanceMethod, FreeFunction, FactoryFunction }`), truth actions (`Construct` / `DiscriminatedMatch` (was `EnumMatch`) / `StringCompare` / `Validate` / `Normalize`), source hints (the `// locus: …` annotation namespace — paradigm-scoped `// locus: ot canonical | boundary | converter | protocol-translation | generated-boundary` plus generic `// locus: allow XX###` and `// locus: fact <fact_kind>` user-marker syntax), normalized loader facts (two loaders ship in the default stack: **`std-rt`** produces six language-level fact kinds — `SpawnedWork` from `*::spawn`, `ConfigRead` from `*::env::var{,_os}`, `Logging` from `print!`/`println!`/log-level macros, `BlockingCall` from `std::fs::read*` / `std::thread::sleep` / `std::process::Command::{output,status,wait}` / `std::net::TcpStream::*`, `PersistenceWrite` from `std::fs::{write,create_dir*,remove_*,copy,rename}`, `ExternalIo` from `std::process::Command::*` / `std::net::*`; **`markers`** promotes `// locus: fact <fact_kind>` source hints into facts for kinds the loader tier can't auto-recognise — `HotPath`, `RequestContext`, `BoundaryEntry`, `RuntimeStateOwner`, `BackgroundWorker` — plus user-declared overrides for the std-rt-recognised kinds. Framework-specific loaders (Bevy, axum, sqlx, tonic, …) plug in alongside these as they land).
 
 **Not yet in AIR** (rules that need these will be partial or absent until the visitor lands them):
 
@@ -122,16 +122,16 @@ This document is the *target* spec — the full set of paradigms Locus is design
 | UT (11) | UT001–UT005 | many | public type in utility; forbidden import; generic-utility module; domain logic in utility; validate/normalize in utility. |
 | FL (12) | FL001–FL007, **FL010**, FL011, **FL012**, FL013 | many | Boundary error; panic-shaped; silent `.ok()`; `let _ = call`; partial `if let`; `map_err(|_|)`; catch-all `Err(_)`; **`unwrap_or(literal/call)` invalid-to-default**; bare `_` failure sink; **retry-shaped loop without policy**; lossy stringification. Residual gaps: spawned-task no-sink (needs framework loader). |
 | ER (13) | ER001, ER002, ER003, **ER005**, ER007 | several | error-type fork; string-shaped error; boundary error in domain enum; **catch-all error mapping**; duplicate variant across enums. |
-| RW (14) | RW001, RW002, RW003, RW004, **RW005**, **RW006** | many | spawn outside runtime owner; blocking call outside runtime owner; Mutex/RwLock fields outside owner; singleton-shape outside owner; **blocking call inside `// ot: marks hot_path`**; **spawn inside `// ot: marks hot_path`**. |
+| RW (14) | RW001, RW002, RW003, RW004, **RW005**, **RW006** | many | spawn outside runtime owner; blocking call outside runtime owner; Mutex/RwLock fields outside owner; singleton-shape outside owner; **blocking call inside `// locus: fact hot_path`**; **spawn inside `// locus: fact hot_path`**. |
 | FO (15) | FO001, FO004 | many | concept name across features; shared type referencing feature internals. |
 | AB (16) | AB001, AB002 | many | speculative single-impl trait; manager/processor abstraction without accepted role. |
 | DC (17) | DC001, DC002, DC004 | several | missing public docs; LLM-residue phrases (with curated alias list); owner-less TODO/FIXME markers. |
-| OB (18) | OB001, OB002, OB003, **OB004** | many | forbidden log target; unregistered metric emission; unregistered event emission; **`// ot: marks boundary_entry` function with no `Logging` fact**. |
+| OB (18) | OB001, OB002, OB003, **OB004** | many | forbidden log target; unregistered metric emission; unregistered event emission; **`// locus: fact boundary_entry` function with no `Logging` fact**. |
 | TA (19) | TA001, TA002, TA003, TA004 | many | public test type; name-shadow canonical; field-shadow canonical; port impl in tests outside adapter paths. |
 
 **Cross-paradigm infrastructure:**
 - `Severity::from_confidence(c, mode)` implements the spec's 0.50 / 0.70 / 0.90 inference tier table.
-- `// ot: allow XX### reason="…" expires="YYYY-MM-DD"` source hints + `Lockfile.exceptions[]` lockfile entries are honoured by the CLI's `check` pipeline. Expired exceptions emit a `LOCUS001` warning instead of silently re-firing.
+- `// locus: allow XX### reason="…" expires="YYYY-MM-DD"` source hints + `Lockfile.exceptions[]` lockfile entries are honoured by the CLI's `check` pipeline. Expired exceptions emit a `LOCUS001` warning instead of silently re-firing.
 - `locus check --changed [--baseline <ref>]` filters diagnostics to files modified since the baseline (default chain: `origin/main` → `origin/master` → `main` → `master` → `HEAD~1`). Combines committed diff, working-tree diff, and untracked-but-not-ignored files so local development matches CI behaviour. Combine with `--agent-strict` for the canonical "fail CI only on PR-introduced violations" shape.
 
 ---
@@ -315,25 +315,25 @@ inside application/domain when `UserId` is canonical.
 
 ### Source hints
 
-OT-specific source hints, recognized by the Rust adapter (`// ot:` prefix). All forms are optional — the lockfile is the authoritative acceptance record. Hints are a convenience for first-time onboarding, promoted to lockfile entries by `locus init`.
+OT-specific source hints, recognized by the Rust adapter (the `// locus: ot …` subform of the generic `// locus:` annotation namespace). All forms are optional — the lockfile is the authoritative acceptance record. Hints are a convenience for first-time onboarding, promoted to lockfile entries by `locus init`.
 
 ```rust
-// ot: canonical
+// locus: ot canonical
 pub struct User { ... }
 
-// ot: boundary identity.user api.v1
+// locus: ot boundary identity.user api.v1
 pub struct UserDto { ... }
 
-// ot: converter
+// locus: ot converter
 impl TryFrom<UserDto> for User { ... }
 
-// ot: protocol-translation reason="compatibility endpoint"
+// locus: ot protocol-translation reason="compatibility endpoint"
 fn translate_v1_to_v2(value: UserV1Dto) -> UserV2Dto { ... }
 
-// ot: generated-boundary
+// locus: ot generated-boundary
 pub struct ProtoUser { ... }
 
-// ot: allow OT002 reason="legacy import shim" expires="2026-07-01"
+// locus: allow OT002 reason="legacy import shim" expires="2026-07-01"
 pub struct LegacyUser { ... }
 ```
 

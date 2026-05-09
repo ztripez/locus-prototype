@@ -5,8 +5,8 @@
 //! Converters are pulled from `AirItem::Conversion` whose endpoints both land
 //! in the section's accepted symbols.
 //!
-//! Conservative by design: only annotated members (`// ot: canonical` /
-//! `// ot: boundary`) are accepted automatically. Inferred-but-unannotated
+//! Conservative by design: only annotated members (`// locus: ot canonical` /
+//! `// locus: ot boundary`) are accepted automatically. Inferred-but-unannotated
 //! members stay out, surfacing on the next `locus check` as OT002 candidates.
 //! Phase 2.B will add `locus accept` for symbol-by-symbol promotion of
 //! candidates that are correct but unannotated.
@@ -72,7 +72,7 @@ pub fn build_ot_section(air: &AirWorkspace) -> OtSection {
         );
     }
 
-    // Singleton-canonical promotion: a `// ot: canonical` on a type with no
+    // Singleton-canonical promotion: a `// locus: ot canonical` on a type with no
     // name-stem peers gets dropped by `cluster_concepts` (which skips
     // single-member buckets), so walk the AIR for hint-tagged canonicals
     // not yet in `section` and emit a per-type `ConceptEntry` with empty
@@ -96,17 +96,14 @@ pub fn build_ot_section(air: &AirWorkspace) -> OtSection {
                 // Don't clobber an existing concept (the cluster path may
                 // have produced one with the same id but a different
                 // canonical — that wins).
-                section
-                    .concepts
-                    .entry(cid)
-                    .or_insert_with(|| ConceptEntry {
-                        canonical: AcceptedCanonical {
-                            symbol: ty.symbol.clone(),
-                            source: Source::Hint,
-                        },
-                        boundaries: Vec::new(),
-                        converters: Vec::new(),
-                    });
+                section.concepts.entry(cid).or_insert_with(|| ConceptEntry {
+                    canonical: AcceptedCanonical {
+                        symbol: ty.symbol.clone(),
+                        source: Source::Hint,
+                    },
+                    boundaries: Vec::new(),
+                    converters: Vec::new(),
+                });
             }
         }
     }
@@ -127,7 +124,7 @@ where
         })
 }
 
-/// Pull the `boundary` token from the type's `// ot: boundary` hint, if any.
+/// Pull the `boundary` token from the type's `// locus: ot boundary` hint, if any.
 fn boundary_label(air: &AirWorkspace, member: &ClusterMember) -> Option<String> {
     for pkg in &air.packages {
         for file in &pkg.files {
@@ -372,7 +369,7 @@ mod tests {
         assert!(endpoints_accepted(&conv, &s));
     }
 
-    /// A type annotated with `// ot: canonical` whose name has no
+    /// A type annotated with `// locus: ot canonical` whose name has no
     /// stem-peers in the workspace gets dropped by the cluster loop
     /// (`cluster_concepts` skips buckets with `members.len() < 2`).
     /// `build_ot_section` should still promote it as a singleton concept
@@ -403,7 +400,7 @@ mod tests {
         };
         let hint = AirHint {
             kind: HintKind::Canonical,
-            raw: "// ot: canonical".into(),
+            raw: "// locus: ot canonical".into(),
             span: AirSpan::new("src/domain.rs", 4, 4),
             target_span: Some(AirSpan::new("src/domain.rs", 5, 5)),
         };
@@ -468,7 +465,7 @@ mod tests {
         };
         let canonical_hint = AirHint {
             kind: HintKind::Canonical,
-            raw: "// ot: canonical".into(),
+            raw: "// locus: ot canonical".into(),
             span: AirSpan::new("src/lib.rs", 1, 1),
             target_span: Some(AirSpan::new("src/lib.rs", 2, 2)),
         };
@@ -477,7 +474,7 @@ mod tests {
                 concept: Some("user".into()),
                 boundary: Some("api".into()),
             },
-            raw: "// ot: boundary user api".into(),
+            raw: "// locus: ot boundary user api".into(),
             span: AirSpan::new("src/lib.rs", 11, 11),
             target_span: Some(AirSpan::new("src/lib.rs", 12, 12)),
         };

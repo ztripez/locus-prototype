@@ -17,7 +17,7 @@
 //! domain term." Acceptance is a deliberate user action, mirroring
 //! DG/MO/UT.
 
-// ot: canonical
+// locus: ot canonical
 
 use super::Paradigm;
 use crate::diagnostics::{CheckMode, Diagnostic};

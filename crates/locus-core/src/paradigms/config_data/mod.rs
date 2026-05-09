@@ -19,7 +19,7 @@
 //! the `config_file_patterns` / `accepted_config_files` lockfile fields
 //! pending a filesystem-aware loader.
 
-// ot: canonical
+// locus: ot canonical
 
 use super::Paradigm;
 use crate::diagnostics::{CheckMode, Diagnostic, vacant_paradigm_diagnostic};

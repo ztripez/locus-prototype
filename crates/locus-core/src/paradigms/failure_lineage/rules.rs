@@ -354,7 +354,7 @@ fn diagnostic_for_fl002(
 /// surface for `.ok()` / `.err()` is `Result`-only, so the
 /// false-positive rate is low. Users who hit a legitimate non-Result
 /// `.ok()` (e.g. via a third-party trait) suppress with
-/// `// ot: allow FL003 reason="..." expires="..."`.
+/// `// locus: allow FL003 reason="..." expires="..."`.
 ///
 /// Severity: Warning by default; Fatal under `--agent-strict`.
 ///
@@ -454,7 +454,7 @@ fn diagnostic_for_fl003(
              discards the failure lineage. If `{module_path}` is a legitimate \
              invariant owner (supervisor, test-support module), add it to \
              `paradigms.FL.invariant_owner_paths`. For a one-off intentional \
-             discard, suppress with `// ot: allow FL003 reason=\"…\" \
+             discard, suppress with `// locus: allow FL003 reason=\"…\" \
              expires=\"YYYY-MM-DD\"`",
             cs.callee,
         )),
@@ -572,7 +572,7 @@ fn diagnostic_for_fl004(
              and the callee is a known fire-and-forget pattern (e.g. \
              `lock`, `send`, `drop`), add it to \
              `paradigms.FL.silent_discard_allowed_callees`. For a one-off \
-             accepted discard, suppress with `// ot: allow FL004 reason=\"…\" \
+             accepted discard, suppress with `// locus: allow FL004 reason=\"…\" \
              expires=\"YYYY-MM-DD\"`. If `{module_path}` is a legitimate \
              invariant owner, add it to `paradigms.FL.invariant_owner_paths`"
         )),
@@ -665,7 +665,7 @@ fn diagnostic_for_fl005(
              explicitly accept). If `{module_path}` is a legitimate \
              invariant owner (supervisor, test-support module), add it to \
              `paradigms.FL.invariant_owner_paths`. For a one-off accepted \
-             partial match, suppress with `// ot: allow FL005 reason=\"…\" \
+             partial match, suppress with `// locus: allow FL005 reason=\"…\" \
              expires=\"YYYY-MM-DD\"`"
         )),
     }
@@ -818,7 +818,7 @@ fn diagnostic_for_fl013(
              `{module_path}` is a legitimate string-error surface (top-level \
              CLI, test fixture, supervisor), add it to \
              `paradigms.FL.invariant_owner_paths`. For a one-off accepted \
-             stringification, suppress with `// ot: allow FL013 reason=\"…\" \
+             stringification, suppress with `// locus: allow FL013 reason=\"…\" \
              expires=\"YYYY-MM-DD\"`",
             capitalize_first_fl013(&func.name),
         )),
@@ -941,7 +941,7 @@ fn diagnostic_for_fl006(
              logged before being mapped to the new type; or accept the file via \
              `paradigms.FL.invariant_owner_paths` if this is a legitimate adapter \
              boundary that has already logged the source. For a one-off, suppress \
-             with `// ot: allow FL006 reason=\"…\" expires=\"YYYY-MM-DD\"`"
+             with `// locus: allow FL006 reason=\"…\" expires=\"YYYY-MM-DD\"`"
                 .into(),
         ),
     }
@@ -1044,7 +1044,7 @@ fn diagnostic_for_fl007(arm: &AirMatchArm, module_path: &str, mode: CheckMode) -
              e.g. `Err(e) => return Err(MyError::from(e))`. If `{module_path}` is a \
              legitimate invariant owner (supervisor, test-support module), add it \
              to `paradigms.FL.invariant_owner_paths`. For a one-off accepted \
-             swallow, suppress with `// ot: allow FL007 reason=\"…\" \
+             swallow, suppress with `// locus: allow FL007 reason=\"…\" \
              expires=\"YYYY-MM-DD\"`"
         )),
     }
@@ -1141,7 +1141,7 @@ fn diagnostic_for_fl011(arm: &AirMatchArm, module_path: &str, mode: CheckMode) -
              `_ => Err(SomeError::Unknown)` so the failure has an owner. If \
              `{module_path}` is a legitimate invariant owner, add it to \
              `paradigms.FL.invariant_owner_paths`. For a one-off accepted \
-             default, suppress with `// ot: allow FL011 reason=\"…\" \
+             default, suppress with `// locus: allow FL011 reason=\"…\" \
              expires=\"YYYY-MM-DD\"`"
         )),
     }
@@ -1250,7 +1250,7 @@ fn diagnostic_for_fl010(call: &AirFallbackCall, module_path: &str, mode: CheckMo
              `{module_path}` is a legitimate fallback owner (supervisor, \
              startup-asserting bin entry), add it to \
              `paradigms.FL.invariant_owner_paths`. For a one-off accepted \
-             default, suppress with `// ot: allow FL010 reason=\"…\" \
+             default, suppress with `// locus: allow FL010 reason=\"…\" \
              expires=\"YYYY-MM-DD\"`"
         )),
     }
@@ -1358,7 +1358,7 @@ fn diagnostic_for_fl012(loopy: &AirRetryLoop, module_path: &str, mode: CheckMode
              owns backoff, max attempts, and jitter; or, if `{module_path}` \
              is a legitimate retry owner, add it to \
              `paradigms.FL.retry_policy_owner_paths`. For a one-off accepted \
-             retry, suppress with `// ot: allow FL012 reason=\"…\" \
+             retry, suppress with `// locus: allow FL012 reason=\"…\" \
              expires=\"YYYY-MM-DD\"`"
         )),
     }

@@ -24,7 +24,7 @@ fn init_against_sample_crate_emits_expected_checklist() {
 
 /// Snapshot the `locus init` output for a workspace that contains a
 /// concept-shaped cluster (`User` + `UserResponse` + a `From` impl) but no
-/// `// ot:` hints. The snapshot is the regression baseline; we also assert
+/// `// locus:` hints. The snapshot is the regression baseline; we also assert
 /// the layer-suggestion block carries the cluster-crate domain glob, and
 /// that heuristic OT canonical election surfaces a `[concept]` suggestion
 /// proposing `cluster_crate::domain::User` as the canonical.

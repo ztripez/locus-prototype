@@ -9,11 +9,11 @@
 //! - lockfile section + `locus init` integration ([`init`], [`lockfile_schema`])
 //!
 //! `check` consults the lockfile first (a symbol's role recorded there is
-//! authoritative), then falls back to source hints. This makes `// ot:`
+//! authoritative), then falls back to source hints. This makes `// locus: ot …`
 //! annotations a convenience for first-time onboarding; the lockfile is the
 //! source of truth from `locus init` onward.
 
-// ot: canonical
+// locus: ot canonical
 
 use super::Paradigm;
 use crate::diagnostics::{CheckMode, Diagnostic};

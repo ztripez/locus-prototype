@@ -87,7 +87,7 @@ pub fn cf001(air: &AirWorkspace, section: &CfSection, mode: CheckMode) -> Vec<Di
 /// Severity: Warning (elevated to Fatal under `--agent-strict`).
 /// Magic-constant decisions in handler code are smelly but not always
 /// wrong (test fixtures, hardcoded protocol constants). Suppress
-/// individual cases with `// ot: allow CF002 reason="…"` rather than
+/// individual cases with `// locus: allow CF002 reason="…"` rather than
 /// broadening the lockfile.
 ///
 /// Silent when `config_paths` is empty (no declared config layer to
@@ -294,7 +294,7 @@ fn cf002_diagnostic(
              layer; or, if `{module_path}` is a legitimate config owner, \
              add it to `paradigms.CF.config_paths` in `locus.lock`. For \
              one-off intentional uses (test fixtures, hardcoded protocol \
-             constants), suppress with `// ot: allow CF002 reason=\"…\" \
+             constants), suppress with `// locus: allow CF002 reason=\"…\" \
              expires=\"YYYY-MM-DD\"`"
         )),
     }
@@ -342,7 +342,7 @@ fn cf003_diagnostic(
             "load the ID from a config struct owned by the config layer; \
              or, if `{module_path}` legitimately owns the value, add it \
              to `paradigms.CF.config_paths` in `locus.lock`. For one-off \
-             intentional uses, suppress with `// ot: allow CF003 \
+             intentional uses, suppress with `// locus: allow CF003 \
              reason=\"…\" expires=\"YYYY-MM-DD\"`"
         )),
     }

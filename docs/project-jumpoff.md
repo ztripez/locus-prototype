@@ -123,7 +123,7 @@ locus accept CreateUserRequest --as boundary --concept identity.user --boundary 
 Or, in ambiguous source code, a compact optional hint may be used:
 
 ```rust
-// ot: boundary
+// locus: ot boundary
 pub struct CreateUserRequest { ... }
 ```
 
@@ -446,20 +446,20 @@ Preferred form: compact comments.
 Rust:
 
 ```rust
-// ot: canonical
+// locus: ot canonical
 pub struct User { ... }
 
-// ot: boundary
+// locus: ot boundary
 pub struct UserDto { ... }
 
-// ot: converter
+// locus: ot converter
 impl TryFrom<UserDto> for User { ... }
 ```
 
 Long form only when needed:
 
 ```rust
-// ot: boundary identity.user api.v1
+// locus: ot boundary identity.user api.v1
 pub struct PrincipalResponse { ... }
 ```
 
@@ -791,7 +791,7 @@ Initial implementation may use:
 * `cargo metadata`
 * `syn`
 * `walkdir`
-* raw source scanning for `// ot:` hints
+* raw source scanning for `// locus:` hints
 
 Detect initially:
 
@@ -916,7 +916,7 @@ Required fields:
 Example source hint:
 
 ```rust
-// ot: allow OT009 reason="legacy migration import" expires="2026-07-01"
+// locus: allow OT009 reason="legacy migration import" expires="2026-07-01"
 ```
 
 Example lockfile exception:
@@ -983,7 +983,7 @@ locus accept-protocol-translation ApiV1UserDto ApiV2UserDto \
 or source hint:
 
 ```rust
-// ot: protocol-translation reason="compatibility endpoint"
+// locus: ot protocol-translation reason="compatibility endpoint"
 fn translate_v1_to_v2(value: UserV1Dto) -> UserV2Dto { ... }
 ```
 
@@ -1120,7 +1120,7 @@ Deliverables:
 * collect Rust files
 * parse structs/enums/type aliases with `syn`
 * collect fields, derives, visibility, module paths
-* parse compact `// ot:` hints
+* parse compact `// locus:` hints
 * emit AIR JSON
 * CLI command: `locus emit-air`
 

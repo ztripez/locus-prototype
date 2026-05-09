@@ -7,7 +7,7 @@
 //! surfaces legitimately have many public types; domain modules usually
 //! shouldn't).
 
-// ot: canonical
+// locus: ot canonical
 
 use serde::{Deserialize, Serialize};
 

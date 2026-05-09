@@ -11,17 +11,17 @@
 //!   type outside any declared runtime-owner module.
 //! - RW004: `OnceCell` / `Lazy` / named-singleton type outside any declared
 //!   runtime-owner module.
-//! - RW005: blocking call inside a function the user marked `// ot: marks
+//! - RW005: blocking call inside a function the user marked `// locus: fact
 //!   hot_path` — blocking ops in a hot loop / frame budget.
-//! - RW006: spawn inside a function the user marked `// ot: marks hot_path`
+//! - RW006: spawn inside a function the user marked `// locus: fact hot_path`
 //!   — uncontrolled per-iteration task pressure.
 //!
 //! `init` returns an empty section: runtime-owner locations are a user
 //! declaration, not an inference. RW001–RW004 stay silent until the user
 //! populates `runtime_owner_paths`. RW005 / RW006 are gated by the user's
-//! `// ot: marks hot_path` annotations (no lockfile entry needed).
+//! `// locus: fact hot_path` annotations (no lockfile entry needed).
 
-// ot: canonical
+// locus: ot canonical
 
 use super::Paradigm;
 use crate::diagnostics::{CheckMode, Diagnostic, vacant_paradigm_diagnostic};

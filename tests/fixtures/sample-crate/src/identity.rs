@@ -1,4 +1,4 @@
-// ot: canonical
+// locus: ot canonical
 pub struct User {
     pub id: UserId,
     pub email: String,

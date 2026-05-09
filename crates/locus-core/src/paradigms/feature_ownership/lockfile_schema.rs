@@ -7,7 +7,7 @@
 //! exposes. The duplicate is intentional: paradigms shouldn't depend on each
 //! other's lockfile schemas.
 
-// ot: canonical
+// locus: ot canonical
 
 use serde::{Deserialize, Serialize};
 

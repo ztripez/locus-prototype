@@ -13,7 +13,7 @@
 //! declaration, not an inference. The rule stays silent until the user
 //! populates `composition_root_paths`.
 
-// ot: canonical
+// locus: ot canonical
 
 use super::Paradigm;
 use crate::diagnostics::{CheckMode, Diagnostic, vacant_paradigm_diagnostic};

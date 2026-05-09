@@ -13,7 +13,7 @@
 use locus_air::{AirCallSite, AirFact, AirItem, AirWorkspace, CallKind, FactKind, FactTarget};
 use locus_core::Loader;
 
-// ot: canonical
+// locus: ot canonical
 pub struct StdRtLoader;
 
 impl Loader for StdRtLoader {

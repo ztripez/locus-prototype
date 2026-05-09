@@ -15,7 +15,7 @@
 //! paradigm owns its own copy of that shape so paradigms don't depend on
 //! each other.
 
-// ot: canonical
+// locus: ot canonical
 
 use super::Paradigm;
 use crate::diagnostics::{CheckMode, Diagnostic, vacant_paradigm_diagnostic};

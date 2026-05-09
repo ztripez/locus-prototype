@@ -14,7 +14,7 @@
 //! current import graph as a starting point, but that's report territory,
 //! not lockfile-mutation territory.
 
-// ot: canonical
+// locus: ot canonical
 
 use super::Paradigm;
 use crate::diagnostics::{CheckMode, Diagnostic, vacant_paradigm_diagnostic};

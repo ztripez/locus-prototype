@@ -9,7 +9,7 @@
 //! Both fields default empty: BO is silent until the user declares the
 //! split — same lockfile-driven posture as DG and UT.
 
-// ot: canonical
+// locus: ot canonical
 
 use serde::{Deserialize, Serialize};
 

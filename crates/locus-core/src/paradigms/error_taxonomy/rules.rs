@@ -465,7 +465,7 @@ fn diagnostic_for_er005(arm: &AirMatchArm, module_path: &str, mode: CheckMode) -
              Err(MyError::B) => …`), or wrap each into a typed error before mapping. If \
              `{module_path}` is a presentation/edge layer where collapsing is intentional, \
              accept it via `paradigms.ER.error_collapse_owner_paths`. For a one-off, suppress \
-             with `// ot: allow ER005 reason=\"…\" expires=\"YYYY-MM-DD\"`"
+             with `// locus: allow ER005 reason=\"…\" expires=\"YYYY-MM-DD\"`"
         )),
     }
 }
@@ -490,7 +490,7 @@ fn diagnostic_for_er005(arm: &AirMatchArm, module_path: &str, mode: CheckMode) -
 /// Severity: `mode.elevate(Severity::Warning)`. The spec frames this
 /// as drift, not a structural violation — Warning by default, Fatal
 /// under `--agent-strict`. No lockfile fields; ER007 is heuristic and
-/// always-on (suppress per-callsite via `// ot: allow ER007`).
+/// always-on (suppress per-callsite via `// locus: allow ER007`).
 ///
 /// Determinism note: results are gathered in workspace iteration
 /// order (package → file → item → variant), and the "first" occurrence
@@ -571,7 +571,7 @@ pub fn er007(air: &AirWorkspace, mode: CheckMode) -> Vec<Diagnostic> {
                                      DomainError {{ {} ,… }}`) and re-export it from both \
                                      `{}` and `{}`, or rename one of them to clarify the \
                                      distinct semantics. For an intentional duplication, \
-                                     suppress with `// ot: allow ER007 reason=\"…\" \
+                                     suppress with `// locus: allow ER007 reason=\"…\" \
                                      expires=\"YYYY-MM-DD\"`",
                                     variant.name, variant.name, incumbent.type_name, ty.name,
                                 )),

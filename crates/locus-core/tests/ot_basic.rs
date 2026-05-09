@@ -47,7 +47,7 @@ fn ot002_fires_on_user_model_only() {
     assert!(
         d.suggested_fix
             .as_ref()
-            .is_some_and(|f| f.contains("ot: boundary")),
+            .is_some_and(|f| f.contains("// locus: ot boundary")),
         "fix should suggest the boundary annotation; got {:?}",
         d.suggested_fix
     );
@@ -182,7 +182,7 @@ fn no_ot002_for_accepted_canonical_or_boundary() {
 
 #[test]
 fn baseline_fixture_has_no_ot001() {
-    // The fixture has exactly one `// ot: canonical` annotation. OT001 must
+    // The fixture has exactly one `// locus: ot canonical` annotation. OT001 must
     // not fire on it; OT001 firing here would mean the cluster has accidentally
     // promoted a second canonical, which is a regression in inference.
     let air = locus_rust::scan(&fixture_path()).expect("scan succeeds");

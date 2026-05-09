@@ -99,7 +99,7 @@ use locus_core::{
     CheckMode, Diagnostic, Lockfile, Severity, apply_exceptions, registry, today_utc,
 };
 
-// ot: boundary cli.invocation cli
+// locus: ot boundary cli.invocation cli
 #[derive(Parser, Debug)]
 #[command(name = "locus", version, about = "Locus — architecture verifier")]
 struct Cli {
@@ -107,7 +107,7 @@ struct Cli {
     command: Command,
 }
 
-// ot: boundary cli.command cli
+// locus: ot boundary cli.command cli
 #[derive(Subcommand, Debug)]
 enum Command {
     /// Scan a Rust workspace and emit AIR JSON.
@@ -173,19 +173,19 @@ enum Command {
     /// Manage UT (Utility / Shared Module Discipline) declarations in `locus.lock`.
     #[command(subcommand)]
     Ut(UtCommand),
-    /// List active and expired exceptions across `// ot: allow` hints and
+    /// List active and expired exceptions across `// locus: allow` hints and
     /// `Lockfile.exceptions`. Inventory of every suppression in the repo.
     Debt(DebtArgs),
 }
 
-// ot: boundary cli.ut cli
+// locus: ot boundary cli.ut cli
 #[derive(Subcommand, Debug)]
 enum UtCommand {
     /// Mark a module pattern as a utility module (UT001).
     AddUtilityPath(UtAddUtilityPathArgs),
 }
 
-// ot: boundary cli.ut-add-utility-path cli
+// locus: ot boundary cli.ut-add-utility-path cli
 #[derive(clap::Args, Debug)]
 struct UtAddUtilityPathArgs {
     /// Module pattern matching utility modules.
@@ -194,14 +194,14 @@ struct UtAddUtilityPathArgs {
     workspace: PathBuf,
 }
 
-// ot: boundary cli.ab cli
+// locus: ot boundary cli.ab cli
 #[derive(Subcommand, Debug)]
 enum AbCommand {
     /// Mark a trait pattern as an accepted single-impl trait (AB001).
     AcceptSingleImpl(AbAcceptSingleImplArgs),
 }
 
-// ot: boundary cli.ab-accept-single-impl cli
+// locus: ot boundary cli.ab-accept-single-impl cli
 #[derive(clap::Args, Debug)]
 struct AbAcceptSingleImplArgs {
     /// Trait symbol pattern (full path or short name).
@@ -210,7 +210,7 @@ struct AbAcceptSingleImplArgs {
     workspace: PathBuf,
 }
 
-// ot: boundary cli.bo cli
+// locus: ot boundary cli.bo cli
 #[derive(Subcommand, Debug)]
 enum BoCommand {
     /// Mark a module pattern as domain/application code (BO001).
@@ -219,7 +219,7 @@ enum BoCommand {
     AddForbiddenImport(BoAddForbiddenImportArgs),
 }
 
-// ot: boundary cli.bo-add-domain-path cli
+// locus: ot boundary cli.bo-add-domain-path cli
 #[derive(clap::Args, Debug)]
 struct BoAddDomainPathArgs {
     /// Module pattern matching domain/application files.
@@ -228,7 +228,7 @@ struct BoAddDomainPathArgs {
     workspace: PathBuf,
 }
 
-// ot: boundary cli.bo-add-forbidden-import cli
+// locus: ot boundary cli.bo-add-forbidden-import cli
 #[derive(clap::Args, Debug)]
 struct BoAddForbiddenImportArgs {
     /// Import-path pattern that domain code must not reach.
@@ -237,14 +237,14 @@ struct BoAddForbiddenImportArgs {
     workspace: PathBuf,
 }
 
-// ot: boundary cli.cf cli
+// locus: ot boundary cli.cf cli
 #[derive(Subcommand, Debug)]
 enum CfCommand {
     /// Mark a module pattern as part of the config layer (CF001).
     AddConfigPath(CfAddConfigPathArgs),
 }
 
-// ot: boundary cli.cf-add-config-path cli
+// locus: ot boundary cli.cf-add-config-path cli
 #[derive(clap::Args, Debug)]
 struct CfAddConfigPathArgs {
     /// Module pattern matching config-owning files.
@@ -253,14 +253,14 @@ struct CfAddConfigPathArgs {
     workspace: PathBuf,
 }
 
-// ot: boundary cli.cr cli
+// locus: ot boundary cli.cr cli
 #[derive(Subcommand, Debug)]
 enum CrCommand {
     /// Declare a module pattern as a composition root (CR001).
     AddCompositionRoot(CrAddCompositionRootArgs),
 }
 
-// ot: boundary cli.cr-add-composition-root cli
+// locus: ot boundary cli.cr-add-composition-root cli
 #[derive(clap::Args, Debug)]
 struct CrAddCompositionRootArgs {
     /// Module pattern matching composition-root files.
@@ -269,7 +269,7 @@ struct CrAddCompositionRootArgs {
     workspace: PathBuf,
 }
 
-// ot: boundary cli.cx cli
+// locus: ot boundary cli.cx cli
 #[derive(Subcommand, Debug)]
 enum CxCommand {
     /// Set the workspace-wide function-line budget (CX001).
@@ -278,7 +278,7 @@ enum CxCommand {
     AddOverride(CxAddOverrideArgs),
 }
 
-// ot: boundary cli.cx-set-default cli
+// locus: ot boundary cli.cx-set-default cli
 #[derive(clap::Args, Debug)]
 struct CxSetDefaultArgs {
     /// Maximum number of lines a single function may span.
@@ -288,7 +288,7 @@ struct CxSetDefaultArgs {
     workspace: PathBuf,
 }
 
-// ot: boundary cli.cx-add-override cli
+// locus: ot boundary cli.cx-add-override cli
 #[derive(clap::Args, Debug)]
 struct CxAddOverrideArgs {
     /// Module pattern this override applies to.
@@ -304,7 +304,7 @@ struct CxAddOverrideArgs {
     workspace: PathBuf,
 }
 
-// ot: boundary cli.da cli
+// locus: ot boundary cli.da cli
 #[derive(Subcommand, Debug)]
 enum DaCommand {
     /// Enable DA paradigm checks.
@@ -315,14 +315,14 @@ enum DaCommand {
     AcceptSingleImpl(DaAcceptSingleImplArgs),
 }
 
-// ot: boundary cli.da-toggle cli
+// locus: ot boundary cli.da-toggle cli
 #[derive(clap::Args, Debug)]
 struct DaToggleArgs {
     #[arg(long, default_value = ".")]
     workspace: PathBuf,
 }
 
-// ot: boundary cli.da-accept-single-impl cli
+// locus: ot boundary cli.da-accept-single-impl cli
 #[derive(clap::Args, Debug)]
 struct DaAcceptSingleImplArgs {
     /// Trait symbol pattern (full path or short name).
@@ -331,7 +331,7 @@ struct DaAcceptSingleImplArgs {
     workspace: PathBuf,
 }
 
-// ot: boundary cli.dc cli
+// locus: ot boundary cli.dc cli
 #[derive(Subcommand, Debug)]
 enum DcCommand {
     /// Turn DC001's "public API must be documented" check on.
@@ -342,14 +342,14 @@ enum DcCommand {
     AddExemptPath(DcAddExemptPathArgs),
 }
 
-// ot: boundary cli.dc-toggle cli
+// locus: ot boundary cli.dc-toggle cli
 #[derive(clap::Args, Debug)]
 struct DcToggleArgs {
     #[arg(long, default_value = ".")]
     workspace: PathBuf,
 }
 
-// ot: boundary cli.dc-add-exempt-path cli
+// locus: ot boundary cli.dc-add-exempt-path cli
 #[derive(clap::Args, Debug)]
 struct DcAddExemptPathArgs {
     /// Module pattern exempt from DC001.
@@ -358,7 +358,7 @@ struct DcAddExemptPathArgs {
     workspace: PathBuf,
 }
 
-// ot: boundary cli.dg cli
+// locus: ot boundary cli.dg cli
 #[derive(Subcommand, Debug)]
 enum DgCommand {
     /// Forbid imports matching `from` -> `to` patterns.
@@ -369,7 +369,7 @@ enum DgCommand {
     AddSharedPath(DgAddSharedPathArgs),
 }
 
-// ot: boundary cli.dg-define-feature cli
+// locus: ot boundary cli.dg-define-feature cli
 #[derive(clap::Args, Debug)]
 struct DgDefineFeatureArgs {
     /// Feature name (`billing`, `identity`, …).
@@ -388,7 +388,7 @@ struct DgDefineFeatureArgs {
     workspace: PathBuf,
 }
 
-// ot: boundary cli.dg-add-shared-path cli
+// locus: ot boundary cli.dg-add-shared-path cli
 #[derive(clap::Args, Debug)]
 struct DgAddSharedPathArgs {
     /// Module pattern matching shared infrastructure.
@@ -397,7 +397,7 @@ struct DgAddSharedPathArgs {
     workspace: PathBuf,
 }
 
-// ot: boundary cli.dg-forbid-edge cli
+// locus: ot boundary cli.dg-forbid-edge cli
 #[derive(clap::Args, Debug)]
 struct DgForbidEdgeArgs {
     /// Module pattern of the importer, e.g. `lore::domain::*`.
@@ -416,7 +416,7 @@ struct DgForbidEdgeArgs {
     workspace: PathBuf,
 }
 
-// ot: boundary cli.accept cli
+// locus: ot boundary cli.accept cli
 #[derive(Subcommand, Debug)]
 enum AcceptCommand {
     /// Accept a symbol as canonical for a concept.
@@ -427,7 +427,7 @@ enum AcceptCommand {
     Converter(AcceptConverterArgs),
 }
 
-// ot: boundary cli.accept-canonical cli
+// locus: ot boundary cli.accept-canonical cli
 #[derive(clap::Args, Debug)]
 struct AcceptCanonicalArgs {
     /// Fully-qualified symbol of the canonical type, e.g. `crate::domain::User`.
@@ -442,7 +442,7 @@ struct AcceptCanonicalArgs {
     workspace: PathBuf,
 }
 
-// ot: boundary cli.accept-boundary cli
+// locus: ot boundary cli.accept-boundary cli
 #[derive(clap::Args, Debug)]
 struct AcceptBoundaryArgs {
     /// Fully-qualified symbol of the boundary type, e.g. `crate::api::UserDto`.
@@ -457,7 +457,7 @@ struct AcceptBoundaryArgs {
     workspace: PathBuf,
 }
 
-// ot: boundary cli.accept-converter cli
+// locus: ot boundary cli.accept-converter cli
 #[derive(clap::Args, Debug)]
 struct AcceptConverterArgs {
     /// The converter symbol — e.g. `"impl TryFrom<UserDto> for User"` or a free fn path.
@@ -475,14 +475,14 @@ struct AcceptConverterArgs {
     workspace: PathBuf,
 }
 
-// ot: boundary cli.er cli
+// locus: ot boundary cli.er cli
 #[derive(Subcommand, Debug)]
 enum ErCommand {
     /// Mark a module pattern as part of the domain layer (ER003).
     AddDomainPath(ErAddDomainPathArgs),
 }
 
-// ot: boundary cli.er-add-domain-path cli
+// locus: ot boundary cli.er-add-domain-path cli
 #[derive(clap::Args, Debug)]
 struct ErAddDomainPathArgs {
     /// Module path glob, e.g. `"crate::domain::*"`.
@@ -491,7 +491,7 @@ struct ErAddDomainPathArgs {
     workspace: PathBuf,
 }
 
-// ot: boundary cli.fl cli
+// locus: ot boundary cli.fl cli
 #[derive(Subcommand, Debug)]
 enum FlCommand {
     /// Mark a module pattern as domain code (FL001).
@@ -500,7 +500,7 @@ enum FlCommand {
     AddBoundaryError(FlAddBoundaryErrorArgs),
 }
 
-// ot: boundary cli.fl-add-domain-path cli
+// locus: ot boundary cli.fl-add-domain-path cli
 #[derive(clap::Args, Debug)]
 struct FlAddDomainPathArgs {
     /// Module pattern matching domain files.
@@ -509,7 +509,7 @@ struct FlAddDomainPathArgs {
     workspace: PathBuf,
 }
 
-// ot: boundary cli.fl-add-boundary-error cli
+// locus: ot boundary cli.fl-add-boundary-error cli
 #[derive(clap::Args, Debug)]
 struct FlAddBoundaryErrorArgs {
     /// Pattern matching the error type that must not appear in domain signatures.
@@ -518,14 +518,14 @@ struct FlAddBoundaryErrorArgs {
     workspace: PathBuf,
 }
 
-// ot: boundary cli.fo cli
+// locus: ot boundary cli.fo cli
 #[derive(Subcommand, Debug)]
 enum FoCommand {
     /// Define a named feature region (FO001).
     DefineFeature(FoDefineFeatureArgs),
 }
 
-// ot: boundary cli.fo-define-feature cli
+// locus: ot boundary cli.fo-define-feature cli
 #[derive(clap::Args, Debug)]
 struct FoDefineFeatureArgs {
     /// Feature name.
@@ -541,7 +541,7 @@ struct FoDefineFeatureArgs {
     workspace: PathBuf,
 }
 
-// ot: boundary cli.mo cli
+// locus: ot boundary cli.mo cli
 #[derive(Subcommand, Debug)]
 enum MoCommand {
     /// Set the workspace-wide public-types-per-file budget (MO001).
@@ -550,7 +550,7 @@ enum MoCommand {
     AddOverride(MoAddOverrideArgs),
 }
 
-// ot: boundary cli.mo-set-default cli
+// locus: ot boundary cli.mo-set-default cli
 #[derive(clap::Args, Debug)]
 struct MoSetDefaultArgs {
     /// Maximum number of `pub` top-level types per file.
@@ -560,7 +560,7 @@ struct MoSetDefaultArgs {
     workspace: PathBuf,
 }
 
-// ot: boundary cli.mo-add-override cli
+// locus: ot boundary cli.mo-add-override cli
 #[derive(clap::Args, Debug)]
 struct MoAddOverrideArgs {
     /// Module pattern this override applies to.
@@ -576,7 +576,7 @@ struct MoAddOverrideArgs {
     workspace: PathBuf,
 }
 
-// ot: boundary cli.ob cli
+// locus: ot boundary cli.ob cli
 #[derive(Subcommand, Debug)]
 enum ObCommand {
     /// Declare a module pattern as a legitimate observer (OB001).
@@ -585,7 +585,7 @@ enum ObCommand {
     AddForbiddenLogTarget(ObAddForbiddenLogTargetArgs),
 }
 
-// ot: boundary cli.ob-add-observer-path cli
+// locus: ot boundary cli.ob-add-observer-path cli
 #[derive(clap::Args, Debug)]
 struct ObAddObserverPathArgs {
     /// Module pattern matching observer files.
@@ -594,7 +594,7 @@ struct ObAddObserverPathArgs {
     workspace: PathBuf,
 }
 
-// ot: boundary cli.ob-add-forbidden-log-target cli
+// locus: ot boundary cli.ob-add-forbidden-log-target cli
 #[derive(clap::Args, Debug)]
 struct ObAddForbiddenLogTargetArgs {
     /// Macro path pattern considered raw/inappropriate.
@@ -603,7 +603,7 @@ struct ObAddForbiddenLogTargetArgs {
     workspace: PathBuf,
 }
 
-// ot: boundary cli.pa cli
+// locus: ot boundary cli.pa cli
 #[derive(Subcommand, Debug)]
 enum PaCommand {
     /// Mark a trait pattern as an accepted co-located trait (PA001).
@@ -612,7 +612,7 @@ enum PaCommand {
     AddApplicationPath(PaAddApplicationPathArgs),
 }
 
-// ot: boundary cli.pa-accept-colocated cli
+// locus: ot boundary cli.pa-accept-colocated cli
 #[derive(clap::Args, Debug)]
 struct PaAcceptColocatedArgs {
     /// Trait symbol pattern (full path or short name).
@@ -621,7 +621,7 @@ struct PaAcceptColocatedArgs {
     workspace: PathBuf,
 }
 
-// ot: boundary cli.pa-add-application-path cli
+// locus: ot boundary cli.pa-add-application-path cli
 #[derive(clap::Args, Debug)]
 struct PaAddApplicationPathArgs {
     /// Module path glob, e.g. `"crate::application::*"`.
@@ -630,7 +630,7 @@ struct PaAddApplicationPathArgs {
     workspace: PathBuf,
 }
 
-// ot: boundary cli.rm cli
+// locus: ot boundary cli.rm cli
 #[derive(Subcommand, Debug)]
 enum RmCommand {
     /// Set the workspace-wide per-function action-kind cap (RM001).
@@ -641,7 +641,7 @@ enum RmCommand {
     AddDomainPath(RmAddDomainPathArgs),
 }
 
-// ot: boundary cli.rm-set-default cli
+// locus: ot boundary cli.rm-set-default cli
 #[derive(clap::Args, Debug)]
 struct RmSetDefaultArgs {
     /// Maximum number of distinct action kinds a single function may produce.
@@ -651,7 +651,7 @@ struct RmSetDefaultArgs {
     workspace: PathBuf,
 }
 
-// ot: boundary cli.rm-add-exempt-path cli
+// locus: ot boundary cli.rm-add-exempt-path cli
 #[derive(clap::Args, Debug)]
 struct RmAddExemptPathArgs {
     /// Module pattern exempt from RM checks.
@@ -660,7 +660,7 @@ struct RmAddExemptPathArgs {
     workspace: PathBuf,
 }
 
-// ot: boundary cli.rm-add-domain-path cli
+// locus: ot boundary cli.rm-add-domain-path cli
 #[derive(clap::Args, Debug)]
 struct RmAddDomainPathArgs {
     /// Module path glob, e.g. `"crate::domain::*"`.
@@ -669,14 +669,14 @@ struct RmAddDomainPathArgs {
     workspace: PathBuf,
 }
 
-// ot: boundary cli.rw cli
+// locus: ot boundary cli.rw cli
 #[derive(Subcommand, Debug)]
 enum RwCommand {
     /// Mark a module pattern as a runtime owner (RW001).
     AcceptRuntimeOwner(RwAcceptRuntimeOwnerArgs),
 }
 
-// ot: boundary cli.rw-accept-runtime-owner cli
+// locus: ot boundary cli.rw-accept-runtime-owner cli
 #[derive(clap::Args, Debug)]
 struct RwAcceptRuntimeOwnerArgs {
     /// Module path glob.
@@ -685,14 +685,14 @@ struct RwAcceptRuntimeOwnerArgs {
     workspace: PathBuf,
 }
 
-// ot: boundary cli.ta cli
+// locus: ot boundary cli.ta cli
 #[derive(Subcommand, Debug)]
 enum TaCommand {
     /// Mark a module pattern as test code (TA001).
     AddTestPath(TaAddTestPathArgs),
 }
 
-// ot: boundary cli.ta-add-test-path cli
+// locus: ot boundary cli.ta-add-test-path cli
 #[derive(clap::Args, Debug)]
 struct TaAddTestPathArgs {
     /// Module pattern matching test files.
@@ -701,7 +701,7 @@ struct TaAddTestPathArgs {
     workspace: PathBuf,
 }
 
-// ot: boundary cli.init cli
+// locus: ot boundary cli.init cli
 #[derive(clap::Args, Debug)]
 struct InitArgs {
     /// Workspace root (containing Cargo.toml).
@@ -718,7 +718,7 @@ struct InitArgs {
     acknowledge_empty: Option<String>,
 }
 
-// ot: boundary cli.emit-air cli
+// locus: ot boundary cli.emit-air cli
 #[derive(clap::Args, Debug)]
 struct EmitAirArgs {
     /// Workspace root (containing Cargo.toml).
@@ -732,7 +732,7 @@ struct EmitAirArgs {
     pretty: bool,
 }
 
-// ot: boundary cli.debt cli
+// locus: ot boundary cli.debt cli
 #[derive(clap::Args, Debug)]
 struct DebtArgs {
     /// Workspace root (containing Cargo.toml).
@@ -743,7 +743,7 @@ struct DebtArgs {
     json: bool,
 }
 
-// ot: boundary cli.check cli
+// locus: ot boundary cli.check cli
 #[derive(clap::Args, Debug)]
 struct CheckArgs {
     /// Workspace root (containing Cargo.toml).
@@ -1942,7 +1942,7 @@ fn check(args: CheckArgs) -> Result<()> {
     let today = today_utc();
     let all = apply_exceptions(all, &air, &lockfile, Some(&today));
 
-    // Diff filter — applied after exceptions so an `// ot: allow XX###`
+    // Diff filter — applied after exceptions so an `// locus: allow XX###`
     // hint on changed code still suppresses, and the LOCUS001 expired-
     // exception warnings still surface for changed files.
     let all = if args.changed {

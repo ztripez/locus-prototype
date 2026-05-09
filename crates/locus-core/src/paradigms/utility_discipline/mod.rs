@@ -16,7 +16,7 @@
 //! - UT005: validation/normalization inside a utility module —
 //!   target-agnostic counterpart to UT004.
 
-// ot: canonical
+// locus: ot canonical
 
 use super::Paradigm;
 use crate::diagnostics::{CheckMode, Diagnostic, vacant_paradigm_diagnostic};

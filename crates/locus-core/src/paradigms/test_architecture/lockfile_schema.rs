@@ -17,7 +17,7 @@
 //! `port_trait_patterns`) is empty, so the per-rule onboarding gate is
 //! independent.
 
-// ot: canonical
+// locus: ot canonical
 
 use serde::{Deserialize, Serialize};
 

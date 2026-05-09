@@ -318,7 +318,7 @@ pub fn mo003(air: &AirWorkspace, mode: CheckMode) -> Vec<Diagnostic> {
                     "module `{module_path}` mixes canonical and boundary types"
                 ),
                 why: vec![
-                    format!("file `{module_path}` has both a `// ot: canonical` and a `// ot: boundary` hint"),
+                    format!("file `{module_path}` has both a `// locus: ot canonical` and a `// locus: ot boundary` hint"),
                     "canonical types are the domain truth; boundary types are the \
                      wire/protocol shadow of that truth — keeping them in one file \
                      blurs ownership and makes the converter direction ambiguous"
@@ -383,7 +383,7 @@ pub fn mo004(air: &AirWorkspace, section: &MoSection, mode: CheckMode) -> Vec<Di
                     handler.name
                 ),
                 why: vec![
-                    format!("file `{module_path}` has a `// ot: canonical` hint"),
+                    format!("file `{module_path}` has a `// locus: ot canonical` hint"),
                     format!(
                         "function `{}` matches handler name pattern (one of {:?})",
                         handler.name, handler_patterns
@@ -695,7 +695,7 @@ mod tests {
     fn canonical_hint() -> AirHint {
         AirHint {
             kind: HintKind::Canonical,
-            raw: "// ot: canonical".into(),
+            raw: "// locus: ot canonical".into(),
             span: AirSpan::new("t.rs", 5, 5),
             target_span: Some(AirSpan::new("t.rs", 6, 10)),
         }
@@ -707,7 +707,7 @@ mod tests {
                 concept: Some("user".into()),
                 boundary: Some("api".into()),
             },
-            raw: "// ot: boundary user api".into(),
+            raw: "// locus: ot boundary user api".into(),
             span: AirSpan::new("t.rs", 20, 20),
             target_span: Some(AirSpan::new("t.rs", 21, 30)),
         }
@@ -716,7 +716,7 @@ mod tests {
     fn converter_hint() -> AirHint {
         AirHint {
             kind: HintKind::Converter,
-            raw: "// ot: converter".into(),
+            raw: "// locus: ot converter".into(),
             span: AirSpan::new("t.rs", 40, 40),
             target_span: Some(AirSpan::new("t.rs", 41, 45)),
         }

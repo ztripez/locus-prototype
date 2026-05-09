@@ -7,11 +7,11 @@ real onboarding effort that's out of scope for a single sitting. The
 work was reverted so `main` stays clean. This note records what the
 pass found so future work can pick it up without re-discovering.
 
-## Bug — `// ot: canonical` on singletons silently dropped
+## Bug — `// locus: ot canonical` on singletons silently dropped
 
 `crates/locus-core/src/paradigms/one_truth/infer.rs` `cluster_concepts`
 skips name-stem buckets with fewer than two members. So a
-`// ot: canonical` on a type with no shadow peers (e.g. `AirWorkspace`,
+`// locus: ot canonical` on a type with no shadow peers (e.g. `AirWorkspace`,
 `AirHint`) ends up in no cluster, and `build_ot_section` never emits
 a `ConceptEntry` for it. Before the fix, `locus init` against the
 self-annotated repo reported `auto-applied: 0 source hints promoted`
@@ -28,7 +28,7 @@ Reverted with the dogfood branch, but the fix is small and obvious:
   the symbol.
 - Test: `singleton_hinted_canonical_lands_in_section`.
 
-Boundary singletons (`// ot: boundary cli.invocation cli` on a
+Boundary singletons (`// locus: ot boundary cli.invocation cli` on a
 clap-derive struct without a domain canonical) are a deeper modelling
 question — `ConceptEntry` requires a canonical, and we'd have to
 either synthesize a placeholder, loosen the schema, or skip
@@ -106,7 +106,7 @@ than a config tweak:
   forces the question of whether type-level access should narrow.
 - OT: is `locus-rust` a converter for every AIR type, or is the
   AIR-construction concept itself one converter (e.g. the `scan`
-  function and below)? Today's `// ot: converter` annotation is
+  function and below)? Today's `// locus: ot converter` annotation is
   per-impl-block / per-function; covering an entire crate may need
   a glob form.
 

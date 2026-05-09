@@ -14,7 +14,7 @@
 //! still useful for un-onboarded projects; CX008 stays silent until the
 //! user populates `orchestration_paths`.
 
-// ot: canonical
+// locus: ot canonical
 
 use serde::{Deserialize, Serialize};
 

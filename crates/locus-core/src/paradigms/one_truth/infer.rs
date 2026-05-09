@@ -2,7 +2,7 @@
 //! each member an inferred role (canonical / accepted-boundary / unknown).
 //!
 //! This is deliberately conservative for Phase 2:
-//! - Only `// ot:` hints grant *accepted* canonical / boundary status.
+//! - Only `// locus: ot …` hints grant *accepted* canonical / boundary status.
 //! - A boundary-shaped suffix (e.g. `UserDto`) is a *signal*, not acceptance —
 //!   it shows up as a `reason` on the diagnostic, not as a free pass.
 //! - Confidence is tracked on each member so rules can pick their threshold.
@@ -53,9 +53,9 @@ pub struct ClusterMember {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InferredRole {
-    /// Hinted `// ot: canonical` (or, in future, accepted in lockfile).
+    /// Hinted `// locus: ot canonical` (or, in future, accepted in lockfile).
     Canonical,
-    /// Hinted `// ot: boundary` (or, in future, accepted in lockfile).
+    /// Hinted `// locus: ot boundary` (or, in future, accepted in lockfile).
     Boundary,
     /// No acceptance recorded. Some types in this state are diagnostic targets
     /// (OT002); others are simply unrelated types we couldn't classify.
@@ -225,7 +225,7 @@ fn concept_id_from_stem(stem: &str) -> String {
 }
 
 fn pick_reference(members: &[TypeRef<'_>], section: &OtSection) -> usize {
-    // Prefer a member with `// ot: canonical` or a lockfile-accepted canonical.
+    // Prefer a member with `// locus: ot canonical` or a lockfile-accepted canonical.
     // Otherwise the member with the most fields (most likely the canonical shape).
     if let Some(idx) = members.iter().position(|m| {
         matches!(
@@ -324,7 +324,7 @@ fn compute_cluster_confidence(members: &[ClusterMember]) -> f32 {
             score += 0.4 * mean_overlap;
         }
     } else {
-        // No canonical (no `// ot:` hint): be more conservative; rely on
+        // No canonical (no `// locus: ot canonical` hint): be more conservative; rely on
         // the average field overlap across all members against the reference.
         if !members.is_empty() {
             let mean_overlap: f32 =

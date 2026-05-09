@@ -63,7 +63,7 @@ Append to a new file `crates/locus-core/src/init.rs`:
 //! Suggestions are *not* fired as `Diagnostic`s — they are init-only and
 //! never affect the rule engine's pass/fail.
 
-// ot: canonical
+// locus: ot canonical
 
 use std::cmp::Ordering;
 use std::collections::BTreeMap;
@@ -342,7 +342,7 @@ use crate::init::Suggestion;
 use crate::lockfile::Lockfile;
 use locus_air::AirWorkspace;
 
-// ot: canonical
+// locus: ot canonical
 pub trait Paradigm {
     fn name(&self) -> &'static str;
     fn rule_prefix(&self) -> &'static str;
@@ -980,14 +980,14 @@ Find the `match cli.command` block in `main()` (near line 676) and add the match
 Define the subcommand enum and its argument struct. Append next to the other paradigm subcommand definitions (e.g. just below `enum DgCommand`):
 
 ```rust
-// ot: boundary cli.er cli
+// locus: ot boundary cli.er cli
 #[derive(Subcommand, Debug)]
 enum ErCommand {
     /// Mark a module pattern as part of the domain layer (ER003).
     AddDomainPath(ErAddDomainPathArgs),
 }
 
-// ot: boundary cli.er-add-domain-path cli
+// locus: ot boundary cli.er-add-domain-path cli
 #[derive(clap::Args, Debug)]
 struct ErAddDomainPathArgs {
     /// Module path glob, e.g. `"crate::domain::*"`.
@@ -1125,7 +1125,7 @@ enum RmCommand {
     AddDomainPath(RmAddDomainPathArgs),
 }
 
-// ot: boundary cli.rm-add-domain-path cli
+// locus: ot boundary cli.rm-add-domain-path cli
 #[derive(clap::Args, Debug)]
 struct RmAddDomainPathArgs {
     /// Module path glob, e.g. `"crate::domain::*"`.
@@ -1253,7 +1253,7 @@ In `crates/locus-cli/src/main.rs`, find `enum PaCommand` and add:
 ```
 
 ```rust
-// ot: boundary cli.pa-add-application-path cli
+// locus: ot boundary cli.pa-add-application-path cli
 #[derive(clap::Args, Debug)]
 struct PaAddApplicationPathArgs {
     /// Module path glob, e.g. `"crate::application::*"`.
@@ -2137,7 +2137,7 @@ enum AcceptCommand {
 Append the args struct next to the others:
 
 ```rust
-// ot: boundary cli.accept-converter cli
+// locus: ot boundary cli.accept-converter cli
 #[derive(clap::Args, Debug)]
 struct AcceptConverterArgs {
     /// The converter symbol — e.g. `"impl TryFrom<UserDto> for User"` or a free fn path.
@@ -3331,14 +3331,14 @@ In the `match cli.command` block, add:
 Define the subcommand and arg structs:
 
 ```rust
-// ot: boundary cli.rw cli
+// locus: ot boundary cli.rw cli
 #[derive(Subcommand, Debug)]
 enum RwCommand {
     /// Mark a module pattern as a runtime owner (RW001).
     AcceptRuntimeOwner(RwAcceptRuntimeOwnerArgs),
 }
 
-// ot: boundary cli.rw-accept-runtime-owner cli
+// locus: ot boundary cli.rw-accept-runtime-owner cli
 #[derive(clap::Args, Debug)]
 struct RwAcceptRuntimeOwnerArgs {
     /// Module path glob.

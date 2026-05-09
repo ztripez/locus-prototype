@@ -274,7 +274,10 @@ fn x() {}
                 "// locus: fact request_context\nfn x() {}\n",
                 "request_context",
             ),
-            ("// locus: fact BoundaryEntry\nfn x() {}\n", "boundary_entry"),
+            (
+                "// locus: fact BoundaryEntry\nfn x() {}\n",
+                "boundary_entry",
+            ),
             (
                 "// locus: fact BackgroundWorker\nfn x() {}\n",
                 "background_worker",

@@ -15,7 +15,7 @@
 //! - RM005: validator function performing IO (external or persistence).
 //! - RM006: domain type method performing persistence-write.
 
-// ot: canonical
+// locus: ot canonical
 
 use super::Paradigm;
 use crate::diagnostics::{CheckMode, Diagnostic, vacant_paradigm_diagnostic};

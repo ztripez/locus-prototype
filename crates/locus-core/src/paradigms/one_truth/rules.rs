@@ -30,7 +30,7 @@ use crate::diagnostics::{CheckMode, Diagnostic, Severity};
 /// OT002 — undeclared concept-shaped type.
 ///
 /// Fires when a cluster contains:
-/// - at least one Canonical member (annotated `// ot: canonical`), and
+/// - at least one Canonical member (annotated `// locus: ot canonical`), and
 /// - one or more Unknown members whose field overlap with the canonical
 ///   meets [`FIELD_OVERLAP_THRESHOLD`].
 ///
@@ -67,7 +67,7 @@ pub fn ot002(clusters: &[ConceptCluster], mode: CheckMode) -> Vec<Diagnostic> {
             why.extend(member.reasons.iter().cloned());
 
             let suggested_fix = format!(
-                "annotate as boundary: `// ot: boundary {} <boundary-name>` above `{}`, \
+                "annotate as boundary: `// locus: ot boundary {} <boundary-name>` above `{}`, \
                  or remove and use `{}` directly",
                 cluster.concept_id, member.name, canonical.symbol
             );
@@ -93,7 +93,7 @@ pub fn ot002(clusters: &[ConceptCluster], mode: CheckMode) -> Vec<Diagnostic> {
 ///
 /// Fires when two or more cluster members are tagged Canonical for the same
 /// concept. Two ways this happens:
-/// - multiple `// ot: canonical` annotations across types in the same stem
+/// - multiple `// locus: ot canonical` annotations across types in the same stem
 ///   bucket;
 /// - a hint and a lockfile acceptance disagreeing — the lockfile wins for the
 ///   role lookup, but the *other* annotated type still presents as Canonical
@@ -115,7 +115,7 @@ pub fn ot001(clusters: &[ConceptCluster], _mode: CheckMode) -> Vec<Diagnostic> {
 
         // Diagnostic per *extra* canonical — pin the first as the "incumbent"
         // and report each additional one. This makes the fixes obvious: drop
-        // the redundant `// ot: canonical` annotation or rename the type.
+        // the redundant `// locus: ot canonical` annotation or rename the type.
         let primary = canonicals[0];
         for extra in &canonicals[1..] {
             out.push(Diagnostic {
@@ -136,8 +136,8 @@ pub fn ot001(clusters: &[ConceptCluster], _mode: CheckMode) -> Vec<Diagnostic> {
                     format!("incumbent canonical: `{}`", primary.symbol),
                 ],
                 suggested_fix: Some(format!(
-                    "drop the `// ot: canonical` annotation on `{}` and either \
-                     re-annotate it as `// ot: boundary {} <name>` or rename the type",
+                    "drop the `// locus: ot canonical` annotation on `{}` and either \
+                     re-annotate it as `// locus: ot boundary {} <name>` or rename the type",
                     extra.name, cluster.concept_id
                 )),
             });
@@ -528,7 +528,7 @@ pub fn ot005(air: &AirWorkspace, section: &OtSection, mode: CheckMode) -> Vec<Di
 /// canonical and create a hidden translation path; the preferred shape is
 /// `adapter → canonical → adapter`.
 ///
-/// Suppressed when a `// ot: protocol-translation reason="…"` hint binds to
+/// Suppressed when a `// locus: ot protocol-translation reason="…"` hint binds to
 /// the conversion's span — the explicit "yes I really mean this" escape hatch
 /// from the spec.
 ///
@@ -588,7 +588,7 @@ pub fn ot007(air: &AirWorkspace, section: &OtSection, mode: CheckMode) -> Vec<Di
                     suggested_fix: Some(
                         "go through the canonical (e.g. `Canonical::try_from(from)?` then \
                          `Other::from(canonical)`), or annotate the conversion with \
-                         `// ot: protocol-translation reason=\"...\"` if it's an \
+                         `// locus: ot protocol-translation reason=\"...\"` if it's an \
                          intentional shortcut"
                             .into(),
                     ),
@@ -599,7 +599,7 @@ pub fn ot007(air: &AirWorkspace, section: &OtSection, mode: CheckMode) -> Vec<Di
     out
 }
 
-/// True if any `// ot: protocol-translation` hint in the file has a
+/// True if any `// locus: ot protocol-translation` hint in the file has a
 /// `target_span` that lands within the conversion's span.
 fn conversion_has_protocol_translation_hint(hints: &[locus_air::AirHint], span: &AirSpan) -> bool {
     hints.iter().any(|h| {
@@ -959,7 +959,7 @@ pub fn ot010(air: &AirWorkspace, section: &OtSection, mode: CheckMode) -> Vec<Di
                         suggested_fix: Some(format!(
                             "remove `{}` and use `{canonical_symbol}` directly, or accept \
                              this enum as a boundary for `{concept_id}` via \
-                             `// ot: boundary {concept_id} <name>` then rerun `locus init`",
+                             `// locus: ot boundary {concept_id} <name>` then rerun `locus init`",
                             ty.name
                         )),
                     });
@@ -1033,7 +1033,7 @@ pub fn ot011(air: &AirWorkspace, section: &OtSection, mode: CheckMode) -> Vec<Di
                     suggested_fix: Some(format!(
                         "remove `{}` and import `{canonical_symbol}` instead; if this \
                          really is a parallel boundary representation, accept it via \
-                         `// ot: boundary {concept_id} <name>` then rerun `locus init`",
+                         `// locus: ot boundary {concept_id} <name>` then rerun `locus init`",
                         ty.symbol
                     )),
                 });
@@ -1115,7 +1115,7 @@ pub fn ot012(air: &AirWorkspace, section: &OtSection, mode: CheckMode) -> Vec<Di
                         ],
                         suggested_fix: Some(format!(
                             "use `{canonical_short_name}` instead of `{}` for `{}`, or \
-                             accept `{}` as a boundary via `// ot: boundary {concept_id} \
+                             accept `{}` as a boundary via `// locus: ot boundary {concept_id} \
                              <name>` if it's a wire-shape adapter",
                             field.type_text, field.name, ty.symbol
                         )),
@@ -2098,7 +2098,8 @@ mod tests {
                         kind: HintKind::ProtocolTranslation {
                             reason: Some("compatibility endpoint".into()),
                         },
-                        raw: "// ot: protocol-translation reason=\"compatibility endpoint\"".into(),
+                        raw: "// locus: ot protocol-translation reason=\"compatibility endpoint\""
+                            .into(),
                         span: AirSpan::new("src/api/v1.rs", 9, 9),
                         target_span: Some(AirSpan::new("src/api/v1.rs", 10, 10)),
                     }],

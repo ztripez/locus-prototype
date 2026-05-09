@@ -65,7 +65,7 @@ fn scans_sample_crate() {
             .hints
             .iter()
             .any(|h| matches!(h.kind, HintKind::Canonical)),
-        "expected `// ot: canonical` hint on identity.rs, got {:?}",
+        "expected `// locus: ot canonical` hint on identity.rs, got {:?}",
         identity.hints
     );
 
@@ -97,7 +97,7 @@ fn scans_sample_crate() {
         conversions
     );
 
-    // ot: boundary hint with concept + boundary args.
+    // locus: ot boundary hint with concept + boundary args.
     let boundary_hint = dto
         .hints
         .iter()

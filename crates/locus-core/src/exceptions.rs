@@ -1,4 +1,4 @@
-//! Diagnostic suppression via `// ot: allow` source hints and lockfile
+//! Diagnostic suppression via `// locus: allow` source hints and lockfile
 //! exceptions. Exceptions are local, explicit, and reviewable
 //! (`docs/project-jumpoff.md` §"Exceptions") — every suppression carries a
 //! reason and an expiry date.
@@ -6,7 +6,7 @@
 //! Two suppression sources, both filtered through [`apply_exceptions`]:
 //!
 //! 1. **Source hints** — `HintKind::Allow { rule, reason, expires }` parsed
-//!    from `// ot: allow XX### reason="..." expires="YYYY-MM-DD"` comments
+//!    from `// locus: allow XX### reason="..." expires="YYYY-MM-DD"` comments
 //!    by the language adapter. The hint binds to the next non-blank line;
 //!    a diagnostic in that line range with a matching rule prefix is
 //!    suppressed.
@@ -19,7 +19,7 @@
 //! "expired exception" diagnostic so the user notices the lapse without
 //! their existing diagnostic suite collapsing.
 
-// ot: canonical
+// locus: ot canonical
 
 use crate::diagnostics::{Diagnostic, Severity};
 use crate::lockfile::Lockfile;
@@ -154,12 +154,12 @@ pub enum ExceptionSource {
 pub enum ExceptionStatus {
     Active,
     Expired,
-    /// `// ot: allow` source hint without an `expires=` clause. The hint
+    /// `// locus: allow` source hint without an `expires=` clause. The hint
     /// suppresses forever; surfaced separately so the user notices.
     Unbounded,
 }
 
-/// Walk every `// ot: allow` hint in `air` and every `Lockfile.exceptions`
+/// Walk every `// locus: allow` hint in `air` and every `Lockfile.exceptions`
 /// entry, returning a row per suppression with its current status. Used
 /// by `locus debt`. `today` follows the same convention as
 /// [`apply_exceptions`]: `Some("YYYY-MM-DD")` for deterministic runs,
@@ -381,7 +381,7 @@ mod tests {
                 reason: Some("test".into()),
                 expires: expires.map(|s| s.into()),
             },
-            raw: format!("// ot: allow {rule}"),
+            raw: format!("// locus: allow {rule}"),
             span: AirSpan::new("t.rs", target_line - 1, target_line - 1),
             target_span: Some(AirSpan::new("t.rs", target_line, target_line)),
         }

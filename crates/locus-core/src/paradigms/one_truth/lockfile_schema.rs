@@ -3,10 +3,10 @@
 //! Each entry carries its `source` (hint / init / accepted) so reviewers
 //! can tell why a symbol was promoted. `init` means "Locus inferred this
 //! during `locus init` from a strong signal"; `hint` means "the symbol
-//! carries an `// ot:` annotation"; `accepted` is the future `locus accept`
+//! carries a `// locus: ot …` annotation"; `accepted` is the future `locus accept`
 //! path.
 
-// ot: canonical
+// locus: ot canonical
 
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -51,7 +51,7 @@ pub struct AcceptedConverter {
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
 pub enum Source {
-    /// Recorded because a `// ot:` hint exists on the type.
+    /// Recorded because a `// locus: ot …` hint exists on the type.
     Hint,
     /// Promoted by `locus init` from an inferred candidate (currently:
     /// converters whose endpoints are both accepted).

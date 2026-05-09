@@ -13,7 +13,7 @@
 //! - TA003: test struct whose name and field-set both echo a canonical concept.
 //! - TA004: port impl in test code outside accepted test-adapter modules.
 
-// ot: canonical
+// locus: ot canonical
 
 use super::Paradigm;
 use crate::diagnostics::{CheckMode, Diagnostic, vacant_paradigm_diagnostic};

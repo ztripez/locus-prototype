@@ -7,7 +7,7 @@
 //! The lockfile is generated and updated by CLI commands — humans review it
 //! in PRs but don't hand-edit in normal use.
 
-// ot: canonical
+// locus: ot canonical
 
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;

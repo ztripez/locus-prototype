@@ -15,7 +15,7 @@
 //!   (`std::fs::write`/`create_dir`/`remove_*` etc., via the std-rt
 //!   loader's `PersistenceWrite` facts).
 
-// ot: canonical
+// locus: ot canonical
 
 use super::Paradigm;
 use crate::diagnostics::{CheckMode, Diagnostic, vacant_paradigm_diagnostic};

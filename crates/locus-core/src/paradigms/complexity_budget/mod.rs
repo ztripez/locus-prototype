@@ -20,7 +20,7 @@
 //! `max_public_items`, `exempt_paths`, or silence the paradigm wholesale
 //! by adding `"CX"` to `Lockfile.acknowledged_empty`.
 
-// ot: canonical
+// locus: ot canonical
 
 use super::Paradigm;
 use crate::diagnostics::{CheckMode, Diagnostic};

@@ -9,7 +9,7 @@
 
 use locus_air::{AirFact, AirWorkspace};
 
-// ot: canonical
+// locus: ot canonical
 pub trait Loader: Send + Sync {
     fn name(&self) -> &'static str;
     /// Inspect the AIR and produce normalized facts. Loaders are
