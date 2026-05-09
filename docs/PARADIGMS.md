@@ -134,6 +134,57 @@ This document is the *target* spec — the full set of paradigms Locus is design
 - `// locus: allow XX### reason="…" expires="YYYY-MM-DD"` source hints + `Lockfile.exceptions[]` lockfile entries are honoured by the CLI's `check` pipeline. Expired exceptions emit a `LOCUS001` warning instead of silently re-firing.
 - `locus check --changed [--baseline <ref>]` filters diagnostics to files modified since the baseline (default chain: `origin/main` → `origin/master` → `main` → `master` → `HEAD~1`). Combines committed diff, working-tree diff, and untracked-but-not-ignored files so local development matches CI behaviour. Combine with `--agent-strict` for the canonical "fail CI only on PR-introduced violations" shape.
 
+## Severity tiers
+
+Three tiers govern how a rule's default `Warning` should behave under
+`--agent-strict`. The tier shapes economics, not detection — a rule still
+fires the same way; only the elevated severity changes.
+
+| Tier | Default severity | Under `--agent-strict` | When to use |
+|---|---|---|---|
+| **Strict-immediate** | `Fatal` | `Fatal` | Deterministic authority violations under user declarations. Example: `DG001` (forbidden import — the user explicitly forbade this edge), `OT001` (two canonicals for the same concept). |
+| **Strict-after-onboarding** | `Warning` | `Fatal` | Deterministic smells whose meaning depends on accepted ownership / scope being declared. Once the relevant lockfile section is populated, the rule has standing to block. Default in this codebase. |
+| **Advisory smoke-alarm** | `Warning` | `Warning` until the rule is narrowed; `Fatal` after. | Broad heuristics whose Fatal economics depend on user calibration (line budgets, magic-constant detection, opt-in style policies). The `CheckMode::elevate_when_actionable(sev, narrowed)` helper enforces this — it stays `Warning` even under `--agent-strict` if the user hasn't set workspace-wide config or a path-level override for this call site. |
+
+**Tier assignment by rule family** — recommendations the implementations
+should match. A rule's *current* severity behaviour is determined by which
+helper it calls (`mode.elevate` vs `mode.elevate_when_actionable`); this
+table is the policy the rule code is meant to encode.
+
+| Paradigm | Strict-immediate | Strict-after-onboarding | Advisory smoke-alarm |
+|---|---|---|---|
+| OT | OT001 | OT002–OT012 | — |
+| DG | DG001, DG003, DG004 | DG002 | — |
+| CF | — | CF001, CF003 | CF002 |
+| DA | — | DA001, DA002, DA007 | — |
+| BO | — | BO001, BO002, BO004, BO005 | — |
+| PA | — | PA001–PA004 | — |
+| CR | CR001, CR002 | — | — |
+| RM | — | RM001–RM006 | — |
+| MO | — | MO003, MO004 | MO001, MO002 |
+| CX | — | CX008 | **CX001**, **CX002**, CX007 |
+| UT | — | UT001–UT005 | — |
+| FL | — | FL001–FL013 | — |
+| ER | — | ER001, ER002, ER003, ER005, ER007 | — |
+| RW | — | RW001–RW006 | — |
+| FO | — | FO001, FO004 | — |
+| AB | — | AB001, AB002 | — |
+| DC | — | DC002, DC004 | DC001 (opt-in via `paradigms.DC.require_public_docs`) |
+| OB | OB001 | OB002, OB003, OB004 | — |
+| TA | — | TA001–TA004 | — |
+
+**Bolded entries** call `elevate_when_actionable` today; the rest currently
+use plain `elevate`. The bolded set will grow as the convention rolls
+out (issue #6, epic #1). Promotion criteria — see
+`docs/superpowers/specs/2026-05-09-dogfood-false-positive-ledger.md` —
+require dogfood evidence that the rule reliably catches real LLM damage at
+acceptable false-positive rate before moving from Advisory to
+Strict-after-onboarding.
+
+**Non-goals.** Full-repo zero `CX001`/`CX002` warning counts are not a
+milestone. The right strict gate is `locus check --workspace . --changed --agent-strict` —
+fail CI only on PR-introduced violations against a declared budget.
+
 ---
 
 ## Paradigm 1: Canonical Domain Ownership

@@ -133,4 +133,85 @@ impl CheckMode {
             (_, s) => s,
         }
     }
+
+    /// Like [`CheckMode::elevate`], but for *advisory-tier* rules — broad
+    /// heuristics whose Fatal-under-strict economics depend on whether the
+    /// user has narrowed them via lockfile config. Examples: CX001/CX002
+    /// line budgets, CF002 magic-constant detection.
+    ///
+    /// - `narrowed = false` (using built-in fallback budget, no overrides):
+    ///   stays `Warning` even under `--agent-strict`. The rule is still a
+    ///   useful smoke alarm, but blocking CI on un-onboarded code is the
+    ///   wrong economics — the user hasn't yet made the rule actionable.
+    /// - `narrowed = true` (workspace default explicitly set, or per-module
+    ///   override matched, or path exempt list non-empty): behaves like
+    ///   regular [`elevate`] — Warning becomes Fatal under
+    ///   `--agent-strict`.
+    ///
+    /// Per `docs/PARADIGMS.md` §"Severity tiers"; tracks issue #6 (epic
+    /// #1 child).
+    pub fn elevate_when_actionable(&self, sev: Severity, narrowed: bool) -> Severity {
+        match (self, sev, narrowed) {
+            (CheckMode::AgentStrict, Severity::Warning, true) => Severity::Fatal,
+            (_, s, _) => s,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn elevate_bumps_warning_to_fatal_under_agent_strict() {
+        assert_eq!(
+            CheckMode::AgentStrict.elevate(Severity::Warning),
+            Severity::Fatal
+        );
+        assert_eq!(
+            CheckMode::Human.elevate(Severity::Warning),
+            Severity::Warning
+        );
+    }
+
+    #[test]
+    fn elevate_when_actionable_blocks_strict_elevation_for_un_narrowed_advisory_rule() {
+        // Un-narrowed (built-in fallback budget): even agent-strict should
+        // not turn a broad heuristic into a CI blocker.
+        assert_eq!(
+            CheckMode::AgentStrict.elevate_when_actionable(Severity::Warning, false),
+            Severity::Warning,
+        );
+        assert_eq!(
+            CheckMode::Human.elevate_when_actionable(Severity::Warning, false),
+            Severity::Warning,
+        );
+    }
+
+    #[test]
+    fn elevate_when_actionable_elevates_for_narrowed_advisory_rule() {
+        // The user has set an explicit budget / per-module override / path
+        // exempt — the rule is actionable, so agent-strict should elevate.
+        assert_eq!(
+            CheckMode::AgentStrict.elevate_when_actionable(Severity::Warning, true),
+            Severity::Fatal,
+        );
+        assert_eq!(
+            CheckMode::Human.elevate_when_actionable(Severity::Warning, true),
+            Severity::Warning,
+        );
+    }
+
+    #[test]
+    fn elevate_when_actionable_passes_non_warning_severities_through() {
+        // Fatal stays Fatal regardless; Advisory stays Advisory.
+        assert_eq!(
+            CheckMode::AgentStrict.elevate_when_actionable(Severity::Fatal, false),
+            Severity::Fatal,
+        );
+        assert_eq!(
+            CheckMode::AgentStrict.elevate_when_actionable(Severity::Advisory, true),
+            Severity::Advisory,
+        );
+    }
 }

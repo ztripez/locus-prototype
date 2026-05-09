@@ -1,5 +1,5 @@
 {
-  "date": "2026-05-09 (updated 2026-05-09)",
+  "date": "2026-05-09 (updated 2026-05-09 — severity tier policy)",
   "scope": "Locus self-application triage",
   "legend": {
     "TP": "true positive architectural problem",
@@ -8,6 +8,7 @@
     "DEBT": "known, accepted, intentionally deferred",
     "MIXED": "contains both likely-true and likely-false signals"
   },
+  "tier_policy_doc": "docs/PARADIGMS.md#severity-tiers",
   "rows": [
     {
       "rule": "DG003",
@@ -16,7 +17,9 @@
       "primary_cause": "Feature onboarding/docs landed; no active DG003 in current self-check snapshot",
       "next_action": "Keep feature/public_api onboarding path as default in init; recheck each dogfood pass",
       "owner": "@core",
-      "strictness_note": "Keep Warning→Fatal under --agent-strict; now behaving as intended for changed-only strict"
+      "tier": "Strict-immediate",
+      "elevation_helper": "elevate (Fatal default)",
+      "strictness_note": "Behaving as intended for changed-only strict"
     },
     {
       "rule": "OT004",
@@ -25,34 +28,108 @@
       "primary_cause": "Converter authority model explicit via OT.converter_paths; no active OT004 in current self-check snapshot",
       "next_action": "Keep converter-path onboarding guidance in docs and lockfile mutator flow",
       "owner": "@core",
-      "strictness_note": "Strict-ready in changed-only mode; remaining risk is onboarding drift, not rule noise"
+      "tier": "Strict-after-onboarding",
+      "elevation_helper": "elevate",
+      "strictness_note": "Strict-ready in changed-only mode; remaining risk is onboarding drift"
     },
     {
-      "rule": "CX001/CX002/CX007/CX008",
-      "last_observed": "(varies)",
+      "rule": "CX001",
+      "last_observed": "106 (2026-05-09)",
       "classification": "DEBT",
-      "primary_cause": "Default noisy thresholds on un-onboarded repo",
-      "next_action": "Record per-module overrides where justified",
+      "primary_cause": "Default 50-line per-function budget on un-onboarded repo",
+      "next_action": "Set workspace default_max_function_lines once dense rule files are triaged; per-module overrides",
       "owner": "@core",
-      "strictness_note": "Good strict candidates after threshold pass"
+      "tier": "Advisory",
+      "elevation_helper": "elevate_when_actionable",
+      "strictness_note": "Stays Warning under --agent-strict until narrowed via lockfile config"
+    },
+    {
+      "rule": "CX002",
+      "last_observed": "27 (2026-05-09)",
+      "classification": "DEBT",
+      "primary_cause": "Default 400-line per-module budget on un-onboarded repo",
+      "next_action": "Set default_max_module_lines or module_overrides for dense files",
+      "owner": "@core",
+      "tier": "Advisory",
+      "elevation_helper": "elevate_when_actionable",
+      "strictness_note": "Stays Warning under --agent-strict until narrowed via lockfile config"
+    },
+    {
+      "rule": "CX007",
+      "last_observed": "1 (2026-05-09)",
+      "classification": "DEBT",
+      "primary_cause": "One file crosses the public-item budget",
+      "next_action": "Add max_public_items override or refactor",
+      "owner": "@core",
+      "tier": "Advisory",
+      "elevation_helper": "elevate (will move to elevate_when_actionable in follow-up)",
+      "strictness_note": "Classified Advisory in PARADIGMS.md tier table; code update pending"
+    },
+    {
+      "rule": "CX008",
+      "last_observed": "0 (2026-05-09)",
+      "classification": "—",
+      "primary_cause": "orchestration_paths gating already silences self-application",
+      "next_action": "—",
+      "owner": "@core",
+      "tier": "Strict-after-onboarding",
+      "elevation_helper": "elevate",
+      "strictness_note": "User narrows via orchestration_paths lockfile field"
+    },
+    {
+      "rule": "DC001",
+      "last_observed": "0 (2026-05-09)",
+      "classification": "DEBT",
+      "primary_cause": "Opt-in via paradigms.DC.require_public_docs (defaults to false)",
+      "next_action": "Leave opt-in; revisit once we want to gate strict on documented public APIs",
+      "owner": "@docs",
+      "tier": "Advisory",
+      "elevation_helper": "elevate (silent until toggle set; toggle = narrowing)",
+      "strictness_note": "Already advisory-shaped via the require_public_docs gate"
     },
     {
       "rule": "DC002/DC004",
-      "last_observed": "(varies)",
+      "last_observed": "3 (DC002) / 0 (DC004)",
       "classification": "MIXED",
       "primary_cause": "Some real residue, some phrase overreach",
       "next_action": "Tag FP/TP examples and tighten phrase lists if needed",
       "owner": "@docs",
+      "tier": "Strict-after-onboarding",
+      "elevation_helper": "elevate",
       "strictness_note": "Keep Warning in human mode"
     },
     {
       "rule": "ER001/ER007",
-      "last_observed": "(varies)",
+      "last_observed": "0 / 11",
       "classification": "MIXED",
       "primary_cause": "Taxonomy drift + intentional legacy spread",
       "next_action": "Distinguish true drift from migration state",
       "owner": "@core",
-      "strictness_note": "Strict for new deltas only"
+      "tier": "Strict-after-onboarding",
+      "elevation_helper": "elevate",
+      "strictness_note": "Useful for new deltas via --changed --agent-strict"
+    },
+    {
+      "rule": "MO001",
+      "last_observed": "2 (2026-05-09)",
+      "classification": "DEBT",
+      "primary_cause": "Default public-types-per-file budget on un-onboarded repo",
+      "next_action": "Will move to elevate_when_actionable in a follow-up sweep",
+      "owner": "@core",
+      "tier": "Advisory",
+      "elevation_helper": "elevate (pending tier helper migration)",
+      "strictness_note": "Classified Advisory in PARADIGMS.md tier table"
+    },
+    {
+      "rule": "CF002",
+      "last_observed": "0 (rule body deferred)",
+      "classification": "—",
+      "primary_cause": "Stub: lockfile fields ship; rule body lands once a filesystem-aware loader is available",
+      "next_action": "When implementing, default to elevate_when_actionable per the policy table",
+      "owner": "@core",
+      "tier": "Advisory",
+      "elevation_helper": "n/a (stub)",
+      "strictness_note": "Advisory tier in policy table; nothing to fire yet"
     }
   ],
   "rerun_snapshot_2026_05_09": {
@@ -60,7 +137,10 @@
     "OT004": 0,
     "CX001": 106,
     "CX002": 27,
+    "CX007": 1,
     "ER007": 11,
+    "DC002": 3,
+    "MO001": 2,
     "LOCUS002": 13
   }
 }
