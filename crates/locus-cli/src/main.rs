@@ -750,7 +750,7 @@ struct DebtArgs {
     by_rule: bool,
 }
 
-// ot: boundary cli.explain cli
+// locus: ot boundary cli.explain cli
 #[derive(clap::Args, Debug)]
 struct ExplainArgs {
     /// Rule id to explain, e.g. `OT004`.
@@ -760,7 +760,7 @@ struct ExplainArgs {
     workspace: PathBuf,
 }
 
-// ot: boundary cli.prune cli
+// locus: ot boundary cli.prune cli
 #[derive(clap::Args, Debug)]
 struct PruneArgs {
     /// Workspace root (containing Cargo.toml).
