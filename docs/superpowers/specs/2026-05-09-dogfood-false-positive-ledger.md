@@ -1,8 +1,12 @@
-# Dogfood false-positive ledger (Epic #1)
+# Dogfood false-positive ledger (Epic #1 / Epic #37)
 
-Date: 2026-05-09 (updated 2026-05-09)
+Date: 2026-05-09 (updated 2026-05-09 — self-onboarding completion landed)
 Scope: Locus self-application triage
-Related: `docs/superpowers/plans/2026-05-09-issue-1-epic-execution.md` (Workstream #3)
+Related:
+- `docs/superpowers/plans/2026-05-09-issue-1-epic-execution.md` (Workstream #3)
+- `docs/superpowers/specs/2026-05-09-dg-public-api-policy.md` (#30)
+- `docs/superpowers/specs/2026-05-09-ot-adapter-authority.md` (#31)
+- Issue #32 (self-onboarding completion)
 
 ## Purpose
 
@@ -77,3 +81,39 @@ A rule is ready for broad strict recommendation when all are true:
 - 2026-05-09 rerun snapshot (via `cargo run -p locus-cli -- check --workspace . --json`) shows: `DG003=0`, `OT004=0`, `CX001=106`, `CX002=27`, `ER007=11`, `LOCUS002=13`.
 - Machine-readable companion: `docs/superpowers/specs/2026-05-09-dogfood-false-positive-ledger.json` (same rows/labels as this table).
 - Keep the Markdown table and JSON companion in sync in the same PR.
+
+## Self-onboarding completion snapshot (2026-05-09)
+
+After the #30/#31/#32 work landed, the picture is:
+
+| Mode | Total | Fatal | Warning | Advisory | Exit |
+|---|---:|---:|---:|---:|---|
+| `locus check --workspace .` | 134 | 0 | 134 | 0 | **0** |
+| `locus check --workspace . --agent-strict` | 134 | 0 | 134 | 0 | **0** |
+
+All 134 are CX001 (107) + CX002 (27), advisory tier per issue #6, staying
+Warning under `--agent-strict` because no workspace-wide `default_max_function_lines`
+or `default_max_module_lines` is set. Setting either flips them to Fatal
+under strict — the elevation gate is the user's calibration knob.
+
+Resolved during self-onboarding completion:
+
+- **DG003** (was 68 after feature declaration → 0): solved by widening
+  `locus_core` `public_api` to include the per-paradigm sub-modules and
+  `lockfile`/`exceptions`/`init` modules. The CLI mutator surface is the
+  contract; declaring it public is honest.
+- **OT004** (was 136 → 0): solved by `OT.converter_paths = ["locus_rust::*",
+  "*::tests::*", "*::layer_detection_tests::*"]` and a matcher upgrade so
+  segment-anywhere wildcards work in `matches_symbol_pattern`.
+- **ER007** (11 → 0): 9 lockfile exceptions, one per `*EditError` and
+  `*::Io` site, classified as paradigm-scoped intentional naming repetition.
+  Reviewable by expiry (2027-05-09) or ledger.
+- **OT009 / DC002** (3 + 3 → 0): 5 lockfile exceptions for adapter parser
+  naming and legitimate doc phrasing.
+- **MO001** (2 → 0): per-module overrides for `locus_air` (kitchen-sink
+  data crate) and `paradigms::one_truth::lockfile_schema`.
+- **CX007** (1 → 0): `locus_air::*` added to `CX.exempt_paths`.
+- **LOCUS002** (12 → 0): 12 vacant-by-definition paradigms in
+  `acknowledged_empty` (BO/CF/CR/DA/ER/FL/FO/PA/RM/RW/TA/UT). Each can be
+  populated as Locus's own architecture justifies, but none are
+  required for the rule engine to be useful on Locus today.

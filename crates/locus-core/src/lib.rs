@@ -16,8 +16,11 @@ pub mod paradigms;
 pub use diagnostics::{
     CheckMode, Diagnostic, Severity, VACANT_PARADIGM_RULE, vacant_paradigm_diagnostic,
 };
-pub use exceptions::{EXPIRED_EXCEPTION_RULE, apply_exceptions, today_utc};
+pub use exceptions::{
+    EXPIRED_EXCEPTION_RULE, ExceptionEntry, ExceptionSource, ExceptionStatus, apply_exceptions,
+    today_utc,
+};
 pub use init::{CommandOption, Suggestion, SuggestionCategory};
 pub use loaders::{Loader, apply_loaders};
-pub use lockfile::{Lockfile, LockfileError};
+pub use lockfile::{Exception, LOCKFILE_NAME, Lockfile, LockfileError};
 pub use paradigms::{Paradigm, registry};
