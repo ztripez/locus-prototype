@@ -1731,29 +1731,7 @@ fn init(args: InitArgs) -> Result<()> {
     suggestions.extend(locus_core::init::cross_paradigm_suggestions(
         &air, &lockfile,
     ));
-    let seeds: &[(&str, &str, &[&str])] = &[
-        (
-            "RW",
-            "Runtime Work",
-            &["locus rw accept-runtime-owner \"<glob>\""],
-        ),
-        (
-            "OB",
-            "Observability",
-            &["locus ob add-observer-path \"<glob>\""],
-        ),
-        (
-            "AB",
-            "Abstraction Discipline",
-            &["locus ab accept-single-impl \"<symbol>\""],
-        ),
-        ("DA", "Demand-Driven", &["locus da toggle --enabled true"]),
-        (
-            "DC",
-            "Documentation",
-            &["locus dc toggle --require-public-docs true"],
-        ),
-    ];
+    let seeds = locus_core::init::default_vacancy_seeds();
     suggestions.extend(locus_core::init::vacancy_seeds(
         &air,
         &lockfile,
@@ -2102,19 +2080,29 @@ mod init_acknowledge_empty_tests {
         std::fs::write(dir.join("src/lib.rs"), "").unwrap();
 
         // Ack every paradigm that emits a vacancy seed in `init`; otherwise
-        // `init` calls `process::exit(1)` and aborts the test runner. The
-        // assertion below still verifies the user-supplied `rw, da` round-
-        // trips through the lockfile.
+        // `init` calls `process::exit(1)` and aborts the test runner.
+        // Derive the list from `default_vacancy_seeds()` so adding a new
+        // seed doesn't silently break this test.
+        let seed_prefixes: Vec<String> = locus_core::init::default_vacancy_seeds()
+            .iter()
+            .map(|(p, _, _)| (*p).to_string())
+            .collect();
+        let ack_input = seed_prefixes
+            .iter()
+            .map(|p| p.to_lowercase())
+            .collect::<Vec<_>>()
+            .join(",");
+
         let args = InitArgs {
             workspace: dir.to_path_buf(),
             no_overwrite: false,
-            acknowledge_empty: Some("rw, da, ab, ob, dc".into()),
+            acknowledge_empty: Some(ack_input),
         };
         init(args).unwrap();
 
         let lockfile_bytes = std::fs::read(dir.join(LOCKFILE_NAME)).unwrap();
         let lf: Lockfile = serde_json::from_slice(&lockfile_bytes).unwrap();
-        assert_eq!(lf.acknowledged_empty, vec!["RW", "DA", "AB", "OB", "DC"]);
+        assert_eq!(lf.acknowledged_empty, seed_prefixes);
     }
 }
 

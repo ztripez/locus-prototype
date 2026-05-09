@@ -55,6 +55,19 @@ fn has_nonempty_array(v: &serde_json::Value, key: &str) -> bool {
         .is_some_and(|a| !a.is_empty())
 }
 
+/// True if a lockfile section carries no configuration: `null`, an empty
+/// object, an array with no elements, or an object whose every value is
+/// itself empty by this definition. Scalars (numbers, strings, bools) count
+/// as configuration.
+fn section_is_empty(v: &serde_json::Value) -> bool {
+    match v {
+        serde_json::Value::Null => true,
+        serde_json::Value::Object(m) => m.is_empty() || m.values().all(section_is_empty),
+        serde_json::Value::Array(a) => a.is_empty(),
+        _ => false,
+    }
+}
+
 fn any_features_set(lockfile: &Lockfile) -> bool {
     let dg: serde_json::Value = lockfile
         .paradigm_section("DG")
@@ -719,6 +732,94 @@ mod cross_paradigm_feature_tests {
 /// `(prefix, human-readable name, &[seed commands])`
 pub type VacantSeed<'a> = (&'a str, &'a str, &'a [&'a str]);
 
+/// One onboarding seed per paradigm that benefits from an explicit nudge —
+/// every paradigm that emits `LOCUS002` when un-onboarded, plus a few
+/// configuration switches (AB/DC/OB) that don't fire `LOCUS002` but still
+/// reward an explicit `init`-time hint. Each command should be a sensible
+/// starting point the user customises.
+///
+/// Cross-paradigm suggestions (domain-layer for BO/ER/FL/RM,
+/// feature-partition for DG/FO) are emitted separately by
+/// [`cross_paradigm_suggestions`]; when they fire they suppress the
+/// matching seed via `vacancy_seeds`'s `already_covered` set, so the
+/// seeds here act as fallbacks for projects without a detected layer.
+pub fn default_vacancy_seeds() -> &'static [VacantSeed<'static>] {
+    &[
+        (
+            "AB",
+            "Abstraction Discipline",
+            &["locus ab accept-single-impl \"<symbol>\""],
+        ),
+        (
+            "BO",
+            "Boundary Ownership",
+            &["locus bo add-domain-path \"<glob>\""],
+        ),
+        (
+            "CF",
+            "Config / Data Ownership",
+            &["locus cf add-config-path \"<glob>\""],
+        ),
+        (
+            "CR",
+            "Composition Root",
+            &["locus cr add-composition-root \"<glob>\""],
+        ),
+        ("DA", "Demand-Driven", &["locus da enable"]),
+        ("DC", "Documentation", &["locus dc enable"]),
+        (
+            "DG",
+            "Dependency Graph",
+            &["locus dg define-feature --name <name> --module \"<glob>\""],
+        ),
+        (
+            "ER",
+            "Error Taxonomy",
+            &["locus er add-domain-path \"<glob>\""],
+        ),
+        (
+            "FL",
+            "Failure Lineage",
+            &["locus fl add-domain-path \"<glob>\""],
+        ),
+        (
+            "FO",
+            "Feature Ownership",
+            &["locus fo define-feature --name <name> --module \"<glob>\""],
+        ),
+        (
+            "OB",
+            "Observability",
+            &["locus ob add-observer-path \"<glob>\""],
+        ),
+        (
+            "PA",
+            "Port / Adapter",
+            &["locus pa add-application-path \"<glob>\""],
+        ),
+        (
+            "RM",
+            "Responsibility Mixing",
+            &["locus rm add-domain-path \"<glob>\""],
+        ),
+        (
+            "RW",
+            "Runtime Work",
+            &["locus rw accept-runtime-owner \"<glob>\""],
+        ),
+        (
+            "TA",
+            "Test Architecture",
+            &["locus ta add-test-path \"<glob>\""],
+        ),
+        (
+            "UT",
+            "Utility Discipline",
+            &["locus ut add-utility-path \"<glob>\""],
+        ),
+    ]
+}
+
 pub fn vacancy_seeds(
     _air: &AirWorkspace,
     lockfile: &Lockfile,
@@ -736,6 +837,11 @@ pub fn vacancy_seeds(
                 return None;
             }
             if already_covered.contains(*prefix) {
+                return None;
+            }
+            if let Ok(section) = lockfile.paradigm_section::<serde_json::Value>(prefix)
+                && !section_is_empty(&section)
+            {
                 return None;
             }
             Some(Suggestion {
@@ -865,5 +971,92 @@ mod vacancy_tests {
             &[],
         );
         assert!(seeds.is_empty());
+    }
+
+    #[test]
+    fn vacancy_seed_suppressed_when_lockfile_section_populated() {
+        use serde_json::json;
+        let air = AirWorkspace::new(Vec::new());
+        let mut lf = Lockfile::empty();
+        lf.paradigms
+            .insert("DC".into(), json!({"require_public_docs": true}));
+        let seeds = vacancy_seeds(
+            &air,
+            &lf,
+            &[("DC", "Documentation", &["locus dc enable"])],
+            &[],
+        );
+        assert!(
+            seeds.is_empty(),
+            "DC seed should suppress once paradigms.DC has a non-empty toggle"
+        );
+    }
+
+    #[test]
+    fn vacancy_seed_still_fires_when_lockfile_section_is_empty_object() {
+        use serde_json::json;
+        let air = AirWorkspace::new(Vec::new());
+        let mut lf = Lockfile::empty();
+        lf.paradigms.insert("DC".into(), json!({}));
+        let seeds = vacancy_seeds(
+            &air,
+            &lf,
+            &[("DC", "Documentation", &["locus dc enable"])],
+            &[],
+        );
+        assert_eq!(seeds.len(), 1, "empty object is not configuration");
+    }
+
+    /// Every paradigm that emits LOCUS002 when its lockfile section is empty
+    /// should also have an `init` seed offering an onboarding command. Without
+    /// this, `check` complains about a vacant paradigm but `init` never tells
+    /// the user how to populate it.
+    #[test]
+    fn default_seeds_cover_every_locus002_paradigm() {
+        let prefixes: Vec<&str> = default_vacancy_seeds()
+            .iter()
+            .map(|(p, _, _)| *p)
+            .collect();
+        for p in [
+            "BO", "CF", "CR", "DA", "DG", "ER", "FL", "FO", "PA", "RM", "RW", "TA", "UT",
+        ] {
+            assert!(
+                prefixes.contains(&p),
+                "default_vacancy_seeds missing entry for {p}"
+            );
+        }
+    }
+
+    #[test]
+    fn default_seed_commands_use_real_paradigm_verbs() {
+        for (prefix, _name, cmds) in default_vacancy_seeds() {
+            let cmd = cmds[0];
+            let prefix_lower = prefix.to_lowercase();
+            let expected_prefix = format!("locus {prefix_lower} ");
+            assert!(
+                cmd.starts_with(&expected_prefix),
+                "seed for {prefix} should start with `{expected_prefix}`, got `{cmd}`"
+            );
+            assert!(
+                !cmd.contains("toggle"),
+                "no paradigm exposes a `toggle` verb today; seed for {prefix} is `{cmd}`"
+            );
+        }
+    }
+
+    #[test]
+    fn dc_and_da_seeds_use_enable_verb() {
+        let seeds = default_vacancy_seeds();
+        for prefix in ["DC", "DA"] {
+            let entry = seeds
+                .iter()
+                .find(|(p, _, _)| *p == prefix)
+                .unwrap_or_else(|| panic!("{prefix} seed missing"));
+            assert!(
+                entry.2.iter().any(|c| c.contains(" enable")),
+                "{prefix} seed should mention `enable`, got {:?}",
+                entry.2
+            );
+        }
     }
 }

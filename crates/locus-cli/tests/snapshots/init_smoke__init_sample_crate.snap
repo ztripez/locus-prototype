@@ -1,5 +1,6 @@
 ---
 source: crates/locus-cli/tests/init_smoke.rs
+assertion_line: 22
 expression: stdout
 ---
 wrote <PATH>/locus.lock
@@ -23,7 +24,7 @@ wrote <PATH>/locus.lock
   TA Test Architecture Ownership: (empty)
   UT Utility / Shared Module Discipline: (empty)
 auto-applied: 2 source hints promoted
-unresolved: 7
+unresolved: 16
 
 [feature] no features defined; DG/FO will not fire
   top-level modules: dto, handler, identity, shadow
@@ -47,17 +48,47 @@ unresolved: 7
   or skip:
     locus init --acknowledge-empty AB
 
+[paradigm-vacant] BO (Boundary Ownership) has no definitions
+  onboard:
+    locus bo add-domain-path "<glob>"
+  or skip:
+    locus init --acknowledge-empty BO
+
+[paradigm-vacant] CF (Config / Data Ownership) has no definitions
+  onboard:
+    locus cf add-config-path "<glob>"
+  or skip:
+    locus init --acknowledge-empty CF
+
+[paradigm-vacant] CR (Composition Root) has no definitions
+  onboard:
+    locus cr add-composition-root "<glob>"
+  or skip:
+    locus init --acknowledge-empty CR
+
 [paradigm-vacant] DA (Demand-Driven) has no definitions
   onboard:
-    locus da toggle --enabled true
+    locus da enable
   or skip:
     locus init --acknowledge-empty DA
 
 [paradigm-vacant] DC (Documentation) has no definitions
   onboard:
-    locus dc toggle --require-public-docs true
+    locus dc enable
   or skip:
     locus init --acknowledge-empty DC
+
+[paradigm-vacant] ER (Error Taxonomy) has no definitions
+  onboard:
+    locus er add-domain-path "<glob>"
+  or skip:
+    locus init --acknowledge-empty ER
+
+[paradigm-vacant] FL (Failure Lineage) has no definitions
+  onboard:
+    locus fl add-domain-path "<glob>"
+  or skip:
+    locus init --acknowledge-empty FL
 
 [paradigm-vacant] OB (Observability) has no definitions
   onboard:
@@ -65,10 +96,34 @@ unresolved: 7
   or skip:
     locus init --acknowledge-empty OB
 
+[paradigm-vacant] PA (Port / Adapter) has no definitions
+  onboard:
+    locus pa add-application-path "<glob>"
+  or skip:
+    locus init --acknowledge-empty PA
+
+[paradigm-vacant] RM (Responsibility Mixing) has no definitions
+  onboard:
+    locus rm add-domain-path "<glob>"
+  or skip:
+    locus init --acknowledge-empty RM
+
 [paradigm-vacant] RW (Runtime Work) has no definitions
   onboard:
     locus rw accept-runtime-owner "<glob>"
   or skip:
     locus init --acknowledge-empty RW
+
+[paradigm-vacant] TA (Test Architecture) has no definitions
+  onboard:
+    locus ta add-test-path "<glob>"
+  or skip:
+    locus init --acknowledge-empty TA
+
+[paradigm-vacant] UT (Utility Discipline) has no definitions
+  onboard:
+    locus ut add-utility-path "<glob>"
+  or skip:
+    locus init --acknowledge-empty UT
 
 re-run `locus init` after applying changes.
