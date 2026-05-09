@@ -463,11 +463,21 @@
       "overrides": [
         {
           "module": "locus_air",
-          "max_public_types": 50
+          "max_public_types": 50,
+          "reason": "data crate; every public type IS the canonical AIR contract by design (see #30 ADR)",
+          "expires": "2027-05-09",
+          "owner": "@core",
+          "debt_id": "MO001-locus-air-canonical-data-crate",
+          "introduced_by": "PR #39 (self-onboarding completion)"
         },
         {
           "module": "locus_core::paradigms::one_truth::lockfile_schema",
-          "max_public_types": 10
+          "max_public_types": 10,
+          "reason": "OT lockfile schema groups concept/canonical/boundary/converter shapes by intent; splitting per-type would scatter the OT contract surface",
+          "expires": "2027-05-09",
+          "owner": "@core",
+          "debt_id": "MO001-ot-lockfile-schema-grouped-shape",
+          "introduced_by": "PR #39 (self-onboarding completion)"
         }
       ]
     },

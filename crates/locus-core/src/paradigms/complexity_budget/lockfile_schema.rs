@@ -150,7 +150,7 @@ impl CxSection {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct CxOverride {
     /// Module pattern. Same suffix-wildcard syntax as DG/MO (`foo::*`,
     /// exact, or `*`). The helper [`matches_pattern`] is duplicated locally
@@ -160,15 +160,49 @@ pub struct CxOverride {
     /// Replacement budget for any function in a file whose `module_path`
     /// matches `module`.
     pub max_function_lines: u32,
+    /// Debt metadata — why this override exists. Adding a new override
+    /// always fires `PG002` (visibility); absence of `reason` /
+    /// `expires` / `owner` additionally triggers `PG006`. PG002 can be
+    /// downgraded via `--allow-policy-calibration`; PG006 stays Fatal
+    /// under `--agent-strict` because metadata is non-negotiable.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    /// Debt metadata — `YYYY-MM-DD` expiry. Past dates will surface as
+    /// expired-debt diagnostics in a follow-up rule. Required by
+    /// `PG006` on new overrides.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expires: Option<String>,
+    /// Debt metadata — owner team / individual / role. Required by
+    /// `PG006` on new overrides.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub owner: Option<String>,
+    /// Optional stable identifier for cross-referencing.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub debt_id: Option<String>,
+    /// Optional PR / issue reference describing the debt's origin.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub introduced_by: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct CxModuleOverride {
     /// Module pattern. Same syntax as `CxOverride.module`.
     pub module: String,
     /// Replacement module-line budget for any file whose `module_path`
     /// matches `module`.
     pub max_module_lines: u32,
+    /// Debt metadata — see [`CxOverride::reason`]. Same PG002/PG006
+    /// semantics apply.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expires: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub owner: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub debt_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub introduced_by: Option<String>,
 }
 
 /// Pattern syntax: segment-aligned wildcards.
@@ -247,10 +281,12 @@ mod tests {
                 CxOverride {
                     module: "lore::parser::*".into(),
                     max_function_lines: 200,
+                    ..Default::default()
                 },
                 CxOverride {
                     module: "lore::*".into(),
                     max_function_lines: 80,
+                    ..Default::default()
                 },
             ],
             ..CxSection::default()

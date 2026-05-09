@@ -142,6 +142,46 @@ fn run_git(args: &[&str], workspace: &Path) -> Result<String, DiffError> {
     Ok(String::from_utf8_lossy(&out.stdout).into_owned())
 }
 
+/// Read the baseline `locus.lock` via `git show <baseline>:locus.lock`.
+/// Returns `None` when the lockfile cannot be resolved:
+/// - the workspace isn't a git repo
+/// - no baseline ref resolves (default chain or `--baseline <ref>`)
+/// - the baseline ref doesn't carry a `locus.lock` (e.g. first commit
+///   before the lockfile existed)
+/// - the file at the baseline ref fails to parse as a `Lockfile`
+///
+/// **The caller decides what `None` means.** This function is
+/// deliberately silent-on-failure; the policy-decision lives upstream.
+/// The CLI's `check` flow turns `None` into a `PG000` diagnostic
+/// (Warning by default, Fatal under `--agent-strict`) unless the user
+/// passes `--allow-missing-policy-baseline` to acknowledge the audit
+/// gap. See `docs/superpowers/specs/2026-05-09-policy-guard-paradigm.md`
+/// (#44) for the rationale — silent-skip alone would let an agent
+/// disable Policy Guard by manipulating the baseline ref.
+pub fn read_baseline_lockfile(
+    workspace: &Path,
+    baseline: Option<&str>,
+) -> Option<locus_core::Lockfile> {
+    if !is_git_repo(workspace).ok()? {
+        return None;
+    }
+    let baseline = match baseline {
+        Some(b) => b.to_string(),
+        None => resolve_default_baseline(workspace).ok()?,
+    };
+    let arg = format!("{baseline}:{}", locus_core::LOCKFILE_NAME);
+    let out = Command::new("git")
+        .args(["show", &arg])
+        .current_dir(workspace)
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        // Common case: baseline predates the lockfile or the file isn't tracked.
+        return None;
+    }
+    serde_json::from_slice(&out.stdout).ok()
+}
+
 /// Tolerant path match between a diagnostic span's `file` field and
 /// the changed-files set. The visitor records spans with whatever path
 /// shape it received — typically workspace-anchored absolute paths.

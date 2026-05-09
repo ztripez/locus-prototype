@@ -789,9 +789,28 @@ struct CheckArgs {
     /// Baseline ref for `--changed`. Defaults to the first ref that
     /// resolves from `origin/main`, `origin/master`, `main`, `master`,
     /// `HEAD~1`. Pass an explicit ref (e.g. `--baseline origin/develop`)
-    /// to override.
+    /// to override. Also used by Policy Guard (`PG001`-`PG004`) to read
+    /// the baseline `locus.lock`.
     #[arg(long)]
     baseline: Option<String>,
+    /// Acknowledge that this run is calibrating policy (raising budgets,
+    /// adding overrides, expanding `acknowledged_empty`). Without this
+    /// flag, Policy Guard fails `--agent-strict` on any policy widening
+    /// vs the baseline lockfile. With it, PG001/PG002/PG003/PG004 fire
+    /// as Advisory and a structured calibration report is printed
+    /// alongside the normal output. PG006 (missing debt metadata) is
+    /// **not** affected by calibration — calibration legitimizes the
+    /// addition itself, but does not waive the requirement to record
+    /// `reason` / `expires` / `owner`. See issue #44.
+    #[arg(long)]
+    allow_policy_calibration: bool,
+    /// Acknowledge that no baseline lockfile is available for the
+    /// Policy Guard audit (e.g. shallow CI clone, first commit before
+    /// `locus.lock` existed). Without this flag, PG000 fires Fatal
+    /// under `--agent-strict` so that a missing audit can't silently
+    /// disable the gate. See issue #44.
+    #[arg(long)]
+    allow_missing_policy_baseline: bool,
 }
 
 fn main() -> Result<()> {
@@ -2076,13 +2095,24 @@ fn check(args: CheckArgs) -> Result<()> {
     for paradigm in registry() {
         all.extend(paradigm.check(&air, &lockfile, mode));
     }
+
+    // Apply exceptions to paradigm diagnostics BEFORE Policy Guard runs.
+    // PG is meta-policy and must NOT be suppressible by
+    // `Lockfile.exceptions[]` entries. Without this ordering, an
+    // exception with `rule = "*"` (or `rule = "PG"`) would silence the
+    // audit using the same lockfile it audits. See #44.
     let today = today_utc();
     let all = apply_exceptions(all, &air, &lockfile, Some(&today));
 
-    // Diff filter — applied after exceptions so an `// locus: allow XX###`
-    // hint on changed code still suppresses, and the LOCUS001 expired-
-    // exception warnings still surface for changed files.
-    let all = if args.changed {
+    // Diff filter — paradigm + LOCUS001/LOCUS002 only. The filter is
+    // applied here, BEFORE PG is appended, so PG diagnostics bypass
+    // `--changed` entirely. PG is global by design: PG000 fires when
+    // we couldn't audit at all, regardless of which files a PR
+    // touched, and PG001-PG006 only fire when `locus.lock` itself
+    // changed (so they'd survive the filter anyway). Putting PG after
+    // the filter keeps `--changed --agent-strict` from accidentally
+    // hiding PG000 in a PR that doesn't touch `locus.lock`.
+    let mut all = if args.changed {
         let workspace_abs = args
             .workspace
             .canonicalize()
@@ -2105,6 +2135,23 @@ fn check(args: CheckArgs) -> Result<()> {
         all
     };
 
+    // Policy Guard (#44): compare current lockfile to baseline via
+    // `git show <baseline>:locus.lock`. Appended AFTER both
+    // `apply_exceptions` and the `--changed` filter so PG diagnostics
+    // flow straight to output regardless of either.
+    let baseline_lockfile = diff::read_baseline_lockfile(&args.workspace, args.baseline.as_deref());
+    let pg = locus_core::check_policy_mutation(
+        &lockfile,
+        baseline_lockfile.as_ref(),
+        mode,
+        args.allow_policy_calibration,
+        args.allow_missing_policy_baseline,
+    );
+    if args.allow_policy_calibration && !pg.is_empty() {
+        report_policy_calibration(&pg)?;
+    }
+    all.extend(pg);
+
     let stdout = io::stdout();
     let mut out = BufWriter::new(stdout.lock());
     if args.json {
@@ -2120,6 +2167,31 @@ fn check(args: CheckArgs) -> Result<()> {
     if any_fatal {
         std::process::exit(1);
     }
+    Ok(())
+}
+
+/// Print a structured before/after report for Policy Guard diagnostics
+/// when `--allow-policy-calibration` is set. The report is informational
+/// — the diagnostics themselves are also rendered in normal output, but
+/// at Advisory severity. Per #44 §"Calibration mode".
+fn report_policy_calibration(pg: &[Diagnostic]) -> Result<()> {
+    use std::io::Write;
+    let stderr = io::stderr();
+    let mut w = stderr.lock();
+    writeln!(w, "Policy calibration report ({} mutation(s)):", pg.len())?;
+    for d in pg {
+        writeln!(w, "  [{}] {}", d.rule_id, d.message)?;
+        for line in &d.why {
+            writeln!(w, "    why: {line}")?;
+        }
+    }
+    writeln!(
+        w,
+        "(invoked with --allow-policy-calibration; PG001-PG004 fire as \
+         Advisory. PG000 (missing baseline) and PG006 (missing debt \
+         metadata) remain strict — calibration legitimizes intentional \
+         widening, not a missing audit or missing justification.)"
+    )?;
     Ok(())
 }
 

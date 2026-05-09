@@ -43,6 +43,11 @@ pub fn add_override(
     section.overrides.push(CxOverride {
         module: module.to_string(),
         max_function_lines: max,
+        reason: None,
+        expires: None,
+        owner: None,
+        debt_id: None,
+        introduced_by: None,
     });
     Ok(())
 }

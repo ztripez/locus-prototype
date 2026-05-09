@@ -134,6 +134,7 @@ This document is the *target* spec — the full set of paradigms Locus is design
 - `Severity::from_confidence(c, mode)` implements the spec's 0.50 / 0.70 / 0.90 inference tier table.
 - `// locus: allow XX### reason="…" expires="YYYY-MM-DD"` source hints + `Lockfile.exceptions[]` lockfile entries are honoured by the CLI's `check` pipeline. Expired exceptions emit a `LOCUS001` warning instead of silently re-firing.
 - `locus check --changed [--baseline <ref>]` filters diagnostics to files modified since the baseline (default chain: `origin/main` → `origin/master` → `main` → `master` → `HEAD~1`). Combines committed diff, working-tree diff, and untracked-but-not-ignored files so local development matches CI behaviour. Combine with `--agent-strict` for the canonical "fail CI only on PR-introduced violations" shape.
+- **Policy Guard (`PG000`/`PG001`/`PG002`/`PG003`/`PG004`/`PG006`)** — detects policy widening that erases diagnostics rather than fixing code. Compares current `locus.lock` to `git show <baseline>:locus.lock` and fires on missing baseline (PG000), default-budget or existing-override-budget raises (PG001), new overrides regardless of metadata (PG002), new `exempt_paths` (PG003), new `acknowledged_empty` (PG004), and new overrides missing `reason`/`expires`/`owner` debt metadata (PG006). PG runs **after** `apply_exceptions` so it can't be silenced by lockfile exceptions. `--allow-policy-calibration` downgrades PG001–PG004 to Advisory but **not** PG000 (missing audit) or PG006 (missing justification). `--allow-missing-policy-baseline` silences PG000 when the gap is intentional. See `docs/superpowers/specs/2026-05-09-policy-guard-paradigm.md` (#44).
 
 ## Severity tiers
 
@@ -172,6 +173,7 @@ table is the policy the rule code is meant to encode.
 | AB | — | AB001, AB002 | — |
 | DC | — | DC002, DC004 | DC001 (opt-in via `paradigms.DC.require_public_docs`) |
 | CL | — | CL001 (opt-in via `paradigms.CL.require_local_rationale`) | (CL002–CL006 will be Advisory until dogfooded) |
+| PG | PG000, PG001, PG002, PG003, PG004, PG006 (Fatal under `--agent-strict`) | — | PG001–PG004 downgrade to Advisory under `--allow-policy-calibration`; PG000 (missing baseline) and PG006 (missing debt metadata) stay Fatal under strict regardless of calibration. PG005 deferred until severity-override schema lands. |
 | OB | OB001 | OB002, OB003, OB004 | — |
 | TA | — | TA001–TA004 | — |
 
@@ -1327,6 +1329,7 @@ DC — Documentation / Comment Ownership
 OB — Observability Ownership
 TA — Test Architecture Ownership
 CL — Claim Ownership
+PG — Policy Guard (cross-paradigm; fires on lockfile-policy widening)
 ```
 
 Not all families need to be implemented immediately. They define the long-term shape of Locus as an architectural guardrail system.

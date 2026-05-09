@@ -12,6 +12,7 @@ pub mod init;
 pub mod loaders;
 pub mod lockfile;
 pub mod paradigms;
+pub mod policy_guard;
 
 pub use diagnostics::{
     CheckMode, Diagnostic, Severity, VACANT_PARADIGM_RULE, vacant_paradigm_diagnostic,
@@ -24,3 +25,7 @@ pub use init::{CommandOption, Suggestion, SuggestionCategory};
 pub use loaders::{Loader, apply_loaders};
 pub use lockfile::{Exception, LOCKFILE_NAME, Lockfile, LockfileError};
 pub use paradigms::{Paradigm, registry};
+pub use policy_guard::{
+    PG000_BASELINE_MISSING, PG001_BUDGET_RAISED, PG002_OVERRIDE_ADDED, PG003_EXEMPT_PATH_ADDED,
+    PG004_ACKNOWLEDGED_EMPTY_ADDED, PG006_OVERRIDE_LACKS_DEBT_METADATA, check_policy_mutation,
+};

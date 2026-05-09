@@ -549,6 +549,7 @@ mod tests {
             overrides: vec![MoOverride {
                 module: "lore::api::*".into(),
                 max_public_types: 20,
+                ..Default::default()
             }],
             ..Default::default()
         };
@@ -568,6 +569,7 @@ mod tests {
             overrides: vec![MoOverride {
                 module: "lore::domain::*".into(),
                 max_public_types: 2,
+                ..Default::default()
             }],
             ..Default::default()
         };
@@ -594,10 +596,12 @@ mod tests {
                 MoOverride {
                     module: "lore::api::*".into(),
                     max_public_types: 20,
+                    ..Default::default()
                 },
                 MoOverride {
                     module: "lore::*".into(),
                     max_public_types: 3,
+                    ..Default::default()
                 },
             ],
             ..Default::default()
@@ -673,6 +677,7 @@ mod tests {
             overrides: vec![MoOverride {
                 module: "lore::api::*".into(),
                 max_public_types: 20,
+                ..Default::default()
             }],
             ..Default::default()
         };
