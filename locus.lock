@@ -456,6 +456,8 @@
       "converter_paths": [
         "locus_rust::*",
         "*::tests::*",
+        "*::rules_tests::*",
+        "*::rules_tests",
         "*::layer_detection_tests::*"
       ]
     },
@@ -472,9 +474,48 @@
       ]
     },
     "CX": {
+      "default_max_module_lines": 700,
       "exempt_paths": [
         "*::tests::*",
         "locus_air::*"
+      ],
+      "module_overrides": [
+        {
+          "module": "*::rules_tests",
+          "max_module_lines": 2500
+        },
+        {
+          "module": "locus_cli",
+          "max_module_lines": 2500
+        },
+        {
+          "module": "locus_rust::visitor",
+          "max_module_lines": 2000
+        },
+        {
+          "module": "locus_core::init",
+          "max_module_lines": 1500
+        },
+        {
+          "module": "locus_air",
+          "max_module_lines": 1500
+        },
+        {
+          "module": "locus_core::paradigms::failure_lineage::rules",
+          "max_module_lines": 1500
+        },
+        {
+          "module": "locus_core::paradigms::one_truth::rules",
+          "max_module_lines": 1500
+        },
+        {
+          "module": "locus_core::paradigms::responsibility::rules",
+          "max_module_lines": 1000
+        },
+        {
+          "module": "locus_core::paradigms::error_taxonomy::rules",
+          "max_module_lines": 800
+        }
       ]
     }
   },

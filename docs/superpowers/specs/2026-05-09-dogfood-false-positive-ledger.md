@@ -82,6 +82,55 @@ A rule is ready for broad strict recommendation when all are true:
 - Machine-readable companion: `docs/superpowers/specs/2026-05-09-dogfood-false-positive-ledger.json` (same rows/labels as this table).
 - Keep the Markdown table and JSON companion in sync in the same PR.
 
+## CX002 dogfood pass (2026-05-09)
+
+After self-onboarding, CX002 (module-line budget) was the dominant
+remaining noise: 28 hits, mostly paradigm `rules.rs` files holding
+both production code and large `#[cfg(test)] mod tests {}` blocks.
+
+The dogfood pass took two principled moves, no broad budget bumps:
+
+1. **Test extraction sweep.** Each paradigm `rules.rs` had its inline
+   test mod moved to a sibling `rules_tests.rs` and re-attached via
+   `#[path = "rules_tests.rs"] mod tests;`. 19 paradigm files
+   transformed; production `rules.rs` files dropped to a healthy
+   median (~400 lines), tests live in their own files. Architectural
+   improvement, not a suppression — `cargo test --workspace` still
+   green (899 lib tests).
+
+2. **Calibrated default + targeted overrides.** Workspace-wide
+   `default_max_module_lines = 700` reflects rule-engine density
+   (Locus carries a lot of rule logic per paradigm; consumers
+   building application code may set a stricter default). Outliers
+   that need more room get explicit module overrides:
+
+   - `*::rules_tests` → 2500 (covers FL/OT test files at ~1800 lines)
+   - `locus_cli` → 2500 (CLI dispatcher; per-command split is a follow-up)
+   - `locus_rust::visitor` → 2000 (AST walker, focused responsibility)
+   - `locus_core::init` → 1500 (cross-paradigm init aggregator)
+   - `locus_air` → 1500 (data crate; `MO` already exempts it for the same reason)
+   - `locus_core::paradigms::failure_lineage::rules` → 1500 (FL has the most rules of any paradigm; per-rule split is a follow-up)
+   - `locus_core::paradigms::one_truth::rules` → 1500 (same shape as FL)
+   - `locus_core::paradigms::responsibility::rules` → 1000
+   - `locus_core::paradigms::error_taxonomy::rules` → 800
+
+3. **OT converter_paths updated.** The new `rules_tests.rs` files
+   produce module paths like `..._rules::rules_tests` rather than
+   `..._rules::tests`, so the pre-existing `*::tests::*` converter
+   pattern stopped covering them. Added `*::rules_tests` and
+   `*::rules_tests::*` to keep test-code AIR construction silenced.
+
+Self-check evidence after the pass:
+
+| Mode | Total | Fatal | Warning | Exit |
+|---|---:|---:|---:|---|
+| `locus check --workspace .` | 109 | 0 | 109 | **0** |
+| `locus check --workspace . --agent-strict` | 109 | 0 | 109 | **0** |
+
+**CX002 = 0**. The remaining 109 warnings are CX001 (per-function
+budget); per-function refactor or default calibration is separate
+follow-up work. CX002 is closed for now.
+
 ## Self-onboarding completion snapshot (2026-05-09)
 
 After the #30/#31/#32 work landed, the picture is:
