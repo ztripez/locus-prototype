@@ -160,16 +160,20 @@ pub struct CxOverride {
     /// Replacement budget for any function in a file whose `module_path`
     /// matches `module`.
     pub max_function_lines: u32,
-    /// PG002 debt metadata — why this override exists. Populated when the
-    /// override is added via `--allow-policy-calibration`; absence triggers
-    /// `PG002` on diff vs baseline lockfile.
+    /// Debt metadata — why this override exists. Adding a new override
+    /// always fires `PG002` (visibility); absence of `reason` /
+    /// `expires` / `owner` additionally triggers `PG006`. PG002 can be
+    /// downgraded via `--allow-policy-calibration`; PG006 stays Fatal
+    /// under `--agent-strict` because metadata is non-negotiable.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
-    /// PG002 debt metadata — `YYYY-MM-DD` expiry. Past dates surface as
-    /// expired-debt diagnostics in a follow-up.
+    /// Debt metadata — `YYYY-MM-DD` expiry. Past dates will surface as
+    /// expired-debt diagnostics in a follow-up rule. Required by
+    /// `PG006` on new overrides.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expires: Option<String>,
-    /// PG002 debt metadata — owner team / individual / role.
+    /// Debt metadata — owner team / individual / role. Required by
+    /// `PG006` on new overrides.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub owner: Option<String>,
     /// Optional stable identifier for cross-referencing.
@@ -187,7 +191,8 @@ pub struct CxModuleOverride {
     /// Replacement module-line budget for any file whose `module_path`
     /// matches `module`.
     pub max_module_lines: u32,
-    /// PG002 debt metadata — see [`CxOverride::reason`].
+    /// Debt metadata — see [`CxOverride::reason`]. Same PG002/PG006
+    /// semantics apply.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

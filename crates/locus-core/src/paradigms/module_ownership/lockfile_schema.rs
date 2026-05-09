@@ -162,16 +162,21 @@ pub struct MoOverride {
     pub module: String,
     /// Replacement budget for any file whose `module_path` matches `module`.
     pub max_public_types: u32,
-    /// PG002 debt metadata — why this override exists. Mirrors
-    /// `complexity_budget::lockfile_schema::CxOverride`'s shape; populated
-    /// when added via `--allow-policy-calibration`. Absence triggers PG002
-    /// on diff vs baseline lockfile.
+    /// Debt metadata — why this override exists. Mirrors
+    /// `complexity_budget::lockfile_schema::CxOverride`'s shape: adding
+    /// a new override always fires `PG002` (visibility); absence of
+    /// `reason` / `expires` / `owner` additionally triggers `PG006`.
+    /// PG002 can be downgraded via `--allow-policy-calibration`; PG006
+    /// stays Fatal under `--agent-strict` because metadata is
+    /// non-negotiable.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
-    /// PG002 debt metadata — `YYYY-MM-DD` expiry.
+    /// Debt metadata — `YYYY-MM-DD` expiry. Required by `PG006` on
+    /// new overrides.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expires: Option<String>,
-    /// PG002 debt metadata — owner team / individual / role.
+    /// Debt metadata — owner team / individual / role. Required by
+    /// `PG006` on new overrides.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub owner: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
