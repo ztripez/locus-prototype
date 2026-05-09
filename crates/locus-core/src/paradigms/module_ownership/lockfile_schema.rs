@@ -153,7 +153,7 @@ pub fn matches_name_glob(pattern: &str, name: &str) -> bool {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct MoOverride {
     /// Module pattern. Same suffix-wildcard syntax as DG (`foo::*`, exact, or
     /// `*`). The helper [`matches_pattern`] is duplicated locally rather than
@@ -162,6 +162,22 @@ pub struct MoOverride {
     pub module: String,
     /// Replacement budget for any file whose `module_path` matches `module`.
     pub max_public_types: u32,
+    /// PG002 debt metadata — why this override exists. Mirrors
+    /// `complexity_budget::lockfile_schema::CxOverride`'s shape; populated
+    /// when added via `--allow-policy-calibration`. Absence triggers PG002
+    /// on diff vs baseline lockfile.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    /// PG002 debt metadata — `YYYY-MM-DD` expiry.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expires: Option<String>,
+    /// PG002 debt metadata — owner team / individual / role.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub owner: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub debt_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub introduced_by: Option<String>,
 }
 
 /// Pattern syntax: segment-aligned wildcards (mirrors UT/TA semantics).
@@ -237,10 +253,12 @@ mod tests {
                 MoOverride {
                     module: "lore::api::*".into(),
                     max_public_types: 20,
+                    ..Default::default()
                 },
                 MoOverride {
                     module: "lore::*".into(),
                     max_public_types: 10,
+                    ..Default::default()
                 },
             ],
             ..Default::default()
@@ -265,6 +283,7 @@ mod tests {
             overrides: vec![MoOverride {
                 module: "lore::api::*".into(),
                 max_public_types: 20,
+                ..Default::default()
             }],
             ..Default::default()
         };
@@ -288,6 +307,7 @@ mod tests {
             overrides: vec![MoOverride {
                 module: "lore::api::*".into(),
                 max_public_types: 20,
+                ..Default::default()
             }],
             entropy_threshold: Some(4),
             handler_name_patterns: vec!["on_*".into()],

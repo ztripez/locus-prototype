@@ -502,6 +502,7 @@ mod tests {
             overrides: vec![CxOverride {
                 module: "lore::parser::*".into(),
                 max_function_lines: 200,
+                ..Default::default()
             }],
             ..CxSection::default()
         };
@@ -521,6 +522,7 @@ mod tests {
             overrides: vec![CxOverride {
                 module: "lore::convert::*".into(),
                 max_function_lines: 20,
+                ..Default::default()
             }],
             ..CxSection::default()
         };
@@ -598,6 +600,7 @@ mod tests {
             overrides: vec![CxOverride {
                 module: "foo::*".into(),
                 max_function_lines: 100,
+                ..Default::default()
             }],
             ..CxSection::default()
         };
@@ -671,6 +674,7 @@ mod tests {
             module_overrides: vec![CxModuleOverride {
                 module: "foo::*".into(),
                 max_module_lines: 1_000,
+                ..Default::default()
             }],
             ..CxSection::default()
         };

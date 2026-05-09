@@ -142,6 +142,41 @@ fn run_git(args: &[&str], workspace: &Path) -> Result<String, DiffError> {
     Ok(String::from_utf8_lossy(&out.stdout).into_owned())
 }
 
+/// Read the baseline `locus.lock` via `git show <baseline>:locus.lock`.
+/// Returns `None` (silently) when:
+/// - the workspace isn't a git repo
+/// - no baseline ref resolves
+/// - the baseline ref doesn't carry a `locus.lock` (e.g., first commit
+///   before the lockfile existed)
+/// - the file at the baseline ref fails to parse as a `Lockfile`
+///
+/// This silent-skip behaviour is what keeps Policy Guard from firing
+/// on first-onboarding repos: with no baseline, there's nothing to
+/// compare against and no false alarms.
+pub fn read_baseline_lockfile(
+    workspace: &Path,
+    baseline: Option<&str>,
+) -> Option<locus_core::Lockfile> {
+    if !is_git_repo(workspace).ok()? {
+        return None;
+    }
+    let baseline = match baseline {
+        Some(b) => b.to_string(),
+        None => resolve_default_baseline(workspace).ok()?,
+    };
+    let arg = format!("{baseline}:{}", locus_core::LOCKFILE_NAME);
+    let out = Command::new("git")
+        .args(["show", &arg])
+        .current_dir(workspace)
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        // Common case: baseline predates the lockfile or the file isn't tracked.
+        return None;
+    }
+    serde_json::from_slice(&out.stdout).ok()
+}
+
 /// Tolerant path match between a diagnostic span's `file` field and
 /// the changed-files set. The visitor records spans with whatever path
 /// shape it received — typically workspace-anchored absolute paths.

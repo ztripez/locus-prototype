@@ -789,9 +789,18 @@ struct CheckArgs {
     /// Baseline ref for `--changed`. Defaults to the first ref that
     /// resolves from `origin/main`, `origin/master`, `main`, `master`,
     /// `HEAD~1`. Pass an explicit ref (e.g. `--baseline origin/develop`)
-    /// to override.
+    /// to override. Also used by Policy Guard (`PG001`-`PG004`) to read
+    /// the baseline `locus.lock`.
     #[arg(long)]
     baseline: Option<String>,
+    /// Acknowledge that this run is calibrating policy (raising budgets,
+    /// adding overrides, expanding `acknowledged_empty`). Without this
+    /// flag, Policy Guard fails `--agent-strict` on any policy widening
+    /// vs the baseline lockfile. With it, PG diagnostics fire as
+    /// Advisory and a structured calibration report is printed
+    /// alongside the normal output. See issue #44.
+    #[arg(long)]
+    allow_policy_calibration: bool,
 }
 
 fn main() -> Result<()> {
@@ -2076,6 +2085,21 @@ fn check(args: CheckArgs) -> Result<()> {
     for paradigm in registry() {
         all.extend(paradigm.check(&air, &lockfile, mode));
     }
+
+    // Policy Guard (#44): compare current lockfile to baseline via
+    // `git show <baseline>:locus.lock`. Silent if no baseline available.
+    let baseline_lockfile = diff::read_baseline_lockfile(&args.workspace, args.baseline.as_deref());
+    let pg = locus_core::check_policy_mutation(
+        &lockfile,
+        baseline_lockfile.as_ref(),
+        mode,
+        args.allow_policy_calibration,
+    );
+    if args.allow_policy_calibration && !pg.is_empty() {
+        report_policy_calibration(&pg)?;
+    }
+    all.extend(pg);
+
     let today = today_utc();
     let all = apply_exceptions(all, &air, &lockfile, Some(&today));
 
@@ -2120,6 +2144,28 @@ fn check(args: CheckArgs) -> Result<()> {
     if any_fatal {
         std::process::exit(1);
     }
+    Ok(())
+}
+
+/// Print a structured before/after report for Policy Guard diagnostics
+/// when `--allow-policy-calibration` is set. The report is informational
+/// — the diagnostics themselves are also rendered in normal output, but
+/// at Advisory severity. Per #44 §"Calibration mode".
+fn report_policy_calibration(pg: &[Diagnostic]) -> Result<()> {
+    use std::io::Write;
+    let stderr = io::stderr();
+    let mut w = stderr.lock();
+    writeln!(w, "Policy calibration report ({} mutation(s)):", pg.len())?;
+    for d in pg {
+        writeln!(w, "  [{}] {}", d.rule_id, d.message)?;
+        for line in &d.why {
+            writeln!(w, "    why: {line}")?;
+        }
+    }
+    writeln!(
+        w,
+        "(invoked with --allow-policy-calibration; PG diagnostics fire as Advisory)"
+    )?;
     Ok(())
 }
 
