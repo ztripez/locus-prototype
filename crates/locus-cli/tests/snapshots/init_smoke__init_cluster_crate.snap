@@ -9,6 +9,7 @@ wrote <PATH>/locus.lock
   AB Abstraction Discipline: (empty)
   BO Boundary Ownership: (empty)
   CF Config/Data Ownership: (empty)
+  CL Claim Ownership: (empty)
   CR Composition Root Ownership: (empty)
   CX Complexity Budget Ownership: (empty)
   DA Demand-Driven Architecture: (empty)

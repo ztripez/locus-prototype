@@ -1,0 +1,15 @@
+# Standalone fixture crate for CL001 (Claim Ownership — orphan external
+# reference). NOT a workspace member — `[workspace]` below severs
+# membership so `cargo build --workspace` ignores it. Consumed only by
+# `locus_rust::scan`; never compiled.
+
+[workspace]
+
+[package]
+name = "cl-claims"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[lib]
+path = "src/lib.rs"
