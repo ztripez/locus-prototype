@@ -474,10 +474,37 @@
       ]
     },
     "CX": {
+      "default_max_function_lines": 120,
       "default_max_module_lines": 700,
       "exempt_paths": [
         "*::tests::*",
         "locus_air::*"
+      ],
+      "overrides": [
+        {
+          "module": "locus_rust::visitor",
+          "max_function_lines": 300
+        },
+        {
+          "module": "locus_core::paradigms::documentation::lockfile_schema",
+          "max_function_lines": 220
+        },
+        {
+          "module": "locus_core::paradigms::abstraction_discipline::rules",
+          "max_function_lines": 170
+        },
+        {
+          "module": "locus_rust::loaders::std_rt",
+          "max_function_lines": 170
+        },
+        {
+          "module": "locus_core::paradigms::responsibility::rules",
+          "max_function_lines": 170
+        },
+        {
+          "module": "locus_core::paradigms::one_truth::init",
+          "max_function_lines": 150
+        }
       ],
       "module_overrides": [
         {

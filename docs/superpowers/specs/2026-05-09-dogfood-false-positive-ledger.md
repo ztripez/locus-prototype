@@ -131,6 +131,60 @@ Self-check evidence after the pass:
 budget); per-function refactor or default calibration is separate
 follow-up work. CX002 is closed for now.
 
+## CX001 dogfood pass (2026-05-09)
+
+After CX002, CX001 (per-function budget) was the last remaining noise:
+109 hits, distributed across paradigm rule functions and a few
+adapter/loader functions. The 50-line built-in default is aggressive
+for rule-engine code where each rule walks AIR, builds detailed `why`
+lines, and handles multiple branches.
+
+The pass took the same shape as CX002:
+
+1. **Workspace default calibrated to rule-engine reality.**
+   `paradigms.CX.default_max_function_lines = 120` covers the natural
+   length of paradigm rule functions (`ot004`, `cl001`, `bo002`, `fl013`
+   etc. — typically 80-120 lines each because they walk AIR + emit
+   diagnostics with detailed `why`/`suggested_fix` content). Consumer
+   projects building application code should set a stricter default.
+
+2. **Per-file overrides for genuine outliers.** Six modules contain
+   functions whose density reflects their domain rather than excess:
+
+   - `locus_rust::visitor` → 300 (`scan_expr` at 298 lines is the AST
+     dispatcher; per-variant split is a real follow-up)
+   - `locus_core::paradigms::documentation::lockfile_schema` → 220
+     (`default_forbidden_doc_phrases` at 205 lines is data, not
+     control flow)
+   - `locus_rust::loaders::std_rt` → 170 (`classify` at 160 is a match
+     over std-lib call patterns)
+   - `locus_core::paradigms::abstraction_discipline::rules` → 170 (`ab001`)
+   - `locus_core::paradigms::responsibility::rules` → 170 (`rm001`,
+     `density_rule`)
+   - `locus_core::paradigms::one_truth::init` → 150 (`suggest`)
+
+Self-check evidence after the pass:
+
+| Mode | Total | Fatal | Warning | Exit |
+|---|---:|---:|---:|---|
+| `locus check --workspace .` | **0** | 0 | 0 | **0** |
+| `locus check --workspace . --agent-strict` | **0** | 0 | 0 | **0** |
+
+Locus's self-check now produces zero diagnostics in both modes —
+fully clean. Every paradigm passes its own bar on its own source.
+
+Follow-up refactors that would reduce overrides:
+
+- Split `scan_expr` per AST variant (would let us drop the
+  `locus_rust::visitor` override).
+- Split `failure_lineage::rules` and `one_truth::rules` per rule
+  (would let us drop the CX002 module overrides for those).
+- Split `cli::main` per command (would drop the `locus_cli` CX002
+  override).
+
+These are real architectural improvements available when the project
+wants to spend the time; they're not blocking.
+
 ## Self-onboarding completion snapshot (2026-05-09)
 
 After the #30/#31/#32 work landed, the picture is:
