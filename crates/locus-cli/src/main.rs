@@ -173,6 +173,9 @@ enum Command {
     /// Manage UT (Utility / Shared Module Discipline) declarations in `locus.lock`.
     #[command(subcommand)]
     Ut(UtCommand),
+    /// List active and expired exceptions across `// ot: allow` hints and
+    /// `Lockfile.exceptions`. Inventory of every suppression in the repo.
+    Debt(DebtArgs),
 }
 
 // ot: boundary cli.ut cli
@@ -729,6 +732,17 @@ struct EmitAirArgs {
     pretty: bool,
 }
 
+// ot: boundary cli.debt cli
+#[derive(clap::Args, Debug)]
+struct DebtArgs {
+    /// Workspace root (containing Cargo.toml).
+    #[arg(long, default_value = ".")]
+    workspace: PathBuf,
+    /// Emit one JSON object per line instead of human-readable text.
+    #[arg(long)]
+    json: bool,
+}
+
 // ot: boundary cli.check cli
 #[derive(clap::Args, Debug)]
 struct CheckArgs {
@@ -780,6 +794,7 @@ fn main() -> Result<()> {
         Command::Rw(cmd) => rw(cmd),
         Command::Ta(cmd) => ta(cmd),
         Command::Ut(cmd) => ut(cmd),
+        Command::Debt(args) => debt(args),
     }
 }
 
@@ -1829,6 +1844,106 @@ fn emit_air(args: EmitAirArgs) -> Result<()> {
     }
     writer.write_all(b"\n")?;
     Ok(())
+}
+
+fn debt(args: DebtArgs) -> Result<()> {
+    use locus_core::exceptions::{ExceptionSource, ExceptionStatus, collect_exceptions, today_utc};
+
+    let air = locus_rust::scan(&args.workspace)
+        .with_context(|| format!("scan failed: {}", args.workspace.display()))?;
+    let lockfile = Lockfile::load_or_empty(&args.workspace)
+        .with_context(|| format!("load lockfile from {}", args.workspace.display()))?;
+    let today = today_utc();
+    let entries = collect_exceptions(&air, &lockfile, Some(&today));
+
+    if args.json {
+        let stdout = io::stdout();
+        let mut w = BufWriter::new(stdout.lock());
+        for e in &entries {
+            let row = serde_json::json!({
+                "source": match e.source {
+                    ExceptionSource::Hint => "hint",
+                    ExceptionSource::Lockfile => "lockfile",
+                },
+                "rule": e.rule,
+                "target": e.target,
+                "reason": e.reason,
+                "expires": e.expires,
+                "status": match e.status {
+                    ExceptionStatus::Active => "active",
+                    ExceptionStatus::Expired => "expired",
+                    ExceptionStatus::Unbounded => "unbounded",
+                },
+            });
+            serde_json::to_writer(&mut w, &row)?;
+            w.write_all(b"\n")?;
+        }
+        return Ok(());
+    }
+
+    print_debt_text(&entries);
+    Ok(())
+}
+
+fn print_debt_text(entries: &[locus_core::exceptions::ExceptionEntry]) {
+    use locus_core::exceptions::{ExceptionSource, ExceptionStatus};
+
+    let (mut active, mut expired, mut unbounded) = (0usize, 0usize, 0usize);
+    for e in entries {
+        match e.status {
+            ExceptionStatus::Active => active += 1,
+            ExceptionStatus::Expired => expired += 1,
+            ExceptionStatus::Unbounded => unbounded += 1,
+        }
+    }
+    println!(
+        "debt: {active} active, {expired} expired, {unbounded} unbounded ({} total)",
+        entries.len()
+    );
+
+    let render = |e: &locus_core::exceptions::ExceptionEntry| {
+        let source = match e.source {
+            ExceptionSource::Hint => "hint",
+            ExceptionSource::Lockfile => "lock",
+        };
+        let expires = e.expires.as_deref().unwrap_or("—");
+        let reason = e.reason.as_deref().unwrap_or("");
+        format!(
+            "  {:<8} {:<40} expires {:<12} ({}) {}",
+            e.rule, e.target, expires, source, reason
+        )
+    };
+
+    let by_status = |want: ExceptionStatus| -> Vec<&locus_core::exceptions::ExceptionEntry> {
+        entries.iter().filter(|e| e.status == want).collect()
+    };
+
+    let expired_rows = by_status(ExceptionStatus::Expired);
+    if !expired_rows.is_empty() {
+        println!();
+        println!("EXPIRED  (re-run `locus check` for LOCUS001 advisories)");
+        for e in expired_rows {
+            println!("{}", render(e));
+        }
+    }
+
+    let unbounded_rows = by_status(ExceptionStatus::Unbounded);
+    if !unbounded_rows.is_empty() {
+        println!();
+        println!("UNBOUNDED  (no expiry — review or add one)");
+        for e in unbounded_rows {
+            println!("{}", render(e));
+        }
+    }
+
+    let active_rows = by_status(ExceptionStatus::Active);
+    if !active_rows.is_empty() {
+        println!();
+        println!("ACTIVE");
+        for e in active_rows {
+            println!("{}", render(e));
+        }
+    }
 }
 
 fn check(args: CheckArgs) -> Result<()> {

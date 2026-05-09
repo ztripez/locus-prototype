@@ -130,6 +130,116 @@ pub fn apply_exceptions(
     out
 }
 
+/// One row in `locus debt`'s output. Holds enough to identify the
+/// suppression site without losing the source distinction (a hint at
+/// `src/foo.rs:42` and a lockfile entry targeting that same line are
+/// independent debt items).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExceptionEntry {
+    pub source: ExceptionSource,
+    pub rule: String,
+    pub target: String,
+    pub reason: Option<String>,
+    pub expires: Option<String>,
+    pub status: ExceptionStatus,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExceptionSource {
+    Hint,
+    Lockfile,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExceptionStatus {
+    Active,
+    Expired,
+    /// `// ot: allow` source hint without an `expires=` clause. The hint
+    /// suppresses forever; surfaced separately so the user notices.
+    Unbounded,
+}
+
+/// Walk every `// ot: allow` hint in `air` and every `Lockfile.exceptions`
+/// entry, returning a row per suppression with its current status. Used
+/// by `locus debt`. `today` follows the same convention as
+/// [`apply_exceptions`]: `Some("YYYY-MM-DD")` for deterministic runs,
+/// `None` to skip expiry checks.
+pub fn collect_exceptions(
+    air: &AirWorkspace,
+    lockfile: &Lockfile,
+    today: Option<&str>,
+) -> Vec<ExceptionEntry> {
+    let mut out = Vec::new();
+    for pkg in &air.packages {
+        for file in &pkg.files {
+            for hint in &file.hints {
+                let HintKind::Allow {
+                    rule,
+                    reason,
+                    expires,
+                } = &hint.kind
+                else {
+                    continue;
+                };
+                let line = hint
+                    .target_span
+                    .as_ref()
+                    .map(|t| t.line_start)
+                    .unwrap_or(hint.span.line_start);
+                let status = match expires.as_deref() {
+                    None => ExceptionStatus::Unbounded,
+                    Some(exp) => {
+                        if is_expired(Some(exp), today) {
+                            ExceptionStatus::Expired
+                        } else {
+                            ExceptionStatus::Active
+                        }
+                    }
+                };
+                out.push(ExceptionEntry {
+                    source: ExceptionSource::Hint,
+                    rule: rule.clone(),
+                    target: format!("{}:{}", file.path, line),
+                    reason: reason.clone(),
+                    expires: expires.clone(),
+                    status,
+                });
+            }
+        }
+    }
+    for ex in &lockfile.exceptions {
+        let status = if is_expired(Some(&ex.expires), today) {
+            ExceptionStatus::Expired
+        } else {
+            ExceptionStatus::Active
+        };
+        out.push(ExceptionEntry {
+            source: ExceptionSource::Lockfile,
+            rule: ex.rule.clone(),
+            target: ex.target.clone(),
+            reason: Some(ex.reason.clone()),
+            expires: Some(ex.expires.clone()),
+            status,
+        });
+    }
+    out.sort_by(|a, b| {
+        (status_order(a.status), &a.rule, &a.target).cmp(&(
+            status_order(b.status),
+            &b.rule,
+            &b.target,
+        ))
+    });
+    out
+}
+
+fn status_order(s: ExceptionStatus) -> u8 {
+    match s {
+        ExceptionStatus::Expired => 0,
+        ExceptionStatus::Unbounded => 1,
+        ExceptionStatus::Active => 2,
+    }
+}
+
 /// Today's date as `YYYY-MM-DD` (UTC). Honours the `LOCUS_TODAY`
 /// environment variable for deterministic testing / CI replay.
 pub fn today_utc() -> String {
@@ -414,5 +524,56 @@ mod tests {
         // 2026-01-01 = day 20454 since 1970-01-01 (sanity-check the algo).
         assert_eq!(days_to_ymd(20_454), (2026, 1, 1));
         assert_eq!(days_to_ymd(0), (1970, 1, 1));
+    }
+
+    #[test]
+    fn collect_exceptions_classifies_each_source_and_status() {
+        let air = workspace_with_hints(
+            "t.rs",
+            vec![
+                allow_hint("OT002", Some("2030-01-01"), 10),
+                allow_hint("DG001", Some("2024-01-01"), 20),
+                allow_hint("CX001", None, 30),
+            ],
+        );
+        let mut lf = Lockfile::empty();
+        lf.exceptions.push(Exception {
+            rule: "DG001".into(),
+            target: "src/legacy.rs:42".into(),
+            reason: "interim".into(),
+            expires: "2030-12-01".into(),
+        });
+        lf.exceptions.push(Exception {
+            rule: "OT004".into(),
+            target: "src/old.rs".into(),
+            reason: "to migrate".into(),
+            expires: "2024-06-01".into(),
+        });
+
+        let entries = collect_exceptions(&air, &lf, Some("2026-05-07"));
+        assert_eq!(entries.len(), 5);
+
+        let mut counts = (0, 0, 0);
+        for e in &entries {
+            match e.status {
+                ExceptionStatus::Active => counts.0 += 1,
+                ExceptionStatus::Expired => counts.1 += 1,
+                ExceptionStatus::Unbounded => counts.2 += 1,
+            }
+        }
+        assert_eq!(counts, (2, 2, 1));
+
+        // Expired rows sort first.
+        assert_eq!(entries[0].status, ExceptionStatus::Expired);
+        assert_eq!(entries[1].status, ExceptionStatus::Expired);
+    }
+
+    #[test]
+    fn collect_exceptions_target_includes_hint_line() {
+        let air = workspace_with_hints("t.rs", vec![allow_hint("OT002", Some("2030-01-01"), 42)]);
+        let entries = collect_exceptions(&air, &Lockfile::empty(), Some("2026-05-07"));
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].target, "t.rs:42");
+        assert_eq!(entries[0].source, ExceptionSource::Hint);
     }
 }
