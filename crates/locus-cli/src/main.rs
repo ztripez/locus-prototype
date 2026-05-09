@@ -796,11 +796,21 @@ struct CheckArgs {
     /// Acknowledge that this run is calibrating policy (raising budgets,
     /// adding overrides, expanding `acknowledged_empty`). Without this
     /// flag, Policy Guard fails `--agent-strict` on any policy widening
-    /// vs the baseline lockfile. With it, PG diagnostics fire as
-    /// Advisory and a structured calibration report is printed
-    /// alongside the normal output. See issue #44.
+    /// vs the baseline lockfile. With it, PG001/PG002/PG003/PG004 fire
+    /// as Advisory and a structured calibration report is printed
+    /// alongside the normal output. PG006 (missing debt metadata) is
+    /// **not** affected by calibration — calibration legitimizes the
+    /// addition itself, but does not waive the requirement to record
+    /// `reason` / `expires` / `owner`. See issue #44.
     #[arg(long)]
     allow_policy_calibration: bool,
+    /// Acknowledge that no baseline lockfile is available for the
+    /// Policy Guard audit (e.g. shallow CI clone, first commit before
+    /// `locus.lock` existed). Without this flag, PG000 fires Fatal
+    /// under `--agent-strict` so that a missing audit can't silently
+    /// disable the gate. See issue #44.
+    #[arg(long)]
+    allow_missing_policy_baseline: bool,
 }
 
 fn main() -> Result<()> {
@@ -2086,22 +2096,29 @@ fn check(args: CheckArgs) -> Result<()> {
         all.extend(paradigm.check(&air, &lockfile, mode));
     }
 
+    // Apply exceptions to paradigm diagnostics BEFORE Policy Guard runs.
+    // This is the load-bearing ordering: PG is meta-policy and must NOT
+    // be suppressible by `Lockfile.exceptions[]` entries. Without this
+    // ordering, an exception with `rule = "*"` (or `rule = "PG"`) would
+    // silence the audit using the same lockfile it audits. See #44.
+    let today = today_utc();
+    let mut all = apply_exceptions(all, &air, &lockfile, Some(&today));
+
     // Policy Guard (#44): compare current lockfile to baseline via
-    // `git show <baseline>:locus.lock`. Silent if no baseline available.
+    // `git show <baseline>:locus.lock`. Appended AFTER apply_exceptions
+    // so PG diagnostics flow straight to output.
     let baseline_lockfile = diff::read_baseline_lockfile(&args.workspace, args.baseline.as_deref());
     let pg = locus_core::check_policy_mutation(
         &lockfile,
         baseline_lockfile.as_ref(),
         mode,
         args.allow_policy_calibration,
+        args.allow_missing_policy_baseline,
     );
     if args.allow_policy_calibration && !pg.is_empty() {
         report_policy_calibration(&pg)?;
     }
     all.extend(pg);
-
-    let today = today_utc();
-    let all = apply_exceptions(all, &air, &lockfile, Some(&today));
 
     // Diff filter — applied after exceptions so an `// locus: allow XX###`
     // hint on changed code still suppresses, and the LOCUS001 expired-

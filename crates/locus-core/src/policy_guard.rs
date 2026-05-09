@@ -22,33 +22,51 @@
 //! baseline `Lockfile` (the CLI is responsible for reading the baseline
 //! via git).
 //!
+//! **Non-suppressible by lockfile exceptions.** The CLI runs
+//! `apply_exceptions` BEFORE adding PG diagnostics. Without that
+//! ordering, a `{rule: "*", target: "*"}` exception would erase the
+//! audit. PG is meta-policy; it is the one rule family
+//! `Lockfile.exceptions[]` must not be able to silence.
+//!
 //! Rules implemented today:
-//! - [`PG001_BUDGET_RAISED`] — a numeric budget field increased.
+//! - [`PG000_BASELINE_MISSING`] — no baseline lockfile resolved (e.g.
+//!   shallow clone, missing ref, untracked baseline file). Fires
+//!   Warning by default; Fatal under `--agent-strict` unless the user
+//!   passes `--allow-missing-policy-baseline`.
+//! - [`PG001_BUDGET_RAISED`] — a numeric budget field increased,
+//!   either at workspace level (`default_max_*`, `max_*`) or on an
+//!   existing override entry (`overrides[*].max_*_lines`,
+//!   `module_overrides[*].max_module_lines`,
+//!   `MO.overrides[*].max_public_types`).
 //! - [`PG002_OVERRIDE_ADDED`] — a new override exists in current that
-//!   wasn't in baseline AND the override is missing structured debt
-//!   metadata (`reason` + `expires` + `owner`).
+//!   wasn't in baseline. Fires regardless of metadata. Calibration
+//!   mode downgrades to Advisory (legitimate, acknowledged
+//!   calibration) but the addition stays visible.
 //! - [`PG003_EXEMPT_PATH_ADDED`] — a new entry in any `exempt_paths`
 //!   list vs baseline.
 //! - [`PG004_ACKNOWLEDGED_EMPTY_ADDED`] — a new entry in
 //!   top-level `acknowledged_empty`.
+//! - [`PG006_OVERRIDE_LACKS_DEBT_METADATA`] — a new override is
+//!   missing `reason` / `expires` / `owner` debt metadata. Always
+//!   Fatal under `--agent-strict`, even with
+//!   `--allow-policy-calibration` — calibration legitimizes the
+//!   *act* of adding an override, not the absence of justification.
 //!
 //! Deferred:
-//! - **PG005** (severity lowered) — needs a severity-override schema in
-//!   the lockfile, which doesn't exist yet.
+//! - **PG005** (severity lowered) — needs a severity-override schema
+//!   in the lockfile, which doesn't exist yet.
 //! - **Expired-debt** (override past `expires` date) — schema is in
 //!   place; rule body is a follow-up.
 //! - **Dead-debt** (override whose target no longer violates) —
 //!   non-trivial, needs override-application tracking through the
 //!   check pipeline.
 //!
-//! Calibration mode: when the CLI passes `calibration = true`, PG
-//! diagnostics fire as `Severity::Advisory` regardless of mode. The
-//! CLI is expected to also print a structured calibration report;
-//! this module just produces the diagnostics.
+//! Calibration mode: `--allow-policy-calibration` downgrades
+//! PG001/PG002/PG003/PG004 to `Severity::Advisory`. PG000 and PG006
+//! ignore calibration — missing baseline and missing debt metadata
+//! aren't legitimately calibratable.
 
 // locus: ot canonical
-
-use serde::Deserialize;
 
 use crate::diagnostics::{CheckMode, Diagnostic, Severity};
 use crate::lockfile::Lockfile;
@@ -58,14 +76,24 @@ use crate::paradigms::complexity_budget::lockfile_schema::{
 use crate::paradigms::module_ownership::lockfile_schema::{MoOverride, MoSection};
 use locus_air::AirSpan;
 
+/// PG000 — no baseline lockfile available; the policy audit could not
+/// run. Fires Warning by default; Fatal under `--agent-strict` unless
+/// the caller opts into the missing-baseline state via
+/// `allow_missing_baseline = true`.
+pub const PG000_BASELINE_MISSING: &str = "PG000";
+
 /// PG001 — a numeric budget field in the lockfile increased vs the
-/// baseline. Includes `default_max_function_lines`,
+/// baseline. Covers workspace defaults (`default_max_function_lines`,
 /// `default_max_module_lines`, `max_public_items`, `max_fan_out`,
-/// `default_max_public_types`, `entropy_threshold`.
+/// `default_max_public_types`, `entropy_threshold`) AND existing
+/// override budgets (`overrides[*].max_function_lines`,
+/// `module_overrides[*].max_module_lines`,
+/// `MO.overrides[*].max_public_types`) keyed by `module`.
 pub const PG001_BUDGET_RAISED: &str = "PG001";
 
-/// PG002 — a new override exists in the current lockfile vs baseline
-/// AND the override lacks structured debt metadata.
+/// PG002 — a new override exists in current that wasn't in baseline.
+/// Fires on the *addition* — independent of debt metadata. Calibration
+/// mode downgrades to Advisory; PG006 covers the metadata gap.
 pub const PG002_OVERRIDE_ADDED: &str = "PG002";
 
 /// PG003 — a new entry exists in some `exempt_paths` list vs baseline.
@@ -75,25 +103,54 @@ pub const PG003_EXEMPT_PATH_ADDED: &str = "PG003";
 /// vs baseline.
 pub const PG004_ACKNOWLEDGED_EMPTY_ADDED: &str = "PG004";
 
-/// Run all PG checks against `current` vs `baseline`. Returns no
-/// diagnostics when `baseline` is `None` (e.g., first commit, no git,
-/// baseline ref doesn't carry a `locus.lock`).
+/// PG006 — a new override lacks structured debt metadata
+/// (`reason` + `expires` + `owner`). Independent of PG002, fires
+/// alongside it when fields are missing. Always Fatal under
+/// `--agent-strict`; calibration mode does NOT downgrade — calibration
+/// legitimizes the act of adding an override, not the absence of
+/// justification.
+pub const PG006_OVERRIDE_LACKS_DEBT_METADATA: &str = "PG006";
+
+/// Run all PG checks against `current` vs `baseline`.
 ///
-/// Severity:
-/// - When `calibration = true`, PG diagnostics fire as Advisory.
-/// - Otherwise, Warning by default; Fatal under `--agent-strict` via
-///   [`CheckMode::elevate`].
+/// When `baseline` is `None`, emits a single `PG000` diagnostic unless
+/// `allow_missing_baseline` is set. PG000's severity matches `mode`
+/// (Warning by default; Fatal under `--agent-strict`); it is **not**
+/// affected by `calibration` — calibration acknowledges intentional
+/// widening, but missing-baseline means we couldn't audit at all.
+///
+/// Severity for PG001/PG002/PG003/PG004:
+/// - When `calibration = true`, fire as `Severity::Advisory`.
+/// - Otherwise, Warning by default; Fatal under `--agent-strict`.
+///
+/// Severity for PG000 and PG006: ignores `calibration`; always Warning
+/// by default and Fatal under `--agent-strict`.
 pub fn check_policy_mutation(
     current: &Lockfile,
     baseline: Option<&Lockfile>,
     mode: CheckMode,
     calibration: bool,
+    allow_missing_baseline: bool,
 ) -> Vec<Diagnostic> {
     let Some(baseline) = baseline else {
-        return Vec::new();
+        if allow_missing_baseline {
+            return Vec::new();
+        }
+        return vec![baseline_missing_diagnostic(mode)];
     };
     let mut out = Vec::new();
-    out.extend(check_budget_changes(current, baseline, mode, calibration));
+    out.extend(check_default_budget_changes(
+        current,
+        baseline,
+        mode,
+        calibration,
+    ));
+    out.extend(check_existing_override_budget_changes(
+        current,
+        baseline,
+        mode,
+        calibration,
+    ));
     out.extend(check_new_overrides(current, baseline, mode, calibration));
     out.extend(check_new_exempt_paths(current, baseline, mode, calibration));
     out.extend(check_new_acknowledged_empty(
@@ -113,13 +170,50 @@ fn pg_severity(mode: CheckMode, calibration: bool) -> Severity {
     }
 }
 
+/// Severity for rules that ignore calibration (PG000, PG006).
+fn pg_strict_severity(mode: CheckMode) -> Severity {
+    mode.elevate(Severity::Warning)
+}
+
 fn lockfile_span() -> AirSpan {
     AirSpan::new("locus.lock", 1, 1)
 }
 
-// ---- PG001 budget raised ------------------------------------------
+// ---- PG000 baseline missing --------------------------------------
 
-fn check_budget_changes(
+fn baseline_missing_diagnostic(mode: CheckMode) -> Diagnostic {
+    Diagnostic {
+        rule_id: PG000_BASELINE_MISSING.to_string(),
+        severity: pg_strict_severity(mode),
+        span: lockfile_span(),
+        concept: None,
+        message:
+            "Policy Guard could not resolve a baseline lockfile; policy widening cannot be audited"
+                .to_string(),
+        why: vec![
+            "tried to read the baseline `locus.lock` via `git show <baseline>:locus.lock`"
+                .to_string(),
+            "the baseline ref / file / git itself was unavailable; PG001-PG004/PG006 cannot \
+             compare against a baseline"
+                .into(),
+            "without an audit, an agent could quietly widen policy and pass \
+             `--agent-strict`; PG000 makes that visible"
+                .into(),
+        ],
+        suggested_fix: Some(
+            "ensure the workspace is a git repo with a reachable baseline ref \
+             (default chain: `origin/main` → `origin/master` → `main` → `master` → `HEAD~1`); \
+             pass `--baseline <ref>` to set explicitly. If this is the first commit \
+             before `locus.lock` existed, pass `--allow-missing-policy-baseline` to \
+             explicitly accept the audit gap."
+                .into(),
+        ),
+    }
+}
+
+// ---- PG001 default-budget raise ----------------------------------
+
+fn check_default_budget_changes(
     current: &Lockfile,
     baseline: &Lockfile,
     mode: CheckMode,
@@ -186,10 +280,113 @@ fn check_budget_changes(
     out
 }
 
-/// Compare an `Option<u32>` budget across baseline → current. The
-/// effective value is `Some(n)` when set, else the built-in
-/// `fallback`. Fires PG001 when current's effective value is greater
-/// than baseline's effective value.
+// ---- PG001 existing-override budget raise ------------------------
+
+/// Walk the intersection of current and baseline override lists keyed
+/// by `module`, and flag any override whose budget value increased.
+/// Without this, an agent could pre-populate an override at a small
+/// budget, ship it, then quietly bump it later — the override "module"
+/// already exists so PG002 stays quiet.
+fn check_existing_override_budget_changes(
+    current: &Lockfile,
+    baseline: &Lockfile,
+    mode: CheckMode,
+    calibration: bool,
+) -> Vec<Diagnostic> {
+    let mut out = Vec::new();
+    let cur_cx: CxSection = current.paradigm_section("CX").unwrap_or_default();
+    let base_cx: CxSection = baseline.paradigm_section("CX").unwrap_or_default();
+
+    // CX function-line overrides.
+    for cur_o in &cur_cx.overrides {
+        if let Some(base_o) = base_cx.overrides.iter().find(|o| o.module == cur_o.module)
+            && cur_o.max_function_lines > base_o.max_function_lines
+        {
+            out.push(override_budget_raised_diagnostic(
+                "paradigms.CX.overrides",
+                &cur_o.module,
+                "max_function_lines",
+                base_o.max_function_lines,
+                cur_o.max_function_lines,
+                mode,
+                calibration,
+            ));
+        }
+    }
+    // CX module-line overrides.
+    for cur_o in &cur_cx.module_overrides {
+        if let Some(base_o) = base_cx
+            .module_overrides
+            .iter()
+            .find(|o| o.module == cur_o.module)
+            && cur_o.max_module_lines > base_o.max_module_lines
+        {
+            out.push(override_budget_raised_diagnostic(
+                "paradigms.CX.module_overrides",
+                &cur_o.module,
+                "max_module_lines",
+                base_o.max_module_lines,
+                cur_o.max_module_lines,
+                mode,
+                calibration,
+            ));
+        }
+    }
+
+    let cur_mo: MoSection = current.paradigm_section("MO").unwrap_or_default();
+    let base_mo: MoSection = baseline.paradigm_section("MO").unwrap_or_default();
+    for cur_o in &cur_mo.overrides {
+        if let Some(base_o) = base_mo.overrides.iter().find(|o| o.module == cur_o.module)
+            && cur_o.max_public_types > base_o.max_public_types
+        {
+            out.push(override_budget_raised_diagnostic(
+                "paradigms.MO.overrides",
+                &cur_o.module,
+                "max_public_types",
+                base_o.max_public_types,
+                cur_o.max_public_types,
+                mode,
+                calibration,
+            ));
+        }
+    }
+    out
+}
+
+fn override_budget_raised_diagnostic(
+    list_field: &str,
+    module: &str,
+    budget_field: &str,
+    base: u32,
+    cur: u32,
+    mode: CheckMode,
+    calibration: bool,
+) -> Diagnostic {
+    let delta = cur as i64 - base as i64;
+    Diagnostic {
+        rule_id: PG001_BUDGET_RAISED.to_string(),
+        severity: pg_severity(mode, calibration),
+        span: lockfile_span(),
+        concept: None,
+        message: format!(
+            "override `{module}` in `{list_field}`: `{budget_field}` raised from {base} to {cur}"
+        ),
+        why: vec![
+            format!("override on `{module}` had `{budget_field}={base}` in baseline"),
+            format!("current value is `{budget_field}={cur}` (Δ {delta:+})"),
+            "raising an existing override budget hides diagnostics that real refactor \
+             would expose; keep the budget steady or tighten it"
+                .into(),
+        ],
+        suggested_fix: Some(
+            "if this is a deliberate calibration, re-run `locus check` with \
+             `--allow-policy-calibration`; otherwise revert and fix the underlying code"
+                .into(),
+        ),
+    }
+}
+
+/// Compare an `Option<u32>` workspace budget across baseline → current.
 fn diff_optional_budget(
     field: &str,
     base: Option<u32>,
@@ -202,7 +399,7 @@ fn diff_optional_budget(
     let base_eff = base.unwrap_or(fallback);
     let cur_eff = cur.unwrap_or(fallback);
     if cur_eff > base_eff {
-        out.push(budget_raised_diagnostic(
+        out.push(default_budget_raised_diagnostic(
             field,
             base_eff,
             cur_eff,
@@ -223,7 +420,7 @@ fn diff_required_budget(
     out: &mut Vec<Diagnostic>,
 ) {
     if cur > base {
-        out.push(budget_raised_diagnostic(
+        out.push(default_budget_raised_diagnostic(
             field,
             base,
             cur,
@@ -235,7 +432,7 @@ fn diff_required_budget(
     }
 }
 
-fn budget_raised_diagnostic(
+fn default_budget_raised_diagnostic(
     field: &str,
     base: u32,
     cur: u32,
@@ -274,7 +471,7 @@ fn budget_raised_diagnostic(
     }
 }
 
-// ---- PG002 new override added without debt metadata ---------------
+// ---- PG002 new override + PG006 missing metadata -----------------
 
 fn check_new_overrides(
     current: &Lockfile,
@@ -285,6 +482,7 @@ fn check_new_overrides(
     let mut out = Vec::new();
     let cur_cx: CxSection = current.paradigm_section("CX").unwrap_or_default();
     let base_cx: CxSection = baseline.paradigm_section("CX").unwrap_or_default();
+
     let base_cx_modules: std::collections::HashSet<&str> = base_cx
         .overrides
         .iter()
@@ -294,16 +492,22 @@ fn check_new_overrides(
         if base_cx_modules.contains(o.module.as_str()) {
             continue;
         }
-        if let Some(d) = check_override_debt(
+        out.push(override_added_diagnostic(
+            "paradigms.CX.overrides",
+            &o.module,
+            mode,
+            calibration,
+        ));
+        if let Some(d) = override_metadata_diagnostic(
             "paradigms.CX.overrides",
             &o.module,
             cx_override_debt(o),
             mode,
-            calibration,
         ) {
             out.push(d);
         }
     }
+
     let base_cx_module_overrides: std::collections::HashSet<&str> = base_cx
         .module_overrides
         .iter()
@@ -313,12 +517,17 @@ fn check_new_overrides(
         if base_cx_module_overrides.contains(o.module.as_str()) {
             continue;
         }
-        if let Some(d) = check_override_debt(
+        out.push(override_added_diagnostic(
+            "paradigms.CX.module_overrides",
+            &o.module,
+            mode,
+            calibration,
+        ));
+        if let Some(d) = override_metadata_diagnostic(
             "paradigms.CX.module_overrides",
             &o.module,
             cx_module_override_debt(o),
             mode,
-            calibration,
         ) {
             out.push(d);
         }
@@ -335,17 +544,49 @@ fn check_new_overrides(
         if base_mo_modules.contains(o.module.as_str()) {
             continue;
         }
-        if let Some(d) = check_override_debt(
+        out.push(override_added_diagnostic(
+            "paradigms.MO.overrides",
+            &o.module,
+            mode,
+            calibration,
+        ));
+        if let Some(d) = override_metadata_diagnostic(
             "paradigms.MO.overrides",
             &o.module,
             mo_override_debt(o),
             mode,
-            calibration,
         ) {
             out.push(d);
         }
     }
     out
+}
+
+fn override_added_diagnostic(
+    list_field: &str,
+    module: &str,
+    mode: CheckMode,
+    calibration: bool,
+) -> Diagnostic {
+    Diagnostic {
+        rule_id: PG002_OVERRIDE_ADDED.to_string(),
+        severity: pg_severity(mode, calibration),
+        span: lockfile_span(),
+        concept: None,
+        message: format!("new override on `{module}` added to `{list_field}`"),
+        why: vec![
+            format!("`{list_field}` did not contain `{module}` in baseline"),
+            "an override silences the rule for a module; even with debt metadata, \
+             the addition is policy widening that should be acknowledged"
+                .into(),
+        ],
+        suggested_fix: Some(
+            "if this is a deliberate calibration, re-run `locus check` with \
+             `--allow-policy-calibration` (PG002 will fire as Advisory). Without \
+             calibration, address the underlying code or revert the override."
+                .into(),
+        ),
+    }
 }
 
 #[derive(Debug, Default)]
@@ -379,12 +620,16 @@ fn mo_override_debt(o: &MoOverride) -> DebtMetadata<'_> {
     }
 }
 
-fn check_override_debt(
+/// PG006 — fires when a new override lacks `reason` / `expires` /
+/// `owner`. Always uses strict severity (calibration does NOT
+/// downgrade): calibration legitimizes the act of adding the
+/// override (PG002 → Advisory under calibration), but it does NOT
+/// excuse missing justification.
+fn override_metadata_diagnostic(
     list_field: &str,
     module: &str,
     debt: DebtMetadata<'_>,
     mode: CheckMode,
-    calibration: bool,
 ) -> Option<Diagnostic> {
     let mut missing: Vec<&'static str> = Vec::new();
     if debt.reason.is_none_or(str::is_empty) {
@@ -401,8 +646,8 @@ fn check_override_debt(
     }
     let missing_label = missing.join(", ");
     Some(Diagnostic {
-        rule_id: PG002_OVERRIDE_ADDED.to_string(),
-        severity: pg_severity(mode, calibration),
+        rule_id: PG006_OVERRIDE_LACKS_DEBT_METADATA.to_string(),
+        severity: pg_strict_severity(mode),
         span: lockfile_span(),
         concept: None,
         message: format!(
@@ -414,6 +659,10 @@ fn check_override_debt(
              `expires` / `owner` it becomes invisible debt"
                 .into(),
             format!("missing field(s): {missing_label}"),
+            "PG006 is unaffected by `--allow-policy-calibration`: calibration \
+             accepts the addition itself (PG002), but does not waive the \
+             requirement to record why, when to revisit, and who owns it"
+                .into(),
         ],
         suggested_fix: Some(
             "populate `reason` (why the override exists), `expires` \
@@ -441,30 +690,14 @@ fn check_new_exempt_paths(
         if base_set.contains(entry.as_str()) {
             continue;
         }
-        out.push(Diagnostic {
-            rule_id: PG003_EXEMPT_PATH_ADDED.to_string(),
-            severity: pg_severity(mode, calibration),
-            span: lockfile_span(),
-            concept: None,
-            message: format!("new exempt path `{entry}` in `paradigms.CX.exempt_paths`"),
-            why: vec![
-                "exemption silences the rule entirely for matching modules; \
-                 prefer narrowing the rule via overrides with debt metadata, \
-                 or fixing the underlying code"
-                    .into(),
-            ],
-            suggested_fix: Some(
-                "if this is a deliberate calibration, re-run `locus check` \
-                 with `--allow-policy-calibration`. The exempt-paths schema \
-                 will gain debt metadata in a follow-up; until then exemptions \
-                 are visible additions."
-                    .into(),
-            ),
-        });
+        out.push(exempt_path_added_diagnostic(
+            "paradigms.CX.exempt_paths",
+            entry,
+            mode,
+            calibration,
+        ));
     }
-    // Other paradigms with exempt_paths (DC, etc.) follow the same pattern;
-    // for the MVP we cover CX. Future paradigms register their exempt-path
-    // diff via a similar block.
+    // DC's exempt_paths is the only other paradigm with one today.
     let cur_dc: serde_json::Value = current
         .paradigm_section("DC")
         .unwrap_or(serde_json::Value::Null);
@@ -479,22 +712,42 @@ fn check_new_exempt_paths(
         if base_dc_set.contains(entry.as_str()) {
             continue;
         }
-        out.push(Diagnostic {
-            rule_id: PG003_EXEMPT_PATH_ADDED.to_string(),
-            severity: pg_severity(mode, calibration),
-            span: lockfile_span(),
-            concept: None,
-            message: format!("new exempt path `{entry}` in `paradigms.DC.exempt_paths`"),
-            why: vec![
-                "exemption silences the rule entirely for matching modules; \
-                 prefer narrowing the rule via overrides with debt metadata, \
-                 or fixing the underlying code"
-                    .into(),
-            ],
-            suggested_fix: Some("if deliberate, re-run with `--allow-policy-calibration`.".into()),
-        });
+        out.push(exempt_path_added_diagnostic(
+            "paradigms.DC.exempt_paths",
+            entry,
+            mode,
+            calibration,
+        ));
     }
     out
+}
+
+fn exempt_path_added_diagnostic(
+    list_field: &str,
+    entry: &str,
+    mode: CheckMode,
+    calibration: bool,
+) -> Diagnostic {
+    Diagnostic {
+        rule_id: PG003_EXEMPT_PATH_ADDED.to_string(),
+        severity: pg_severity(mode, calibration),
+        span: lockfile_span(),
+        concept: None,
+        message: format!("new exempt path `{entry}` in `{list_field}`"),
+        why: vec![
+            "exemption silences the rule entirely for matching modules; \
+             prefer narrowing the rule via overrides with debt metadata, \
+             or fixing the underlying code"
+                .into(),
+        ],
+        suggested_fix: Some(
+            "if this is a deliberate calibration, re-run `locus check` \
+             with `--allow-policy-calibration`. The exempt-paths schema \
+             will gain debt metadata in a follow-up; until then exemptions \
+             are visible additions."
+                .into(),
+        ),
+    }
 }
 
 fn json_string_array(value: &serde_json::Value, field: &str) -> Vec<String> {
@@ -546,12 +799,6 @@ fn check_new_acknowledged_empty(
         })
         .collect()
 }
-
-// Allow Lockfile field-only deserialization when the JSON is a bare value;
-// we don't need it directly since `paradigm_section::<T>` already does this.
-// Kept as a use marker for clarity if T's bound surfaces in error messages.
-#[allow(dead_code)]
-fn _ensure_deserialize<T: for<'de> Deserialize<'de> + Default>() {}
 
 #[cfg(test)]
 #[path = "policy_guard_tests.rs"]
