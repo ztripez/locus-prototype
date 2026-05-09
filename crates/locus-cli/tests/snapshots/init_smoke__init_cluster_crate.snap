@@ -48,6 +48,7 @@ unresolved: 13
 
 [feature] no features defined; DG/FO will not fire
   top-level modules: api, domain
+  empty public_api means the feature surface is not yet declared, not that every cross-feature import is an architecture bug — DG003 only flags reaches into internals once features list a public_api
   define:
     locus dg define-feature --name api --module "api::*" --public-api "api::*"
     locus dg define-feature --name domain --module "domain::*" --public-api "domain::*"

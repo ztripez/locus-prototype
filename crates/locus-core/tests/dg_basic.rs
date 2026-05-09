@@ -84,6 +84,73 @@ fn dg001_fires_when_handler_imports_dto() {
     );
 }
 
+/// Two-feature fixture exercising DG003's central rule:
+/// imports through a feature's declared `public_api` surface are allowed,
+/// imports that bypass it into the feature's internals are rejected.
+///
+/// Fixture layout:
+///   `dg_public_api::feature_one::api`        — public surface
+///   `dg_public_api::feature_one::internals`  — private; not in `public_api`
+///   `dg_public_api::feature_two::handler`    — consumer
+///
+/// `handler` imports both `feature_one::api::PublicThing` (legal) and
+/// `feature_one::internals::secret` (illegal). With `feature_one`'s
+/// `public_api` set to `dg_public_api::feature_one::api::*`, exactly one
+/// DG003 must fire — on the internals reach.
+#[test]
+fn dg003_allows_public_api_blocks_internals_reach() {
+    let manifest = std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR");
+    let fixture = std::path::PathBuf::from(manifest)
+        .join("../../tests/fixtures/dg-public-api")
+        .canonicalize()
+        .expect("dg-public-api fixture resolves");
+    let air = locus_rust::scan(&fixture).expect("scan succeeds");
+
+    let mut lockfile = Lockfile::empty();
+    lockfile.paradigms.insert(
+        DG_PREFIX.to_string(),
+        serde_json::json!({
+            "features": [
+                {
+                    "name": "feature_one",
+                    "module": "dg_public_api::feature_one::*",
+                    "public_api": ["dg_public_api::feature_one::api::*"],
+                },
+                {
+                    "name": "feature_two",
+                    "module": "dg_public_api::feature_two::*",
+                    "public_api": ["dg_public_api::feature_two::*"],
+                },
+            ],
+        }),
+    );
+
+    let mut diags = Vec::new();
+    for paradigm in registry() {
+        diags.extend(paradigm.check(&air, &lockfile, CheckMode::Human));
+    }
+    let dg003: Vec<_> = diags.iter().filter(|d| d.rule_id == "DG003").collect();
+
+    assert_eq!(
+        dg003.len(),
+        1,
+        "expected exactly one DG003 (the internals reach), got {}: {:#?}",
+        dg003.len(),
+        dg003,
+    );
+    let d = dg003[0];
+    assert!(
+        d.message.contains("internals"),
+        "DG003 should name the internals path; got `{}`",
+        d.message,
+    );
+    assert!(
+        d.span.file.ends_with("handler.rs"),
+        "DG003 should land on handler.rs; got `{}`",
+        d.span.file,
+    );
+}
+
 #[test]
 fn ot_and_dg_diagnostics_coexist() {
     // The fixture's handler.rs trips OT003 + OT004 (after OT init) AND DG001

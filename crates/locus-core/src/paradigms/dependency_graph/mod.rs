@@ -18,10 +18,12 @@
 
 use super::Paradigm;
 use crate::diagnostics::{CheckMode, Diagnostic, vacant_paradigm_diagnostic};
+use crate::init::Suggestion;
 use crate::lockfile::Lockfile;
 use locus_air::AirWorkspace;
 
 pub mod edit;
+pub mod init;
 pub mod lockfile_schema;
 pub mod rules;
 
@@ -70,5 +72,9 @@ impl Paradigm for DependencyGraph {
         out.extend(rules::dg003(air, &section, mode));
         out.extend(rules::dg004(air, &section, mode));
         out
+    }
+
+    fn suggest(&self, air: &AirWorkspace, lockfile: &Lockfile) -> Vec<Suggestion> {
+        init::suggest(air, lockfile)
     }
 }
