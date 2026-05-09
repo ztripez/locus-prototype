@@ -143,16 +143,21 @@ fn run_git(args: &[&str], workspace: &Path) -> Result<String, DiffError> {
 }
 
 /// Read the baseline `locus.lock` via `git show <baseline>:locus.lock`.
-/// Returns `None` (silently) when:
+/// Returns `None` when the lockfile cannot be resolved:
 /// - the workspace isn't a git repo
-/// - no baseline ref resolves
-/// - the baseline ref doesn't carry a `locus.lock` (e.g., first commit
+/// - no baseline ref resolves (default chain or `--baseline <ref>`)
+/// - the baseline ref doesn't carry a `locus.lock` (e.g. first commit
 ///   before the lockfile existed)
 /// - the file at the baseline ref fails to parse as a `Lockfile`
 ///
-/// This silent-skip behaviour is what keeps Policy Guard from firing
-/// on first-onboarding repos: with no baseline, there's nothing to
-/// compare against and no false alarms.
+/// **The caller decides what `None` means.** This function is
+/// deliberately silent-on-failure; the policy-decision lives upstream.
+/// The CLI's `check` flow turns `None` into a `PG000` diagnostic
+/// (Warning by default, Fatal under `--agent-strict`) unless the user
+/// passes `--allow-missing-policy-baseline` to acknowledge the audit
+/// gap. See `docs/superpowers/specs/2026-05-09-policy-guard-paradigm.md`
+/// (#44) for the rationale — silent-skip alone would let an agent
+/// disable Policy Guard by manipulating the baseline ref.
 pub fn read_baseline_lockfile(
     workspace: &Path,
     baseline: Option<&str>,

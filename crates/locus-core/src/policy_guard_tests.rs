@@ -577,6 +577,51 @@ fn pg_catches_the_tagged_override_bypass_attempt() {
     }
 }
 
+/// Every PG diagnostic must anchor its span at `locus.lock`. The CLI
+/// pipeline appends PG diagnostics AFTER the `--changed` file filter
+/// (see `crates/locus-cli/src/main.rs::check`), so PG bypasses
+/// `--changed` entirely. This test pins the contract: if a future PG
+/// rule emits a span outside `locus.lock`, the bypass invariant
+/// breaks silently because the CLI's pipeline-order guard relies on
+/// PG being appended unfiltered.
+#[test]
+fn all_pg_diagnostics_anchor_to_lockfile_span() {
+    let base = lockfile_with(serde_json::json!({}), vec![]);
+    // Trigger every PG variant simultaneously.
+    let cur = lockfile_with(
+        serde_json::json!({
+            "CX": {
+                "default_max_function_lines": 999,           // PG001 (default)
+                "overrides": [{
+                    "module": "x::*", "max_function_lines": 999,
+                    // PG002 (visibility) + PG006 (no metadata)
+                }],
+                "exempt_paths": ["nope::*"],                  // PG003
+            }
+        }),
+        vec!["BO".into()], // PG004
+    );
+    let diags = check_policy_mutation(&cur, Some(&base), CheckMode::AgentStrict, false, false);
+    let pg_diags: Vec<_> = diags
+        .iter()
+        .filter(|d| d.rule_id.starts_with("PG"))
+        .collect();
+    assert!(
+        pg_diags.iter().all(|d| d.span.file == "locus.lock"),
+        "every PG diagnostic must anchor to `locus.lock`; found: {:?}",
+        pg_diags
+            .iter()
+            .map(|d| (&d.rule_id, &d.span.file))
+            .collect::<Vec<_>>()
+    );
+    // PG000 also: covered by the `baseline = None` path.
+    let baseline_missing = check_policy_mutation(&cur, None, CheckMode::AgentStrict, false, false);
+    assert!(
+        baseline_missing.iter().all(|d| d.span.file == "locus.lock"),
+        "PG000 must also anchor to `locus.lock`",
+    );
+}
+
 #[test]
 fn pg_advisory_under_calibration_keeps_pg006_strict() {
     // Calibration mode: PG001/PG002/PG003/PG004 → Advisory.
