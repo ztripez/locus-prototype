@@ -1,18 +1,32 @@
-//! Source-hint scanner.
+//! Source-annotation scanner.
 //!
-//! `syn` strips comments, so hints are extracted from a raw line scan. Each
-//! `// ot: ...` comment binds to the *next* non-blank, non-comment line — that
-//! line's number is recorded as the target span.
+//! `syn` strips comments, so Locus annotations are extracted from a raw line
+//! scan. Each `// locus: ...` comment binds to the *next* non-blank,
+//! non-comment line — that line's number is recorded as the target span.
+//!
+//! Public syntax is intentionally single-prefix:
+//!
+//! - `// locus: ot canonical`
+//! - `// locus: ot boundary <concept> <boundary>`
+//! - `// locus: ot converter`
+//! - `// locus: ot protocol-translation reason="..."`
+//! - `// locus: ot generated-boundary`
+//! - `// locus: allow <RULE> reason="..." expires="YYYY-MM-DD"`
+//! - `// locus: fact <fact_kind>`
+//!
+//! The old `// ot:` namespace is intentionally not supported. Locus has not
+//! had a public release yet, so keeping dual syntax would only preserve a
+//! misleading historical accident.
 
 use locus_air::{AirHint, AirSpan, HintKind};
 
-const HINT_PREFIX: &str = "// ot:";
+const HINT_PREFIX: &str = "// locus:";
 
 pub fn scan_hints(source: &str, file: &str) -> Vec<AirHint> {
     let lines: Vec<&str> = source.lines().collect();
     let mut hints = Vec::new();
     // Skip multi-line raw-string blocks (`r#"..."#` / `r##"..."##` / …) so
-    // `// ot:` text appearing inside a string literal — common in this
+    // `// locus:` text appearing inside a string literal — common in this
     // crate's own unit tests via `indoc!` — is not mistaken for a real hint.
     // Single-line raw strings open and close on the same line; we let those
     // through (rare and the line-start prefix check usually filters them).
@@ -57,7 +71,7 @@ pub fn scan_hints(source: &str, file: &str) -> Vec<AirHint> {
 
 fn next_target_span(lines: &[&str], from_idx: usize, file: &str) -> Option<AirSpan> {
     // Skip blanks, line comments, and outer/inner attribute lines so that
-    // `// ot: canonical` placed above `#[derive(...)] pub struct X` still
+    // `// locus: ot canonical` placed above `#[derive(...)] pub struct X` still
     // binds to the struct, not to the derive. Multi-line attrs are not
     // tracked across lines — keep them on one line, or place the hint after.
     for (i, line) in lines.iter().enumerate().skip(from_idx + 1) {
@@ -78,6 +92,41 @@ fn parse_hint_body(body: &str) -> HintKind {
     };
 
     match head {
+        // Generic Locus annotations.
+        "allow" => {
+            let rule = tokens.next().unwrap_or("").to_string();
+            let reason = parse_kv(body, "reason");
+            let expires = parse_kv(body, "expires");
+            HintKind::Allow {
+                rule,
+                reason,
+                expires,
+            }
+        }
+        "fact" => {
+            let raw = tokens.next().unwrap_or("");
+            let normalised = normalise_fact_kind(raw);
+            HintKind::MarksFact {
+                fact_kind: normalised,
+            }
+        }
+        // Paradigm-scoped annotations. OT owns canonical/boundary/converter
+        // semantics; the top-level `locus:` prefix only owns transport.
+        "ot" => {
+            let rest = body[head.len()..].trim_start();
+            parse_ot_hint(rest)
+        }
+        _ => HintKind::Unknown,
+    }
+}
+
+fn parse_ot_hint(body: &str) -> HintKind {
+    let mut tokens = body.split_whitespace();
+    let Some(head) = tokens.next() else {
+        return HintKind::Unknown;
+    };
+
+    match head {
         "canonical" => HintKind::Canonical,
         "boundary" => {
             let concept = tokens.next().map(str::to_string);
@@ -90,28 +139,6 @@ fn parse_hint_body(body: &str) -> HintKind {
             HintKind::ProtocolTranslation { reason }
         }
         "generated-boundary" => HintKind::GeneratedBoundary,
-        "allow" => {
-            let rule = tokens.next().unwrap_or("").to_string();
-            let reason = parse_kv(body, "reason");
-            let expires = parse_kv(body, "expires");
-            HintKind::Allow {
-                rule,
-                reason,
-                expires,
-            }
-        }
-        "marks" => {
-            // `// ot: marks <fact_kind>` — accept the snake_case
-            // canonical names plus a few common typo / casing
-            // variants so users don't have to memorise the exact
-            // string. The `markers` loader does the FactKind mapping
-            // and degrades unknown values gracefully.
-            let raw = tokens.next().unwrap_or("");
-            let normalised = normalise_fact_kind(raw);
-            HintKind::MarksFact {
-                fact_kind: normalised,
-            }
-        }
         _ => HintKind::Unknown,
     }
 }
@@ -155,7 +182,7 @@ mod tests {
     #[test]
     fn canonical_hint_binds_to_next_item() {
         let src = indoc! {r#"
-            // ot: canonical
+            // locus: ot canonical
             pub struct User {
                 pub id: String,
             }
@@ -173,7 +200,7 @@ mod tests {
 
     #[test]
     fn boundary_hint_parses_concept_and_boundary() {
-        let src = "// ot: boundary identity.user api.v1\nstruct UserDto;\n";
+        let src = "// locus: ot boundary identity.user api.v1\nstruct UserDto;\n";
         let hints = scan_hints(src, "t.rs");
         match &hints[0].kind {
             HintKind::Boundary { concept, boundary } => {
@@ -186,7 +213,7 @@ mod tests {
 
     #[test]
     fn allow_hint_extracts_rule_reason_expires() {
-        let src = r#"// ot: allow OT009 reason="legacy import" expires="2026-07-01"
+        let src = r#"// locus: allow FL003 reason="legacy import" expires="2026-07-01"
 fn x() {}
 "#;
         let hints = scan_hints(src, "t.rs");
@@ -196,7 +223,7 @@ fn x() {}
                 reason,
                 expires,
             } => {
-                assert_eq!(rule, "OT009");
+                assert_eq!(rule, "FL003");
                 assert_eq!(reason.as_deref(), Some("legacy import"));
                 assert_eq!(expires.as_deref(), Some("2026-07-01"));
             }
@@ -212,15 +239,24 @@ fn x() {}
 
     #[test]
     fn unrecognized_hint_keyword_falls_back_to_unknown() {
-        let hints = scan_hints("// ot: not-a-real-kind\nfn x() {}\n", "t.rs");
+        let hints = scan_hints("// locus: not-a-real-kind\nfn x() {}\n", "t.rs");
         assert_eq!(hints[0].kind, HintKind::Unknown);
+    }
+
+    #[test]
+    fn legacy_ot_prefix_is_not_supported() {
+        let hints = scan_hints("// ot: canonical\nstruct User;\n", "t.rs");
+        assert!(
+            hints.is_empty(),
+            "legacy `// ot:` annotations should not be accepted before public release"
+        );
     }
 
     #[test]
     fn hint_inside_raw_string_is_ignored() {
         // Simulate the dogfood case: scanning a Rust file that contains
-        // `// ot:` text inside an `indoc! {r#"..."#}` block.
-        let src = "let s = r#\"\n// ot: canonical\nstruct Fake;\n\"#;\nstruct Real;\n";
+        // `// locus:` text inside an `indoc! {r#"..."#}` block.
+        let src = "let s = r#\"\n// locus: ot canonical\nstruct Fake;\n\"#;\nstruct Real;\n";
         let hints = scan_hints(src, "t.rs");
         assert!(
             hints.is_empty(),
@@ -229,18 +265,18 @@ fn x() {}
     }
 
     #[test]
-    fn marks_hint_records_normalised_fact_kind() {
+    fn fact_hint_records_normalised_fact_kind() {
         let cases = [
-            ("// ot: marks hot_path\nfn x() {}\n", "hot_path"),
-            ("// ot: marks hot-path\nfn x() {}\n", "hot_path"),
-            ("// ot: marks HotPath\nfn x() {}\n", "hot_path"),
+            ("// locus: fact hot_path\nfn x() {}\n", "hot_path"),
+            ("// locus: fact hot-path\nfn x() {}\n", "hot_path"),
+            ("// locus: fact HotPath\nfn x() {}\n", "hot_path"),
             (
-                "// ot: marks request_context\nfn x() {}\n",
+                "// locus: fact request_context\nfn x() {}\n",
                 "request_context",
             ),
-            ("// ot: marks BoundaryEntry\nfn x() {}\n", "boundary_entry"),
+            ("// locus: fact BoundaryEntry\nfn x() {}\n", "boundary_entry"),
             (
-                "// ot: marks BackgroundWorker\nfn x() {}\n",
+                "// locus: fact BackgroundWorker\nfn x() {}\n",
                 "background_worker",
             ),
         ];
@@ -257,11 +293,11 @@ fn x() {}
     }
 
     #[test]
-    fn marks_hint_with_unknown_fact_kind_degrades_to_lowercased_text() {
+    fn fact_hint_with_unknown_fact_kind_degrades_to_lowercased_text() {
         // Unknown / future fact kinds round-trip as lowercase snake_case
         // so the loader can log them rather than the scanner silently
         // dropping them.
-        let hints = scan_hints("// ot: marks PolicyDecision\nfn x() {}\n", "t.rs");
+        let hints = scan_hints("// locus: fact PolicyDecision\nfn x() {}\n", "t.rs");
         match &hints[0].kind {
             HintKind::MarksFact { fact_kind } => {
                 assert_eq!(fact_kind, "policy_decision");
@@ -273,7 +309,7 @@ fn x() {}
     #[test]
     fn hint_above_derive_binds_to_struct_not_attr() {
         let src = indoc! {r#"
-            // ot: canonical
+            // locus: ot canonical
             #[derive(Debug, Clone)]
             pub struct User {
                 pub id: String,
