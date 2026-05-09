@@ -54,6 +54,15 @@ pub fn cx001(air: &AirWorkspace, section: &CxSection, mode: CheckMode) -> Vec<Di
                 .map(|o| o.max_function_lines)
                 .unwrap_or(default_budget);
 
+            // Advisory-tier elevation: CX001 only blocks under
+            // `--agent-strict` once the user has narrowed the rule for this
+            // call site (per-module override, or an explicit workspace
+            // default). Built-in fallback alone keeps the rule a Warning
+            // smoke alarm. See `CheckMode::elevate_when_actionable` and
+            // issue #6.
+            let narrowed =
+                matched_override.is_some() || section.default_max_function_lines.is_some();
+
             for item in &file.items {
                 let AirItem::Function(func) = item else {
                     continue;
@@ -82,7 +91,7 @@ pub fn cx001(air: &AirWorkspace, section: &CxSection, mode: CheckMode) -> Vec<Di
 
                 out.push(Diagnostic {
                     rule_id: "CX001".to_string(),
-                    severity: mode.elevate(Severity::Warning),
+                    severity: mode.elevate_when_actionable(Severity::Warning, narrowed),
                     span: func.span.clone(),
                     concept: None,
                     message: format!(
@@ -148,6 +157,9 @@ pub fn cx002(air: &AirWorkspace, section: &CxSection, mode: CheckMode) -> Vec<Di
                 continue;
             }
 
+            // See CX001 above for the advisory-tier elevation rationale.
+            let narrowed = matched_override.is_some() || section.default_max_module_lines.is_some();
+
             let mut why = vec![
                 format!("file `{}` spans {} line(s)", file.path, file.line_count),
                 if let Some(o) = matched_override {
@@ -165,7 +177,7 @@ pub fn cx002(air: &AirWorkspace, section: &CxSection, mode: CheckMode) -> Vec<Di
 
             out.push(Diagnostic {
                 rule_id: "CX002".to_string(),
-                severity: mode.elevate(Severity::Warning),
+                severity: mode.elevate_when_actionable(Severity::Warning, narrowed),
                 span: AirSpan::new(file.path.clone(), 1, 1),
                 concept: None,
                 message: format!(
@@ -537,6 +549,134 @@ mod tests {
             Severity::Fatal,
             "agent-strict should elevate Warning to Fatal"
         );
+    }
+
+    /// Advisory-tier elevation: under `--agent-strict` the rule stays
+    /// Warning when the user hasn't narrowed it (default section, no
+    /// workspace budget, no per-module override). Built-in fallback alone
+    /// is a smoke alarm, not a CI blocker. See `CheckMode::elevate_when_actionable`
+    /// and issue #6.
+    #[test]
+    fn cx001_agent_strict_stays_warning_when_using_built_in_fallback() {
+        let air = air_with(Some("foo::bar"), vec![func("big", 500)]);
+        let section = CxSection::default();
+        let diags = cx001(&air, &section, CheckMode::AgentStrict);
+        assert_eq!(diags.len(), 1);
+        assert_eq!(
+            diags[0].severity,
+            Severity::Warning,
+            "un-narrowed advisory rule stays Warning under agent-strict; \
+             user must declare a budget before this becomes a CI blocker",
+        );
+    }
+
+    /// Once the user has set a workspace default, the rule is "narrowed" —
+    /// they've explicitly opted into the budget. Agent-strict should
+    /// elevate to Fatal at that point.
+    #[test]
+    fn cx001_agent_strict_elevates_when_workspace_default_set() {
+        let air = air_with(Some("foo::bar"), vec![func("big", 60)]);
+        let section = CxSection {
+            default_max_function_lines: Some(50),
+            ..CxSection::default()
+        };
+        let diags = cx001(&air, &section, CheckMode::AgentStrict);
+        assert_eq!(diags.len(), 1);
+        assert_eq!(diags[0].severity, Severity::Fatal);
+    }
+
+    /// Per-module override is also a "narrowed" signal — the user has
+    /// made an explicit budget decision for this module path, so
+    /// agent-strict should elevate.
+    #[test]
+    fn cx001_agent_strict_elevates_when_module_override_matches() {
+        use super::super::lockfile_schema::CxOverride;
+        let air = air_with(Some("foo::bar"), vec![func("big", 200)]);
+        let section = CxSection {
+            // No workspace default; only a per-module override.
+            default_max_function_lines: None,
+            overrides: vec![CxOverride {
+                module: "foo::*".into(),
+                max_function_lines: 100,
+            }],
+            ..CxSection::default()
+        };
+        let diags = cx001(&air, &section, CheckMode::AgentStrict);
+        assert_eq!(diags.len(), 1);
+        assert_eq!(diags[0].severity, Severity::Fatal);
+    }
+
+    fn air_with_lines(module: Option<&str>, line_count: u32) -> AirWorkspace {
+        AirWorkspace {
+            schema_version: AIR_SCHEMA_VERSION,
+            packages: vec![AirPackage {
+                name: "x".into(),
+                version: "0".into(),
+                root_dir: "/".into(),
+                files: vec![AirFile {
+                    path: "t.rs".into(),
+                    module_path: module.map(str::to_string),
+                    items: Vec::new(),
+                    hints: Vec::new(),
+                    parse_error: None,
+                    line_count,
+                }],
+            }],
+            facts: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn cx002_fires_with_built_in_fallback_on_default_section() {
+        let air = air_with_lines(Some("foo::bar"), 5_000);
+        let section = CxSection::default();
+        let diags = cx002(&air, &section, CheckMode::Human);
+        assert_eq!(diags.len(), 1);
+        assert_eq!(diags[0].severity, Severity::Warning);
+    }
+
+    /// Advisory-tier elevation: CX002 stays Warning under agent-strict
+    /// when no workspace default and no per-module override are set.
+    #[test]
+    fn cx002_agent_strict_stays_warning_when_using_built_in_fallback() {
+        let air = air_with_lines(Some("foo::bar"), 5_000);
+        let section = CxSection::default();
+        let diags = cx002(&air, &section, CheckMode::AgentStrict);
+        assert_eq!(diags.len(), 1);
+        assert_eq!(
+            diags[0].severity,
+            Severity::Warning,
+            "un-narrowed advisory rule stays Warning under agent-strict",
+        );
+    }
+
+    #[test]
+    fn cx002_agent_strict_elevates_when_workspace_default_set() {
+        let air = air_with_lines(Some("foo::bar"), 1_000);
+        let section = CxSection {
+            default_max_module_lines: Some(500),
+            ..CxSection::default()
+        };
+        let diags = cx002(&air, &section, CheckMode::AgentStrict);
+        assert_eq!(diags.len(), 1);
+        assert_eq!(diags[0].severity, Severity::Fatal);
+    }
+
+    #[test]
+    fn cx002_agent_strict_elevates_when_module_override_matches() {
+        use super::super::lockfile_schema::CxModuleOverride;
+        let air = air_with_lines(Some("foo::bar"), 1_500);
+        let section = CxSection {
+            default_max_module_lines: None,
+            module_overrides: vec![CxModuleOverride {
+                module: "foo::*".into(),
+                max_module_lines: 1_000,
+            }],
+            ..CxSection::default()
+        };
+        let diags = cx002(&air, &section, CheckMode::AgentStrict);
+        assert_eq!(diags.len(), 1);
+        assert_eq!(diags[0].severity, Severity::Fatal);
     }
 
     #[test]
