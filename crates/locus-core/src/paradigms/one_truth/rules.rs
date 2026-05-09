@@ -438,14 +438,51 @@ pub fn ot004(air: &AirWorkspace, section: &OtSection, mode: CheckMode) -> Vec<Di
     out
 }
 
+/// Match a symbol path against an OT pattern. Supports the same shapes as
+/// the DG matcher (`crates/locus-core/src/paradigms/dependency_graph/lockfile_schema.rs::matches_pattern`):
+///
+/// - `*` matches any path.
+/// - `prefix::*` matches `prefix` and any descendant (`prefix::a`, `prefix::a::b`).
+/// - `*::suffix` matches any path ending in `::suffix`, segment-aligned.
+/// - `*::middle::*` matches any path with `middle` as a segment anywhere
+///   (e.g., `*::tests::*` covers inline `mod tests {}` blocks at any depth).
+/// - Otherwise an exact-string match.
+///
+/// Used by OT004's `converter_paths` authority. The leading- and
+/// segment-anywhere wildcards are how `*::tests::*` covers test code that
+/// legitimately constructs canonicals across crates without forcing the
+/// user to enumerate every test module.
 fn matches_symbol_pattern(value: &str, pattern: &str) -> bool {
     if pattern == "*" {
         return true;
     }
-    if let Some(prefix) = pattern.strip_suffix("::*") {
-        return value == prefix || value.starts_with(&format!("{prefix}::"));
+    let leading_wild = pattern.starts_with("*::");
+    let trailing_wild = pattern.ends_with("::*");
+    let stripped = match (leading_wild, trailing_wild) {
+        (true, true) => &pattern[3..pattern.len() - 3],
+        (true, false) => &pattern[3..],
+        (false, true) => &pattern[..pattern.len() - 3],
+        (false, false) => pattern,
+    };
+    if stripped.is_empty() {
+        // `*::` or `::*` alone with no body is malformed. Don't quietly
+        // match every path — the user wanting that should write `*`.
+        return false;
     }
-    value == pattern
+    match (leading_wild, trailing_wild) {
+        (true, true) => {
+            let mid = format!("::{stripped}::");
+            let starts = format!("{stripped}::");
+            let ends = format!("::{stripped}");
+            value == stripped
+                || value.contains(&mid)
+                || value.starts_with(&starts)
+                || value.ends_with(&ends)
+        }
+        (true, false) => value == stripped || value.ends_with(&format!("::{stripped}")),
+        (false, true) => value == stripped || value.starts_with(&format!("{stripped}::")),
+        (false, false) => pattern == value,
+    }
 }
 
 /// Look up the file path of the AIR type whose `symbol` matches `target`.
@@ -1920,6 +1957,101 @@ mod tests {
             &[converter_sym],
         );
         assert!(ot004(&air, &section, CheckMode::Human).is_empty());
+    }
+
+    /// Crate-level adapter authority: a `converter_paths` pattern that
+    /// covers an entire adapter crate (`adapter_crate::*`) silences OT004
+    /// for every constructor symbol inside that crate, with no per-function
+    /// annotation. This is the documented mechanism for adapter authority
+    /// per `docs/superpowers/specs/2026-05-09-ot-adapter-authority.md`
+    /// (issue #31). Locus uses the pattern `locus_rust::*` to authorise
+    /// the entire AIR adapter crate.
+    #[test]
+    fn ot004_quiet_for_crate_level_converter_path() {
+        // Canonical lives in `canonical_crate`; constructions happen across
+        // multiple modules of `adapter_crate`. A single crate-level pattern
+        // should cover all of them.
+        let air = air_with_files(vec![
+            (
+                "canonical_crate/src/identity.rs",
+                vec![ty_in_file(
+                    "canonical_crate::identity::User",
+                    "User",
+                    "canonical_crate/src/identity.rs",
+                )],
+            ),
+            (
+                "adapter_crate/src/visitor.rs",
+                vec![construct_action(
+                    "User",
+                    "adapter_crate::visitor::collect_user",
+                    "adapter_crate/src/visitor.rs",
+                )],
+            ),
+            (
+                "adapter_crate/src/loaders.rs",
+                vec![construct_action(
+                    "User",
+                    "adapter_crate::loaders::std_rt::build_user",
+                    "adapter_crate/src/loaders.rs",
+                )],
+            ),
+        ]);
+        let mut section = section_with_canonical_and_boundary(
+            "canonical_crate::identity::User",
+            "canonical_crate::dto::UserDto",
+            &[],
+        );
+        // One pattern covers the whole adapter crate.
+        section.converter_paths.push("adapter_crate::*".into());
+
+        let diags = ot004(&air, &section, CheckMode::Human);
+        assert!(
+            diags.is_empty(),
+            "crate-level converter_paths pattern `adapter_crate::*` must silence \
+             every OT004 inside the adapter crate; got {diags:#?}",
+        );
+    }
+
+    /// Companion to `ot004_quiet_for_crate_level_converter_path`: a
+    /// crate-level pattern only authorises constructions *inside that
+    /// crate*. A construction outside the declared adapter crate still
+    /// fires OT004 — the pattern is a scoped grant, not a global silence.
+    #[test]
+    fn ot004_fires_outside_crate_level_converter_path() {
+        let air = air_with_files(vec![
+            (
+                "canonical_crate/src/identity.rs",
+                vec![ty_in_file(
+                    "canonical_crate::identity::User",
+                    "User",
+                    "canonical_crate/src/identity.rs",
+                )],
+            ),
+            (
+                "other_crate/src/sneaky.rs",
+                vec![construct_action(
+                    "User",
+                    "other_crate::sneaky::build_user",
+                    "other_crate/src/sneaky.rs",
+                )],
+            ),
+        ]);
+        let mut section = section_with_canonical_and_boundary(
+            "canonical_crate::identity::User",
+            "canonical_crate::dto::UserDto",
+            &[],
+        );
+        section.converter_paths.push("adapter_crate::*".into());
+
+        let diags = ot004(&air, &section, CheckMode::Human);
+        assert_eq!(
+            diags.len(),
+            1,
+            "construction in `other_crate` is outside the `adapter_crate::*` grant \
+             and must still fire OT004; got {diags:#?}",
+        );
+        assert!(diags[0].message.contains("User"));
     }
 
     #[test]

@@ -1,0 +1,581 @@
+{
+  "version": 1,
+  "paradigms": {
+    "DG": {
+      "features": [
+        {
+          "module": "locus_air::*",
+          "name": "locus_air",
+          "public_api": [
+            "locus_air::*"
+          ]
+        },
+        {
+          "module": "locus_core::*",
+          "name": "locus_core",
+          "public_api": [
+            "locus_core::Diagnostic",
+            "locus_core::Severity",
+            "locus_core::CheckMode",
+            "locus_core::VACANT_PARADIGM_RULE",
+            "locus_core::vacant_paradigm_diagnostic",
+            "locus_core::EXPIRED_EXCEPTION_RULE",
+            "locus_core::ExceptionEntry",
+            "locus_core::ExceptionSource",
+            "locus_core::ExceptionStatus",
+            "locus_core::apply_exceptions",
+            "locus_core::today_utc",
+            "locus_core::CommandOption",
+            "locus_core::Suggestion",
+            "locus_core::SuggestionCategory",
+            "locus_core::Loader",
+            "locus_core::apply_loaders",
+            "locus_core::Exception",
+            "locus_core::LOCKFILE_NAME",
+            "locus_core::Lockfile",
+            "locus_core::LockfileError",
+            "locus_core::Paradigm",
+            "locus_core::registry",
+            "locus_core::paradigms::*",
+            "locus_core::lockfile::*",
+            "locus_core::exceptions::*",
+            "locus_core::init::*"
+          ]
+        },
+        {
+          "module": "locus_rust::*",
+          "name": "locus_rust",
+          "public_api": [
+            "locus_rust::scan",
+            "locus_rust::scan_raw",
+            "locus_rust::ScanError",
+            "locus_rust::scan_hints",
+            "locus_rust::MarkersLoader",
+            "locus_rust::StdRtLoader",
+            "locus_rust::derive_module_path",
+            "locus_rust::package_to_crate_name",
+            "locus_rust::render_path",
+            "locus_rust::render_type",
+            "locus_rust::collect_items",
+            "locus_rust::loaders::*"
+          ]
+        },
+        {
+          "module": "locus_cli::*",
+          "name": "locus_cli",
+          "public_api": []
+        },
+        {
+          "module": "locus_report::*",
+          "name": "locus_report",
+          "public_api": []
+        }
+      ],
+      "forbidden_edges": [],
+      "shared_paths": []
+    },
+    "OT": {
+      "concepts": {
+        "action-kind": {
+          "boundaries": [],
+          "canonical": {
+            "source": "hint",
+            "symbol": "locus_air::ActionKind"
+          },
+          "converters": []
+        },
+        "air-call-site": {
+          "boundaries": [],
+          "canonical": {
+            "source": "hint",
+            "symbol": "locus_air::AirCallSite"
+          },
+          "converters": []
+        },
+        "air-closure-method-call": {
+          "boundaries": [],
+          "canonical": {
+            "source": "hint",
+            "symbol": "locus_air::AirClosureMethodCall"
+          },
+          "converters": []
+        },
+        "air-conversion": {
+          "boundaries": [],
+          "canonical": {
+            "source": "hint",
+            "symbol": "locus_air::AirConversion"
+          },
+          "converters": []
+        },
+        "air-decorator": {
+          "boundaries": [],
+          "canonical": {
+            "source": "hint",
+            "symbol": "locus_air::AirDecorator"
+          },
+          "converters": []
+        },
+        "air-fact": {
+          "boundaries": [],
+          "canonical": {
+            "source": "hint",
+            "symbol": "locus_air::AirFact"
+          },
+          "converters": []
+        },
+        "air-fallback-call": {
+          "boundaries": [],
+          "canonical": {
+            "source": "hint",
+            "symbol": "locus_air::AirFallbackCall"
+          },
+          "converters": []
+        },
+        "air-field": {
+          "boundaries": [],
+          "canonical": {
+            "source": "hint",
+            "symbol": "locus_air::AirField"
+          },
+          "converters": []
+        },
+        "air-file": {
+          "boundaries": [],
+          "canonical": {
+            "source": "hint",
+            "symbol": "locus_air::AirFile"
+          },
+          "converters": []
+        },
+        "air-function": {
+          "boundaries": [],
+          "canonical": {
+            "source": "hint",
+            "symbol": "locus_air::AirFunction"
+          },
+          "converters": []
+        },
+        "air-hint": {
+          "boundaries": [],
+          "canonical": {
+            "source": "hint",
+            "symbol": "locus_air::AirHint"
+          },
+          "converters": []
+        },
+        "air-impl-block": {
+          "boundaries": [],
+          "canonical": {
+            "source": "hint",
+            "symbol": "locus_air::AirImplBlock"
+          },
+          "converters": []
+        },
+        "air-import": {
+          "boundaries": [],
+          "canonical": {
+            "source": "hint",
+            "symbol": "locus_air::AirImport"
+          },
+          "converters": []
+        },
+        "air-item": {
+          "boundaries": [],
+          "canonical": {
+            "source": "hint",
+            "symbol": "locus_air::AirItem"
+          },
+          "converters": []
+        },
+        "air-match-arm": {
+          "boundaries": [],
+          "canonical": {
+            "source": "hint",
+            "symbol": "locus_air::AirMatchArm"
+          },
+          "converters": []
+        },
+        "air-package": {
+          "boundaries": [],
+          "canonical": {
+            "source": "hint",
+            "symbol": "locus_air::AirPackage"
+          },
+          "converters": []
+        },
+        "air-partial-result-match": {
+          "boundaries": [],
+          "canonical": {
+            "source": "hint",
+            "symbol": "locus_air::AirPartialResultMatch"
+          },
+          "converters": []
+        },
+        "air-retry-loop": {
+          "boundaries": [],
+          "canonical": {
+            "source": "hint",
+            "symbol": "locus_air::AirRetryLoop"
+          },
+          "converters": []
+        },
+        "air-scrutinee-literal": {
+          "boundaries": [],
+          "canonical": {
+            "source": "hint",
+            "symbol": "locus_air::AirScrutineeLiteral"
+          },
+          "converters": []
+        },
+        "air-silent-discard": {
+          "boundaries": [],
+          "canonical": {
+            "source": "hint",
+            "symbol": "locus_air::AirSilentDiscard"
+          },
+          "converters": []
+        },
+        "air-span": {
+          "boundaries": [],
+          "canonical": {
+            "source": "hint",
+            "symbol": "locus_air::AirSpan"
+          },
+          "converters": []
+        },
+        "air-truth-action": {
+          "boundaries": [],
+          "canonical": {
+            "source": "hint",
+            "symbol": "locus_air::AirTruthAction"
+          },
+          "converters": []
+        },
+        "air-type": {
+          "boundaries": [],
+          "canonical": {
+            "source": "hint",
+            "symbol": "locus_air::AirType"
+          },
+          "converters": []
+        },
+        "air-usage": {
+          "boundaries": [],
+          "canonical": {
+            "source": "hint",
+            "symbol": "locus_air::AirUsage"
+          },
+          "converters": []
+        },
+        "air-variant": {
+          "boundaries": [],
+          "canonical": {
+            "source": "hint",
+            "symbol": "locus_air::AirVariant"
+          },
+          "converters": []
+        },
+        "air-workspace": {
+          "boundaries": [],
+          "canonical": {
+            "source": "hint",
+            "symbol": "locus_air::AirWorkspace"
+          },
+          "converters": []
+        },
+        "arm-body-shape": {
+          "boundaries": [],
+          "canonical": {
+            "source": "hint",
+            "symbol": "locus_air::ArmBodyShape"
+          },
+          "converters": []
+        },
+        "call-kind": {
+          "boundaries": [],
+          "canonical": {
+            "source": "hint",
+            "symbol": "locus_air::CallKind"
+          },
+          "converters": []
+        },
+        "conversion-mechanism": {
+          "boundaries": [],
+          "canonical": {
+            "source": "hint",
+            "symbol": "locus_air::ConversionMechanism"
+          },
+          "converters": []
+        },
+        "decorator-source": {
+          "boundaries": [],
+          "canonical": {
+            "source": "hint",
+            "symbol": "locus_air::DecoratorSource"
+          },
+          "converters": []
+        },
+        "discard-kind": {
+          "boundaries": [],
+          "canonical": {
+            "source": "hint",
+            "symbol": "locus_air::DiscardKind"
+          },
+          "converters": []
+        },
+        "fact-kind": {
+          "boundaries": [],
+          "canonical": {
+            "source": "hint",
+            "symbol": "locus_air::FactKind"
+          },
+          "converters": []
+        },
+        "fact-target": {
+          "boundaries": [],
+          "canonical": {
+            "source": "hint",
+            "symbol": "locus_air::FactTarget"
+          },
+          "converters": []
+        },
+        "fallback-pattern": {
+          "boundaries": [],
+          "canonical": {
+            "source": "hint",
+            "symbol": "locus_air::FallbackPattern"
+          },
+          "converters": []
+        },
+        "hint-kind": {
+          "boundaries": [],
+          "canonical": {
+            "source": "hint",
+            "symbol": "locus_air::HintKind"
+          },
+          "converters": []
+        },
+        "impl-dispatch": {
+          "boundaries": [],
+          "canonical": {
+            "source": "hint",
+            "symbol": "locus_air::ImplDispatch"
+          },
+          "converters": []
+        },
+        "literal-context": {
+          "boundaries": [],
+          "canonical": {
+            "source": "hint",
+            "symbol": "locus_air::LiteralContext"
+          },
+          "converters": []
+        },
+        "literal-kind": {
+          "boundaries": [],
+          "canonical": {
+            "source": "hint",
+            "symbol": "locus_air::LiteralKind"
+          },
+          "converters": []
+        },
+        "loader": {
+          "boundaries": [],
+          "canonical": {
+            "source": "hint",
+            "symbol": "locus_core::loaders::Loader"
+          },
+          "converters": []
+        },
+        "loop-kind": {
+          "boundaries": [],
+          "canonical": {
+            "source": "hint",
+            "symbol": "locus_air::LoopKind"
+          },
+          "converters": []
+        },
+        "markers-loader": {
+          "boundaries": [],
+          "canonical": {
+            "source": "hint",
+            "symbol": "locus_rust::loaders::markers::MarkersLoader"
+          },
+          "converters": []
+        },
+        "paradigm": {
+          "boundaries": [],
+          "canonical": {
+            "source": "hint",
+            "symbol": "locus_core::paradigms::Paradigm"
+          },
+          "converters": []
+        },
+        "result-match-variant": {
+          "boundaries": [],
+          "canonical": {
+            "source": "hint",
+            "symbol": "locus_air::ResultMatchVariant"
+          },
+          "converters": []
+        },
+        "std-rt-loader": {
+          "boundaries": [],
+          "canonical": {
+            "source": "hint",
+            "symbol": "locus_rust::loaders::std_rt::StdRtLoader"
+          },
+          "converters": []
+        },
+        "type-kind": {
+          "boundaries": [],
+          "canonical": {
+            "source": "hint",
+            "symbol": "locus_air::TypeKind"
+          },
+          "converters": []
+        },
+        "usage-kind": {
+          "boundaries": [],
+          "canonical": {
+            "source": "hint",
+            "symbol": "locus_air::UsageKind"
+          },
+          "converters": []
+        },
+        "visibility": {
+          "boundaries": [],
+          "canonical": {
+            "source": "hint",
+            "symbol": "locus_air::Visibility"
+          },
+          "converters": []
+        }
+      },
+      "converter_paths": [
+        "locus_rust::*",
+        "*::tests::*",
+        "*::layer_detection_tests::*"
+      ]
+    },
+    "MO": {
+      "overrides": [
+        {
+          "module": "locus_air",
+          "max_public_types": 50
+        },
+        {
+          "module": "locus_core::paradigms::one_truth::lockfile_schema",
+          "max_public_types": 10
+        }
+      ]
+    },
+    "CX": {
+      "exempt_paths": [
+        "*::tests::*",
+        "locus_air::*"
+      ]
+    }
+  },
+  "exceptions": [
+    {
+      "rule": "ER007",
+      "target": "crates/locus-core/src/paradigms/demand_driven/edit.rs",
+      "reason": "DaEditError shares variant names with peer *EditError enums; each is paradigm-scoped, no cross-paradigm taxonomy drift",
+      "expires": "2027-05-09"
+    },
+    {
+      "rule": "ER007",
+      "target": "crates/locus-core/src/paradigms/error_taxonomy/edit.rs",
+      "reason": "ErEditError shares variant names with peer *EditError enums; each is paradigm-scoped, no cross-paradigm taxonomy drift",
+      "expires": "2027-05-09"
+    },
+    {
+      "rule": "ER007",
+      "target": "crates/locus-core/src/paradigms/failure_lineage/edit.rs",
+      "reason": "FlEditError shares variant names with peer *EditError enums; each is paradigm-scoped, no cross-paradigm taxonomy drift",
+      "expires": "2027-05-09"
+    },
+    {
+      "rule": "ER007",
+      "target": "crates/locus-core/src/paradigms/feature_ownership/edit.rs",
+      "reason": "FoEditError shares variant names with peer *EditError enums; each is paradigm-scoped, no cross-paradigm taxonomy drift",
+      "expires": "2027-05-09"
+    },
+    {
+      "rule": "ER007",
+      "target": "crates/locus-core/src/paradigms/module_ownership/edit.rs",
+      "reason": "MoEditError shares variant names with peer *EditError enums; each is paradigm-scoped, no cross-paradigm taxonomy drift",
+      "expires": "2027-05-09"
+    },
+    {
+      "rule": "ER007",
+      "target": "crates/locus-core/src/paradigms/port_adapter/edit.rs",
+      "reason": "PaEditError shares variant names with peer *EditError enums; each is paradigm-scoped, no cross-paradigm taxonomy drift",
+      "expires": "2027-05-09"
+    },
+    {
+      "rule": "ER007",
+      "target": "crates/locus-core/src/paradigms/responsibility/edit.rs",
+      "reason": "RmEditError shares variant names with peer *EditError enums; each is paradigm-scoped, no cross-paradigm taxonomy drift",
+      "expires": "2027-05-09"
+    },
+    {
+      "rule": "ER007",
+      "target": "crates/locus-rust/src/lib.rs",
+      "reason": "ScanError::Io wraps std::io::Error like LockfileError::Io; both are crate-scoped boundary errors, not duplicate-taxonomy drift",
+      "expires": "2027-05-09"
+    },
+    {
+      "rule": "ER007",
+      "target": "crates/locus-cli/src/diff.rs",
+      "reason": "DiffError::Io wraps std::io::Error like LockfileError::Io; crate-scoped boundary error, not duplicate-taxonomy drift",
+      "expires": "2027-05-09"
+    },
+    {
+      "rule": "OT009",
+      "target": "crates/locus-rust/src/hints.rs",
+      "reason": "parse_hint_body / parse_ot_hint are adapter parsers that produce HintKind from source text; OT009 misfires on adapter-internal parser naming",
+      "expires": "2027-05-09"
+    },
+    {
+      "rule": "OT009",
+      "target": "crates/locus-rust/src/loaders/markers.rs",
+      "reason": "parse_fact_kind is an adapter parser that produces FactKind from source text; same shape as the hints.rs adapter parsers",
+      "expires": "2027-05-09"
+    },
+    {
+      "rule": "DC002",
+      "target": "crates/locus-core/src/paradigms/config_data/lockfile_schema.rs",
+      "reason": "doc says 'placeholder for default config patterns'; legitimate technical use of the word, not LLM transcript residue",
+      "expires": "2027-05-09"
+    },
+    {
+      "rule": "DC002",
+      "target": "crates/locus-core/src/paradigms/one_truth/accept.rs",
+      "reason": "doc references 'previously declared converters' as part of the function's contract; legitimate historical reference",
+      "expires": "2027-05-09"
+    },
+    {
+      "rule": "DC002",
+      "target": "crates/locus-core/src/paradigms/one_truth/init.rs",
+      "reason": "doc says 'returned later' as part of the function's contract; legitimate temporal phrasing",
+      "expires": "2027-05-09"
+    }
+  ],
+  "acknowledged_empty": [
+    "BO",
+    "CF",
+    "CR",
+    "DA",
+    "ER",
+    "FL",
+    "FO",
+    "PA",
+    "RM",
+    "RW",
+    "TA",
+    "UT"
+  ]
+}
