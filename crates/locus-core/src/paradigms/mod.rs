@@ -6,6 +6,7 @@
 
 pub mod abstraction_discipline;
 pub mod boundary_ownership;
+pub mod claim_ownership;
 pub mod complexity_budget;
 pub mod composition_root;
 pub mod config_data;
@@ -52,11 +53,10 @@ pub trait Paradigm {
     }
 }
 
-/// All paradigms wired into this build of Locus. OT and DG are fully
-/// implemented; the remaining 17 are stubs awaiting per-paradigm
-/// implementation slices. Order: OT, DG, then alphabetical-by-prefix
-/// (AB, BO, CF, CR, CX, DA, DC, ER, FL, FO, MO, OB, PA, RM, RW, TA, UT)
-/// — preserves existing test expectations that key off OT/DG.
+/// All paradigms wired into this build of Locus. Order: OT, DG, then
+/// alphabetical-by-prefix (AB, BO, CF, CL, CR, CX, DA, DC, ER, FL, FO,
+/// MO, OB, PA, RM, RW, TA, UT) — preserves existing test expectations
+/// that key off OT/DG.
 pub fn registry() -> Vec<Box<dyn Paradigm>> {
     vec![
         Box::new(one_truth::OneTruth),
@@ -64,6 +64,7 @@ pub fn registry() -> Vec<Box<dyn Paradigm>> {
         Box::new(abstraction_discipline::AbstractionDiscipline),
         Box::new(boundary_ownership::BoundaryOwnership),
         Box::new(config_data::ConfigData),
+        Box::new(claim_ownership::ClaimOwnership),
         Box::new(composition_root::CompositionRoot),
         Box::new(complexity_budget::ComplexityBudget),
         Box::new(demand_driven::DemandDriven),

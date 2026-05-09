@@ -128,6 +128,7 @@ This document is the *target* spec — the full set of paradigms Locus is design
 | DC (17) | DC001, DC002, DC004 | several | missing public docs; LLM-residue phrases (with curated alias list); owner-less TODO/FIXME markers. |
 | OB (18) | OB001, OB002, OB003, **OB004** | many | forbidden log target; unregistered metric emission; unregistered event emission; **`// locus: fact boundary_entry` function with no `Logging` fact**. |
 | TA (19) | TA001, TA002, TA003, TA004 | many | public test type; name-shadow canonical; field-shadow canonical; port impl in tests outside adapter paths. |
+| CL (20) | **CL001** | CL001–CL006 in spec | **orphan external reference (`#NN`/URL in doc with no local rationale)**. CL002–CL006 (temporal / sync / generated / status / safety claims) need a richer text-claim AIR shape; design at `docs/superpowers/specs/2026-05-09-claim-ownership-paradigm.md` (#16). |
 
 **Cross-paradigm infrastructure:**
 - `Severity::from_confidence(c, mode)` implements the spec's 0.50 / 0.70 / 0.90 inference tier table.
@@ -170,6 +171,7 @@ table is the policy the rule code is meant to encode.
 | FO | — | FO001, FO004 | — |
 | AB | — | AB001, AB002 | — |
 | DC | — | DC002, DC004 | DC001 (opt-in via `paradigms.DC.require_public_docs`) |
+| CL | — | CL001 (opt-in via `paradigms.CL.require_local_rationale`) | (CL002–CL006 will be Advisory until dogfooded) |
 | OB | OB001 | OB002, OB003, OB004 | — |
 | TA | — | TA001–TA004 | — |
 
@@ -1241,6 +1243,65 @@ TA — Test Architecture Ownership
 
 ---
 
+## Paradigm 20: Claim Ownership
+
+### Problem
+
+Comments and documentation often contain maintenance-relevant claims —
+"see #123", "temporary workaround", "keep in sync with X", "safe because
+the input is validated", "only implementation" — that silently become
+stale authority. They steer humans and agents but are rarely re-checked.
+When the underlying truth drifts, the text becomes a hidden source of
+architectural error.
+
+### Invariant
+
+> Comments may explain local intent. They should not become invisible project-management state or unchecked architectural authority.
+
+### Locus should reject or warn on
+
+- doc comments that cite external references (`#NN`, URL) without a local rationale alongside,
+- doc comments using temporal markers (`temporary`, `for now`, `until`, `deprecated`) without an expiry, owner, or removal condition,
+- claims that two things must "stay in sync" without naming both sides and a checker,
+- generated/copied/vendored markers without source path and regeneration command,
+- broad status claims (`only`, `all`, `none`, `complete`, `unused`) without a checked or generated source,
+- `safe because` / `cannot fail` claims without naming the enforcing invariant.
+
+### Rule family
+
+```text
+CL001 — orphan external reference
+CL002 — unowned temporal claim
+CL003 — unchecked synchronization claim
+CL004 — unverified generated/provenance claim
+CL005 — unscoped status/cardinality claim
+CL006 — unanchored safety claim
+```
+
+### Implementation status
+
+CL001 is implemented and shipping today; it scans `AirType.doc` and
+`AirFunction.doc` for recognised reference shapes (`#NN` issue/PR refs,
+`https?://...` URLs) and fires when fewer than 5 non-reference word
+tokens remain. Opt-in via `paradigms.CL.require_local_rationale = true`,
+mirroring DC001's `paradigms.DC.require_public_docs` toggle.
+
+CL002–CL006 need a richer text-claim AIR shape covering free-floating
+comments, Markdown, script comments, and generated-file headers. Full
+design — including claim classes, deterministic trigger phrases, and
+the proposed `TextClaim` AIR shape — lives in
+`docs/superpowers/specs/2026-05-09-claim-ownership-paradigm.md` (issue #16).
+
+### Non-goals
+
+- Do not grade prose quality.
+- Do not require LLM semantic review for pass/fail decisions.
+- Do not ban issue links or ADR links.
+- Do not force every normal explanatory comment to carry metadata.
+- Do not make broad natural-language inference a release blocker.
+
+---
+
 ## Rule Family Prefixes
 
 Suggested rule family taxonomy:
@@ -1265,6 +1326,7 @@ AB — Abstraction Discipline
 DC — Documentation / Comment Ownership
 OB — Observability Ownership
 TA — Test Architecture Ownership
+CL — Claim Ownership
 ```
 
 Not all families need to be implemented immediately. They define the long-term shape of Locus as an architectural guardrail system.
