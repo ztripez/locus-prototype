@@ -1,5 +1,5 @@
-//! User-marker loader. Translates `// ot: marks <fact_kind>` source
-//! hints into `AirFact` entries the consuming paradigms read the same
+//! User-marker loader. Translates `// locus: fact <fact_kind>` source
+//! annotations into `AirFact` entries the consuming paradigms read the same
 //! way they read std-rt's facts.
 //!
 //! Why this loader exists: the spec's normalised fact vocabulary
@@ -8,7 +8,7 @@
 //! `request_context`, `boundary_entry`, `runtime_state_owner`,
 //! `background_worker` that the loader tier can't auto-recognise
 //! without framework knowledge. Until per-framework adapters land,
-//! users mark functions explicitly via `// ot: marks <fact_kind>` and
+//! users mark functions explicitly via `// locus: fact <fact_kind>` and
 //! this loader promotes the marker to an `AirFact`. The same
 //! mechanism lets users annotate their own helpers as carrying
 //! kinds std-rt only recognises in stdlib (`external_io`,
@@ -25,7 +25,7 @@ use locus_air::{
 };
 use locus_core::Loader;
 
-// ot: canonical
+// locus: ot canonical
 pub struct MarkersLoader;
 
 impl Loader for MarkersLoader {
@@ -55,10 +55,10 @@ impl Loader for MarkersLoader {
                         source: "markers".to_string(),
                         confidence: 1.0,
                         reasons: vec![format!(
-                            "user marker: `// ot: marks {fact_kind}` above `{}`",
+                            "user marker: `// locus: fact {fact_kind}` above `{}`",
                             func.name
                         )],
-                        evidence: Some(format!("// ot: marks {fact_kind}")),
+                        evidence: Some(format!("// locus: fact {fact_kind}")),
                     });
                 }
             }
@@ -134,7 +134,7 @@ mod tests {
             kind: HintKind::MarksFact {
                 fact_kind: fact_kind.into(),
             },
-            raw: format!("// ot: marks {fact_kind}"),
+            raw: format!("// locus: fact {fact_kind}"),
             span: AirSpan::new("t.rs", target_line - 1, target_line - 1),
             target_span: Some(AirSpan::new("t.rs", target_line, target_line)),
         }
