@@ -229,7 +229,7 @@ pub fn cx007(air: &AirWorkspace, section: &CxSection, mode: CheckMode) -> Vec<Di
             if section
                 .exempt_paths
                 .iter()
-                .any(|pat| matches_pattern(pat, module_path))
+                .any(|pat| matches_pattern(pat.pattern(), module_path))
             {
                 continue;
             }
@@ -739,9 +739,13 @@ mod tests {
     }
 
     fn cx007_section(max: u32, exempt: Vec<&str>) -> CxSection {
+        use super::super::lockfile_schema::CxExemptPathEntry;
         CxSection {
             max_public_items: max,
-            exempt_paths: exempt.into_iter().map(str::to_string).collect(),
+            exempt_paths: exempt
+                .into_iter()
+                .map(|s| CxExemptPathEntry::Legacy(s.to_string()))
+                .collect(),
             ..CxSection::default()
         }
     }
