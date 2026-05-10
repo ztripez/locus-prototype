@@ -51,6 +51,10 @@
 //!   Fatal under `--agent-strict`, even with
 //!   `--allow-policy-calibration` — calibration legitimizes the
 //!   *act* of adding an override, not the absence of justification.
+//! - [`PG008_CONVERTER_PATH_ADDED`] — a new entry in
+//!   `paradigms.OT.converter_paths` vs baseline. Widens the
+//!   architectural-authority surface for OT004 (converter authority).
+//!   Calibration mode downgrades to Advisory.
 //!
 //! Deferred:
 //! - **PG005** (severity lowered) — needs a severity-override schema
@@ -62,9 +66,9 @@
 //!   check pipeline.
 //!
 //! Calibration mode: `--allow-policy-calibration` downgrades
-//! PG001/PG002/PG003/PG004 to `Severity::Advisory`. PG000 and PG006
-//! ignore calibration — missing baseline and missing debt metadata
-//! aren't legitimately calibratable.
+//! PG001/PG002/PG003/PG004/PG008 to `Severity::Advisory`. PG000 and
+//! PG006 ignore calibration — missing baseline and missing debt
+//! metadata aren't legitimately calibratable.
 
 // locus: ot canonical
 
@@ -74,6 +78,7 @@ use crate::paradigms::complexity_budget::lockfile_schema::{
     CxModuleOverride, CxOverride, CxSection,
 };
 use crate::paradigms::module_ownership::lockfile_schema::{MoOverride, MoSection};
+use crate::paradigms::one_truth::lockfile_schema::OtSection;
 use locus_air::AirSpan;
 
 /// PG000 — no baseline lockfile available; the policy audit could not
@@ -110,6 +115,13 @@ pub const PG004_ACKNOWLEDGED_EMPTY_ADDED: &str = "PG004";
 /// legitimizes the act of adding an override, not the absence of
 /// justification.
 pub const PG006_OVERRIDE_LACKS_DEBT_METADATA: &str = "PG006";
+
+/// PG008 — a new entry exists in `paradigms.OT.converter_paths` vs
+/// baseline. `converter_paths` patterns grant architectural authority
+/// for OT004 (cross-boundary converter construction); adding a new
+/// pattern widens that surface without fixing code. Calibration mode
+/// downgrades to Advisory.
+pub const PG008_CONVERTER_PATH_ADDED: &str = "PG008";
 
 /// Run all PG checks against `current` vs `baseline`.
 ///
@@ -154,6 +166,12 @@ pub fn check_policy_mutation(
     out.extend(check_new_overrides(current, baseline, mode, calibration));
     out.extend(check_new_exempt_paths(current, baseline, mode, calibration));
     out.extend(check_new_acknowledged_empty(
+        current,
+        baseline,
+        mode,
+        calibration,
+    ));
+    out.extend(check_new_converter_paths(
         current,
         baseline,
         mode,
@@ -798,6 +816,57 @@ fn check_new_acknowledged_empty(
             ),
         })
         .collect()
+}
+
+// ---- PG008 new OT.converter_paths entry --------------------------
+
+fn check_new_converter_paths(
+    current: &Lockfile,
+    baseline: &Lockfile,
+    mode: CheckMode,
+    calibration: bool,
+) -> Vec<Diagnostic> {
+    let cur_ot: OtSection = current.paradigm_section("OT").unwrap_or_default();
+    let base_ot: OtSection = baseline.paradigm_section("OT").unwrap_or_default();
+    let base_set: std::collections::HashSet<&str> =
+        base_ot.converter_paths.iter().map(String::as_str).collect();
+    let mut out = Vec::new();
+    for pattern in &cur_ot.converter_paths {
+        if base_set.contains(pattern.as_str()) {
+            continue;
+        }
+        out.push(converter_path_added_diagnostic(pattern, mode, calibration));
+    }
+    out
+}
+
+fn converter_path_added_diagnostic(
+    pattern: &str,
+    mode: CheckMode,
+    calibration: bool,
+) -> Diagnostic {
+    Diagnostic {
+        rule_id: PG008_CONVERTER_PATH_ADDED.to_string(),
+        severity: pg_severity(mode, calibration),
+        span: lockfile_span(),
+        concept: None,
+        message: format!(
+            "new OT.converter_paths entry `{pattern}` widens architectural-authority surface"
+        ),
+        why: vec![
+            format!("`paradigms.OT.converter_paths` did not contain `{pattern}` in baseline"),
+            "converter_paths patterns grant OT004 authority to construct canonicals \
+             across crate boundaries; adding a new pattern widens that surface without \
+             fixing the underlying architecture"
+                .into(),
+        ],
+        suggested_fix: Some(
+            "if this is a deliberate calibration, re-run `locus check` with \
+             `--allow-policy-calibration` (PG008 will fire as Advisory). Otherwise \
+             remove the entry and address the underlying architectural concern."
+                .into(),
+        ),
+    }
 }
 
 #[cfg(test)]

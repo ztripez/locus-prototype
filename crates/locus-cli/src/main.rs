@@ -794,14 +794,15 @@ struct CheckArgs {
     #[arg(long)]
     baseline: Option<String>,
     /// Acknowledge that this run is calibrating policy (raising budgets,
-    /// adding overrides, expanding `acknowledged_empty`). Without this
-    /// flag, Policy Guard fails `--agent-strict` on any policy widening
-    /// vs the baseline lockfile. With it, PG001/PG002/PG003/PG004 fire
-    /// as Advisory and a structured calibration report is printed
-    /// alongside the normal output. PG006 (missing debt metadata) is
-    /// **not** affected by calibration — calibration legitimizes the
-    /// addition itself, but does not waive the requirement to record
-    /// `reason` / `expires` / `owner`. See issue #44.
+    /// adding overrides, expanding `acknowledged_empty`, or widening
+    /// `OT.converter_paths`). Without this flag, Policy Guard fails
+    /// `--agent-strict` on any policy widening vs the baseline lockfile.
+    /// With it, PG001/PG002/PG003/PG004/PG008 fire as Advisory and a
+    /// structured calibration report is printed alongside the normal
+    /// output. PG006 (missing debt metadata) is **not** affected by
+    /// calibration — calibration legitimizes the addition itself, but
+    /// does not waive the requirement to record `reason` / `expires` /
+    /// `owner`. See issue #44.
     #[arg(long)]
     allow_policy_calibration: bool,
     /// Acknowledge that no baseline lockfile is available for the
@@ -2187,7 +2188,7 @@ fn report_policy_calibration(pg: &[Diagnostic]) -> Result<()> {
     }
     writeln!(
         w,
-        "(invoked with --allow-policy-calibration; PG001-PG004 fire as \
+        "(invoked with --allow-policy-calibration; PG001-PG004/PG008 fire as \
          Advisory. PG000 (missing baseline) and PG006 (missing debt \
          metadata) remain strict — calibration legitimizes intentional \
          widening, not a missing audit or missing justification.)"

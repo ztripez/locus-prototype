@@ -650,3 +650,159 @@ fn pg_advisory_under_calibration_keeps_pg006_strict() {
         "PG006 must stay Fatal under strict even with calibration"
     );
 }
+
+// ---- PG008 new OT.converter_paths entry --------------------------
+
+fn ot_lockfile(converter_paths: &[&str]) -> Lockfile {
+    lockfile_with(
+        serde_json::json!({"OT": {"concepts": {}, "converter_paths": converter_paths}}),
+        vec![],
+    )
+}
+
+#[test]
+fn pg008_fires_on_new_converter_path() {
+    // baseline: one existing path; current adds a second.
+    let base = ot_lockfile(&["locus_rust::*"]);
+    let cur = ot_lockfile(&["locus_rust::*", "*::rules_tests::*"]);
+    let diags = check_policy_mutation(&cur, Some(&base), CheckMode::Human, false, false);
+    let pg008: Vec<_> = diags.iter().filter(|d| d.rule_id == "PG008").collect();
+    assert_eq!(pg008.len(), 1, "expected one PG008; got {diags:#?}");
+    assert!(
+        pg008[0].message.contains("*::rules_tests::*"),
+        "message should name the new path; got {}",
+        pg008[0].message
+    );
+    assert!(
+        pg008[0].message.contains("OT.converter_paths"),
+        "message should name the lockfile field; got {}",
+        pg008[0].message
+    );
+}
+
+#[test]
+fn pg008_silent_on_unchanged_converter_paths() {
+    let lf = ot_lockfile(&["locus_rust::*", "*::tests::*"]);
+    let diags = check_policy_mutation(&lf, Some(&lf), CheckMode::AgentStrict, false, false);
+    assert!(
+        diags.iter().all(|d| d.rule_id != "PG008"),
+        "unchanged converter_paths must not fire PG008; got {diags:#?}"
+    );
+}
+
+#[test]
+fn pg008_silent_on_removal() {
+    // Removing a path is not widening — PG008 stays quiet.
+    let base = ot_lockfile(&["a", "b"]);
+    let cur = ot_lockfile(&["a"]);
+    let diags = check_policy_mutation(&cur, Some(&base), CheckMode::AgentStrict, false, false);
+    assert!(
+        diags.iter().all(|d| d.rule_id != "PG008"),
+        "removal is not widening; PG008 must stay quiet; got {diags:#?}"
+    );
+}
+
+#[test]
+fn pg008_downgrades_to_advisory_under_calibration() {
+    let base = ot_lockfile(&["a"]);
+    let cur = ot_lockfile(&["a", "b"]);
+    let diags = check_policy_mutation(&cur, Some(&base), CheckMode::AgentStrict, true, false);
+    let pg008 = diags.iter().find(|d| d.rule_id == "PG008").unwrap();
+    assert_eq!(
+        pg008.severity,
+        Severity::Advisory,
+        "calibration mode should downgrade PG008 to Advisory; got {:?}",
+        pg008.severity
+    );
+}
+
+#[test]
+fn pg008_fires_fatal_under_strict() {
+    let base = ot_lockfile(&["a"]);
+    let cur = ot_lockfile(&["a", "b"]);
+    let diags = check_policy_mutation(&cur, Some(&base), CheckMode::AgentStrict, false, false);
+    let pg008 = diags.iter().find(|d| d.rule_id == "PG008").unwrap();
+    assert_eq!(
+        pg008.severity,
+        Severity::Fatal,
+        "PG008 must be Fatal under --agent-strict without calibration"
+    );
+}
+
+#[test]
+fn pg008_fires_warning_under_default_mode() {
+    let base = ot_lockfile(&["a"]);
+    let cur = ot_lockfile(&["a", "b"]);
+    let diags = check_policy_mutation(&cur, Some(&base), CheckMode::Human, false, false);
+    let pg008 = diags.iter().find(|d| d.rule_id == "PG008").unwrap();
+    assert_eq!(
+        pg008.severity,
+        Severity::Warning,
+        "PG008 must be Warning under default (Human) mode"
+    );
+}
+
+#[test]
+fn pg008_not_suppressed_by_lockfile_exception() {
+    // PG runs after apply_exceptions. A lockfile exception targeting
+    // PG008 must NOT silence it — PG is meta-policy. This test verifies
+    // that check_policy_mutation itself always fires PG008 (the CLI
+    // pipeline order enforces non-suppressibility end-to-end; here we
+    // confirm the rule fires regardless of any exception field).
+    let base = ot_lockfile(&["a"]);
+    let mut cur = ot_lockfile(&["a", "b"]);
+    // Add a lockfile exception targeting PG008 — simulates what a
+    // `// locus: allow PG008` hint or a lockfile exceptions entry would
+    // produce after apply_exceptions has run (i.e., it has already been
+    // applied and PG runs afterwards, so the exception has no effect).
+    cur.exceptions.push(crate::lockfile::Exception {
+        rule: "PG008".to_string(),
+        target: "*".to_string(),
+        reason: "test suppression attempt".to_string(),
+        expires: "9999-12-31".to_string(),
+    });
+    // check_policy_mutation is called after apply_exceptions in the CLI
+    // pipeline. The exceptions in cur.exceptions are irrelevant to PG.
+    let diags = check_policy_mutation(&cur, Some(&base), CheckMode::AgentStrict, false, false);
+    assert!(
+        diags.iter().any(|d| d.rule_id == "PG008"),
+        "PG008 must fire even when a lockfile exception targets it; got {diags:#?}"
+    );
+}
+
+#[test]
+fn pg008_fires_on_multiple_new_paths() {
+    // Two new paths in one PR — both should be flagged.
+    let base = ot_lockfile(&["locus_rust::*"]);
+    let cur = ot_lockfile(&["locus_rust::*", "*::rules_tests", "*::rules_tests::*"]);
+    let diags = check_policy_mutation(&cur, Some(&base), CheckMode::Human, false, false);
+    let pg008: Vec<_> = diags.iter().filter(|d| d.rule_id == "PG008").collect();
+    assert_eq!(
+        pg008.len(),
+        2,
+        "two new paths should produce two PG008 diagnostics; got {pg008:#?}"
+    );
+    let msgs: Vec<&str> = pg008.iter().map(|d| d.message.as_str()).collect();
+    // Messages use backtick quoting: `*::rules_tests` and `*::rules_tests::*`.
+    // The first entry has no trailing `::*` so we match it by its unique suffix.
+    assert!(
+        msgs.iter().any(|m| m.contains("`*::rules_tests`")),
+        "first new path should appear in a PG008 message; got {msgs:#?}"
+    );
+    assert!(
+        msgs.iter().any(|m| m.contains("`*::rules_tests::*`")),
+        "second new path should appear in a PG008 message; got {msgs:#?}"
+    );
+}
+
+#[test]
+fn pg008_span_anchors_to_lockfile() {
+    let base = ot_lockfile(&["a"]);
+    let cur = ot_lockfile(&["a", "b"]);
+    let diags = check_policy_mutation(&cur, Some(&base), CheckMode::Human, false, false);
+    let pg008 = diags.iter().find(|d| d.rule_id == "PG008").unwrap();
+    assert_eq!(
+        pg008.span.file, "locus.lock",
+        "PG008 must anchor its span to `locus.lock`"
+    );
+}
