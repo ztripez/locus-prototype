@@ -1659,48 +1659,7 @@ fn accept(cmd: AcceptCommand) -> Result<()> {
         .paradigm_section(OT_PREFIX)
         .context("OT lockfile section is malformed")?;
 
-    let summary = match cmd {
-        AcceptCommand::Canonical(a) => {
-            let cid =
-                accept_canonical(&mut section, &air, &a.symbol, a.concept.as_deref(), a.force)
-                    .with_context(|| format!("accept canonical `{}`", a.symbol))?;
-            format!("accepted `{}` as canonical for concept `{cid}`", a.symbol)
-        }
-        AcceptCommand::Boundary(a) => {
-            accept_boundary(
-                &mut section,
-                &air,
-                &a.symbol,
-                &a.concept,
-                a.boundary.as_deref(),
-            )
-            .with_context(|| format!("accept boundary `{}`", a.symbol))?;
-            format!(
-                "accepted `{}` as boundary for concept `{}`{}",
-                a.symbol,
-                a.concept,
-                a.boundary
-                    .as_deref()
-                    .map(|b| format!(" (label `{b}`)"))
-                    .unwrap_or_default()
-            )
-        }
-        AcceptCommand::Converter(a) => {
-            accept_converter(
-                &mut section,
-                &air,
-                &a.symbol,
-                &a.concept,
-                a.from.as_deref(),
-                a.to.as_deref(),
-            )
-            .with_context(|| format!("accept converter `{}`", a.symbol))?;
-            format!(
-                "accepted `{}` as converter for concept `{}`",
-                a.symbol, a.concept
-            )
-        }
-    };
+    let summary = apply_accept_command(cmd, &mut section, &air)?;
 
     let value = serde_json::to_value(&section).context("serialize OT section")?;
     lockfile.paradigms.insert(OT_PREFIX.to_string(), value);
@@ -1711,6 +1670,51 @@ fn accept(cmd: AcceptCommand) -> Result<()> {
     println!("{summary}");
     println!("updated {}", written.display());
     Ok(())
+}
+
+fn apply_accept_command(
+    cmd: AcceptCommand,
+    section: &mut OtSection,
+    air: &locus_air::AirWorkspace,
+) -> Result<String> {
+    match cmd {
+        AcceptCommand::Canonical(a) => {
+            let cid = accept_canonical(section, air, &a.symbol, a.concept.as_deref(), a.force)
+                .with_context(|| format!("accept canonical `{}`", a.symbol))?;
+            Ok(format!(
+                "accepted `{}` as canonical for concept `{cid}`",
+                a.symbol
+            ))
+        }
+        AcceptCommand::Boundary(a) => {
+            accept_boundary(section, air, &a.symbol, &a.concept, a.boundary.as_deref())
+                .with_context(|| format!("accept boundary `{}`", a.symbol))?;
+            Ok(format!(
+                "accepted `{}` as boundary for concept `{}`{}",
+                a.symbol,
+                a.concept,
+                a.boundary
+                    .as_deref()
+                    .map(|b| format!(" (label `{b}`)"))
+                    .unwrap_or_default()
+            ))
+        }
+        AcceptCommand::Converter(a) => {
+            accept_converter(
+                section,
+                air,
+                &a.symbol,
+                &a.concept,
+                a.from.as_deref(),
+                a.to.as_deref(),
+            )
+            .with_context(|| format!("accept converter `{}`", a.symbol))?;
+            Ok(format!(
+                "accepted `{}` as converter for concept `{}`",
+                a.symbol, a.concept
+            ))
+        }
+    }
 }
 
 fn init(args: InitArgs) -> Result<()> {
@@ -1726,38 +1730,66 @@ fn init(args: InitArgs) -> Result<()> {
 
     let air = locus_rust::scan(&args.workspace)
         .with_context(|| format!("scan failed: {}", args.workspace.display()))?;
+    let registry = registry();
 
-    // Start from the existing lockfile so previously-acknowledged prefixes
-    // and accepted decisions survive a re-run.
+    // Load existing lockfile so previously-acknowledged prefixes and accepted
+    // decisions survive a re-run, then refresh paradigm sections.
     let mut lockfile = Lockfile::load_or_empty(&args.workspace)
         .with_context(|| format!("load lockfile from {}", args.workspace.display()))?;
-
-    // Re-run paradigm `init` to refresh paradigm sections from a fresh scan
-    // (today only OT writes a non-empty section).
-    let registry = registry();
-    for paradigm in &registry {
-        let section = paradigm.init(&air);
-        if !section_is_empty(&section) {
-            lockfile
-                .paradigms
-                .insert(paradigm.rule_prefix().to_string(), section);
-        }
-    }
-
-    if let Some(raw) = args.acknowledge_empty.as_deref() {
-        for prefix in parse_prefix_list(raw) {
-            if !lockfile.acknowledged_empty.iter().any(|p| p == &prefix) {
-                lockfile.acknowledged_empty.push(prefix);
-            }
-        }
-    }
+    populate_lockfile_sections(
+        &mut lockfile,
+        &registry,
+        &air,
+        args.acknowledge_empty.as_deref(),
+    );
 
     let written = lockfile
         .save(&args.workspace)
         .with_context(|| format!("write lockfile to {}", args.workspace.display()))?;
 
     println!("wrote {}", written.display());
-    for paradigm in &registry {
+    print_init_sections_summary(&registry, &lockfile);
+
+    let suggestions = collect_init_suggestions(&registry, &air, &lockfile);
+    let hints_promoted = count_hint_promotions(&lockfile);
+    print!("{}", render_checklist(&suggestions, hints_promoted));
+
+    if !suggestions.is_empty() {
+        // Flush before exit; process::exit skips destructors, so a buffered
+        // stdout under pipe/redirect would otherwise drop the checklist.
+        let _ = io::stdout().lock().flush();
+        std::process::exit(1);
+    }
+    Ok(())
+}
+
+fn populate_lockfile_sections(
+    lockfile: &mut Lockfile,
+    registry: &[Box<dyn locus_core::Paradigm>],
+    air: &locus_air::AirWorkspace,
+    acknowledge_empty: Option<&str>,
+) {
+    // Re-run paradigm init to refresh sections from a fresh scan
+    // (today only OT writes a non-empty section).
+    for paradigm in registry {
+        let section = paradigm.init(air);
+        if !section_is_empty(&section) {
+            lockfile
+                .paradigms
+                .insert(paradigm.rule_prefix().to_string(), section);
+        }
+    }
+    if let Some(raw) = acknowledge_empty {
+        for prefix in parse_prefix_list(raw) {
+            if !lockfile.acknowledged_empty.iter().any(|p| p == &prefix) {
+                lockfile.acknowledged_empty.push(prefix);
+            }
+        }
+    }
+}
+
+fn print_init_sections_summary(registry: &[Box<dyn locus_core::Paradigm>], lockfile: &Lockfile) {
+    for paradigm in registry {
         let count = lockfile
             .paradigms
             .get(paradigm.rule_prefix())
@@ -1770,33 +1802,26 @@ fn init(args: InitArgs) -> Result<()> {
             count
         );
     }
+}
 
+fn collect_init_suggestions(
+    registry: &[Box<dyn locus_core::Paradigm>],
+    air: &locus_air::AirWorkspace,
+    lockfile: &Lockfile,
+) -> Vec<locus_core::init::Suggestion> {
     let mut suggestions: Vec<locus_core::init::Suggestion> = Vec::new();
-    for paradigm in &registry {
-        suggestions.extend(paradigm.suggest(&air, &lockfile));
+    for paradigm in registry {
+        suggestions.extend(paradigm.suggest(air, lockfile));
     }
-    suggestions.extend(locus_core::init::cross_paradigm_suggestions(
-        &air, &lockfile,
-    ));
+    suggestions.extend(locus_core::init::cross_paradigm_suggestions(air, lockfile));
     let seeds = locus_core::init::default_vacancy_seeds();
     suggestions.extend(locus_core::init::vacancy_seeds(
-        &air,
-        &lockfile,
+        air,
+        lockfile,
         seeds,
         &suggestions,
     ));
-    let suggestions = locus_core::init::aggregate(suggestions);
-
-    let hints_promoted = count_hint_promotions(&lockfile);
-    print!("{}", render_checklist(&suggestions, hints_promoted));
-
-    if !suggestions.is_empty() {
-        // Flush before exit; process::exit skips destructors, so a buffered
-        // stdout under pipe/redirect would otherwise drop the checklist.
-        let _ = io::stdout().lock().flush();
-        std::process::exit(1);
-    }
-    Ok(())
+    locus_core::init::aggregate(suggestions)
 }
 
 fn count_hint_promotions(lockfile: &Lockfile) -> usize {
@@ -1872,7 +1897,7 @@ fn emit_air(args: EmitAirArgs) -> Result<()> {
 }
 
 fn debt(args: DebtArgs) -> Result<()> {
-    use locus_core::exceptions::{ExceptionSource, ExceptionStatus, collect_exceptions, today_utc};
+    use locus_core::exceptions::{collect_exceptions, today_utc};
 
     let air = locus_rust::scan(&args.workspace)
         .with_context(|| format!("scan failed: {}", args.workspace.display()))?;
@@ -1882,46 +1907,55 @@ fn debt(args: DebtArgs) -> Result<()> {
     let entries = collect_exceptions(&air, &lockfile, Some(&today));
 
     if args.json {
-        if args.by_rule {
-            let grouped = group_debt_by_rule(&entries);
-            let stdout = io::stdout();
-            let mut w = BufWriter::new(stdout.lock());
-            for row in grouped {
-                serde_json::to_writer(&mut w, &row)?;
-                w.write_all(b"\n")?;
-            }
-            return Ok(());
-        }
-        let stdout = io::stdout();
-        let mut w = BufWriter::new(stdout.lock());
-        for e in &entries {
-            let row = serde_json::json!({
-                "source": match e.source {
-                    ExceptionSource::Hint => "hint",
-                    ExceptionSource::Lockfile => "lockfile",
-                    ExceptionSource::CxExemptPath => "cx_exempt_path",
-                },
-                "rule": e.rule,
-                "target": e.target,
-                "reason": e.reason,
-                "expires": e.expires,
-                "status": match e.status {
-                    ExceptionStatus::Active => "active",
-                    ExceptionStatus::Expired => "expired",
-                    ExceptionStatus::Unbounded => "unbounded",
-                    ExceptionStatus::LegacyNoMetadata => "legacy_no_metadata",
-                },
-            });
-            serde_json::to_writer(&mut w, &row)?;
-            w.write_all(b"\n")?;
-        }
-        return Ok(());
+        return print_debt_json(&entries, args.by_rule);
     }
 
     if args.by_rule {
         print_debt_by_rule_text(&entries);
     } else {
         print_debt_text(&entries);
+    }
+    Ok(())
+}
+
+fn print_debt_json(
+    entries: &[locus_core::exceptions::ExceptionEntry],
+    by_rule: bool,
+) -> Result<()> {
+    use locus_core::exceptions::{ExceptionSource, ExceptionStatus};
+
+    if by_rule {
+        let grouped = group_debt_by_rule(entries);
+        let stdout = io::stdout();
+        let mut w = BufWriter::new(stdout.lock());
+        for row in grouped {
+            serde_json::to_writer(&mut w, &row)?;
+            w.write_all(b"\n")?;
+        }
+        return Ok(());
+    }
+    let stdout = io::stdout();
+    let mut w = BufWriter::new(stdout.lock());
+    for e in entries {
+        let row = serde_json::json!({
+            "source": match e.source {
+                ExceptionSource::Hint => "hint",
+                ExceptionSource::Lockfile => "lockfile",
+                ExceptionSource::CxExemptPath => "cx_exempt_path",
+            },
+            "rule": e.rule,
+            "target": e.target,
+            "reason": e.reason,
+            "expires": e.expires,
+            "status": match e.status {
+                ExceptionStatus::Active => "active",
+                ExceptionStatus::Expired => "expired",
+                ExceptionStatus::Unbounded => "unbounded",
+                ExceptionStatus::LegacyNoMetadata => "legacy_no_metadata",
+            },
+        });
+        serde_json::to_writer(&mut w, &row)?;
+        w.write_all(b"\n")?;
     }
     Ok(())
 }
@@ -2028,8 +2062,38 @@ fn print_debt_by_rule_text(entries: &[locus_core::exceptions::ExceptionEntry]) {
     }
 }
 
+fn format_debt_entry(e: &locus_core::exceptions::ExceptionEntry) -> String {
+    use locus_core::exceptions::ExceptionSource;
+    let source = match e.source {
+        ExceptionSource::Hint => "hint",
+        ExceptionSource::Lockfile => "lock",
+        ExceptionSource::CxExemptPath => "cx-exempt",
+    };
+    let expires = e.expires.as_deref().unwrap_or("—");
+    let reason = e.reason.as_deref().unwrap_or("");
+    format!(
+        "  {:<8} {:<40} expires {:<12} ({}) {}",
+        e.rule, e.target, expires, source, reason
+    )
+}
+
+fn print_debt_status_section(
+    entries: &[locus_core::exceptions::ExceptionEntry],
+    status: locus_core::exceptions::ExceptionStatus,
+    header: &str,
+) {
+    let rows: Vec<_> = entries.iter().filter(|e| e.status == status).collect();
+    if !rows.is_empty() {
+        println!();
+        println!("{header}");
+        for e in rows {
+            println!("{}", format_debt_entry(e));
+        }
+    }
+}
+
 fn print_debt_text(entries: &[locus_core::exceptions::ExceptionEntry]) {
-    use locus_core::exceptions::{ExceptionSource, ExceptionStatus};
+    use locus_core::exceptions::ExceptionStatus;
 
     let (mut active, mut expired, mut unbounded, mut legacy_no_metadata) =
         (0usize, 0usize, 0usize, 0usize);
@@ -2047,62 +2111,23 @@ fn print_debt_text(entries: &[locus_core::exceptions::ExceptionEntry]) {
         entries.len()
     );
 
-    let render = |e: &locus_core::exceptions::ExceptionEntry| {
-        let source = match e.source {
-            ExceptionSource::Hint => "hint",
-            ExceptionSource::Lockfile => "lock",
-            ExceptionSource::CxExemptPath => "cx-exempt",
-        };
-        let expires = e.expires.as_deref().unwrap_or("—");
-        let reason = e.reason.as_deref().unwrap_or("");
-        format!(
-            "  {:<8} {:<40} expires {:<12} ({}) {}",
-            e.rule, e.target, expires, source, reason
-        )
-    };
-
-    let by_status = |want: ExceptionStatus| -> Vec<&locus_core::exceptions::ExceptionEntry> {
-        entries.iter().filter(|e| e.status == want).collect()
-    };
-
-    let expired_rows = by_status(ExceptionStatus::Expired);
-    if !expired_rows.is_empty() {
-        println!();
-        println!("EXPIRED  (re-run `locus check` for LOCUS001 advisories)");
-        for e in expired_rows {
-            println!("{}", render(e));
-        }
-    }
-
-    let legacy_rows = by_status(ExceptionStatus::LegacyNoMetadata);
-    if !legacy_rows.is_empty() {
-        println!();
-        println!(
-            "LEGACY-NO-METADATA  (pre-schema entries — add reason/expires/owner \
-             or migrate to struct form)"
-        );
-        for e in legacy_rows {
-            println!("{}", render(e));
-        }
-    }
-
-    let unbounded_rows = by_status(ExceptionStatus::Unbounded);
-    if !unbounded_rows.is_empty() {
-        println!();
-        println!("UNBOUNDED  (no expiry — review or add one)");
-        for e in unbounded_rows {
-            println!("{}", render(e));
-        }
-    }
-
-    let active_rows = by_status(ExceptionStatus::Active);
-    if !active_rows.is_empty() {
-        println!();
-        println!("ACTIVE");
-        for e in active_rows {
-            println!("{}", render(e));
-        }
-    }
+    print_debt_status_section(
+        entries,
+        ExceptionStatus::Expired,
+        "EXPIRED  (re-run `locus check` for LOCUS001 advisories)",
+    );
+    print_debt_status_section(
+        entries,
+        ExceptionStatus::LegacyNoMetadata,
+        "LEGACY-NO-METADATA  (pre-schema entries — add reason/expires/owner \
+         or migrate to struct form)",
+    );
+    print_debt_status_section(
+        entries,
+        ExceptionStatus::Unbounded,
+        "UNBOUNDED  (no expiry — review or add one)",
+    );
+    print_debt_status_section(entries, ExceptionStatus::Active, "ACTIVE");
 }
 
 fn check(args: CheckArgs) -> Result<()> {
@@ -2121,52 +2146,74 @@ fn check(args: CheckArgs) -> Result<()> {
         all.extend(paradigm.check(&air, &lockfile, mode));
     }
 
-    // Apply exceptions to paradigm diagnostics BEFORE Policy Guard runs.
-    // PG is meta-policy and must NOT be suppressible by
-    // `Lockfile.exceptions[]` entries. Without this ordering, an
-    // exception with `rule = "*"` (or `rule = "PG"`) would silence the
-    // audit using the same lockfile it audits. See #44.
+    // Apply exceptions BEFORE Policy Guard — PG must not be suppressible by
+    // the same lockfile it audits. See #44.
     let today = today_utc();
     let all = apply_exceptions(all, &air, &lockfile, Some(&today));
 
-    // Diff filter — paradigm + LOCUS001/LOCUS002 only. The filter is
-    // applied here, BEFORE PG is appended, so PG diagnostics bypass
-    // `--changed` entirely. PG is global by design: PG000 fires when
-    // we couldn't audit at all, regardless of which files a PR
-    // touched, and PG001-PG006 only fire when `locus.lock` itself
-    // changed (so they'd survive the filter anyway). Putting PG after
-    // the filter keeps `--changed --agent-strict` from accidentally
-    // hiding PG000 in a PR that doesn't touch `locus.lock`.
-    let mut all = if args.changed {
-        let workspace_abs = args
-            .workspace
-            .canonicalize()
-            .unwrap_or_else(|_| args.workspace.clone());
-        let changed =
-            diff::changed_files(&workspace_abs, args.baseline.as_deref()).with_context(|| {
-                format!(
-                    "computing changed files in {} (--changed)",
-                    workspace_abs.display()
-                )
-            })?;
-        all.into_iter()
-            .filter(|d| {
-                changed
-                    .iter()
-                    .any(|rel| diff::paths_match(&d.span.file, rel, &workspace_abs))
-            })
-            .collect()
-    } else {
-        all
-    };
+    // --changed filter is applied before PG so PG diagnostics bypass it
+    // (PG is global; it must not be hidden by a PR-scoped diff filter).
+    let mut all = apply_changed_filter(all, &args)?;
 
-    // Policy Guard (#44): compare current lockfile to baseline via
-    // `git show <baseline>:locus.lock`. Appended AFTER both
-    // `apply_exceptions` and the `--changed` filter so PG diagnostics
-    // flow straight to output regardless of either.
+    // Policy Guard appended last: after apply_exceptions and --changed.
+    append_policy_guard(&mut all, &lockfile, &args, mode)?;
+
+    emit_check_output(&all, args.json)?;
+
+    let any_fatal = all.iter().any(|d| d.severity.is_fatal());
+    if any_fatal {
+        std::process::exit(1);
+    }
+    Ok(())
+}
+
+fn emit_check_output(all: &[Diagnostic], json: bool) -> Result<()> {
+    let stdout = io::stdout();
+    let mut out = BufWriter::new(stdout.lock());
+    if json {
+        serde_json::to_writer_pretty(&mut out, all)?;
+        writeln!(out)?;
+    } else {
+        report_text(&mut out, all)?;
+    }
+    out.flush()?;
+    Ok(())
+}
+
+fn apply_changed_filter(all: Vec<Diagnostic>, args: &CheckArgs) -> Result<Vec<Diagnostic>> {
+    if !args.changed {
+        return Ok(all);
+    }
+    let workspace_abs = args
+        .workspace
+        .canonicalize()
+        .unwrap_or_else(|_| args.workspace.clone());
+    let changed =
+        diff::changed_files(&workspace_abs, args.baseline.as_deref()).with_context(|| {
+            format!(
+                "computing changed files in {} (--changed)",
+                workspace_abs.display()
+            )
+        })?;
+    Ok(all
+        .into_iter()
+        .filter(|d| {
+            changed
+                .iter()
+                .any(|rel| diff::paths_match(&d.span.file, rel, &workspace_abs))
+        })
+        .collect())
+}
+
+fn append_policy_guard(
+    all: &mut Vec<Diagnostic>,
+    lockfile: &Lockfile,
+    args: &CheckArgs,
+    mode: CheckMode,
+) -> Result<()> {
     let baseline_lockfile = diff::read_baseline_lockfile(&args.workspace, args.baseline.as_deref());
     let pg = locus_core::check_policy_mutation(
-        &lockfile,
+        lockfile,
         baseline_lockfile.as_ref(),
         mode,
         args.allow_policy_calibration,
@@ -2176,22 +2223,6 @@ fn check(args: CheckArgs) -> Result<()> {
         report_policy_calibration(&pg)?;
     }
     all.extend(pg);
-
-    let stdout = io::stdout();
-    let mut out = BufWriter::new(stdout.lock());
-    if args.json {
-        serde_json::to_writer_pretty(&mut out, &all)?;
-        writeln!(out)?;
-    } else {
-        report_text(&mut out, &all)?;
-    }
-    out.flush()?;
-    drop(out);
-
-    let any_fatal = all.iter().any(|d| d.severity.is_fatal());
-    if any_fatal {
-        std::process::exit(1);
-    }
     Ok(())
 }
 
