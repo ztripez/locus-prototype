@@ -26,10 +26,16 @@
     "active_fatals": 0,
     "active_warnings": 143,
     "accepted_debt_entries": 16,
+    "accepted_debt_entries_definition": "lockfile.exceptions (14) + paradigms.MO.overrides (2); each entry carries expires + reason; MO overrides carry full debt metadata",
     "policy_suppressions": 148,
+    "policy_suppressions_definition": "sum of all suppressed_by_* class counters across rules; includes severity-tier demotions",
+    "policy_suppressions_no_debt_metadata": 13,
+    "policy_suppressions_no_debt_metadata_definition": "subset of policy_suppressions whose responsible lockfile field has no debt-metadata schema today: 12 acknowledged_empty + 1 CX.exempt_paths-covered hit; tracked in follow-up issues #49 and #48",
     "severity_tier_demotions": 133,
     "remaining_warning_debt": 143,
-    "post_baseline_drift": 10
+    "remaining_warning_debt_definition": "current after_warning total at target (113 CX001 + 30 CX002); equals sum of per-rule after_warning fields",
+    "post_baseline_drift": 10,
+    "post_baseline_drift_definition": "warnings appearing at target that did not exist at pre_36 baseline (+7 CX001, +3 CX002 from source code added on main after PR #39 merge)"
   },
   "rules": [
     {
@@ -123,7 +129,7 @@
       "proposed_but_not_landed": 0,
       "unknown": 0,
       "verdict": "suppressed_no_debt_metadata",
-      "notes": "Single hit at pre_36: module locus_air exposes 43 public items (budget 30). PR #39 added CX.exempt_paths = ['*::tests::*', 'locus_air::*']; the locus_air::* pattern covers this hit. No debt metadata on CX.exempt_paths (schema gap, follow-up issue #1). MO001 also covers the same locus_air surface via a separate override with full debt metadata.",
+      "notes": "Single hit at pre_36: module locus_air exposes 43 public items (budget 30). PR #39 added CX.exempt_paths = ['*::tests::*', 'locus_air::*']; the locus_air::* pattern covers this hit. No debt metadata on CX.exempt_paths (schema gap, follow-up issue #48). MO001 also covers the same locus_air surface via a separate override with full debt metadata.",
       "responsible_policy": [
         {
           "field": "paradigms.CX.exempt_paths",
@@ -131,7 +137,7 @@
           "source": "PR #39",
           "ref": "locus.lock §paradigms.CX",
           "mechanism": "suppressed_by_exempt_paths",
-          "schema_gap": "no debt metadata on CX.exempt_paths entries (follow-up issue #1)"
+          "schema_gap": "no debt metadata on CX.exempt_paths entries (follow-up issue #48)"
         }
       ],
       "findings": [
@@ -377,7 +383,7 @@
       "proposed_but_not_landed": 0,
       "unknown": 0,
       "verdict": "suppressed_no_debt_metadata",
-      "notes": "13 advisory hits at pre_36 for paradigms: DG, BO, CF, CR, DA, ER, FL, FO, PA, RM, RW, TA, UT. DG (1 hit) is resolved_by_code: PR #39 populated 5 DG features, which provides definitions and silences the LOCUS002 for DG. The remaining 12 (BO, CF, CR, DA, ER, FL, FO, PA, RM, RW, TA, UT) are suppressed by acknowledged_empty entries in locus.lock. LOCUS002 is an advisory-level diagnostic (info tier); before_fatal=13 counts all pre_36 advisory instances for consistent accounting. No debt metadata schema for acknowledged_empty entries (schema gap, follow-up issue #2).",
+      "notes": "13 advisory hits at pre_36 for paradigms: DG, BO, CF, CR, DA, ER, FL, FO, PA, RM, RW, TA, UT. DG (1 hit) is resolved_by_code: PR #39 populated 5 DG features, which provides definitions and silences the LOCUS002 for DG. The remaining 12 (BO, CF, CR, DA, ER, FL, FO, PA, RM, RW, TA, UT) are suppressed by acknowledged_empty entries in locus.lock. LOCUS002 is an advisory-level diagnostic (info tier); before_fatal=13 counts all pre_36 advisory instances for consistent accounting. No debt metadata schema for acknowledged_empty entries (schema gap, follow-up issue #49).",
       "responsible_policy": [
         {
           "field": "acknowledged_empty",
@@ -385,7 +391,7 @@
           "source": "PR #39",
           "ref": "locus.lock §acknowledged_empty",
           "mechanism": "suppressed_by_acknowledged_empty",
-          "schema_gap": "no debt metadata on acknowledged_empty entries (follow-up issue #2)"
+          "schema_gap": "no debt metadata on acknowledged_empty entries (follow-up issue #49)"
         },
         {
           "field": "paradigms.DG.features",
@@ -670,7 +676,7 @@
         }
       ],
       "verdict": "mixed_legitimate_onboarding_plus_two_schema_gaps",
-      "notes": "Most entries are legitimate onboarding: ER007/DC002/OT009 exceptions carry expires+reason, MO001 overrides carry full debt metadata, DG features are genuine architectural declarations, OT canonicals predate the audit window. Two surfaces (CX.exempt_paths, acknowledged_empty) lack debt metadata because the schema doesn't carry it — these are named schema gaps for follow-up issues #1 and #2."
+      "notes": "Most entries are legitimate onboarding: ER007/DC002/OT009 exceptions carry expires+reason, MO001 overrides carry full debt metadata, DG features are genuine architectural declarations, OT canonicals predate the audit window. Two surfaces (CX.exempt_paths, acknowledged_empty) lack debt metadata because the schema doesn't carry it — these are named schema gaps for follow-up issues #48 and #49."
     },
     {
       "pr": 41,

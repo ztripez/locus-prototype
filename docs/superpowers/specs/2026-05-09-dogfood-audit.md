@@ -166,7 +166,7 @@ All carry `expires=2027-05-09` and documented `reason` text. This is the correct
 
 **Verdict:** `mixed_legitimate_onboarding_plus_two_schema_gaps`.
 
-Most entries are legitimate onboarding: ER007/DC002/OT009 exceptions carry `expires`+`reason`, MO001 overrides carry full debt metadata, DG features are genuine architectural declarations, OT canonicals predate the audit window. Two surfaces (`CX.exempt_paths`, `acknowledged_empty`) lack debt metadata because the schema does not carry it — named schema gaps for follow-up issues #1 and #2.
+Most entries are legitimate onboarding: ER007/DC002/OT009 exceptions carry `expires`+`reason`, MO001 overrides carry full debt metadata, DG features are genuine architectural declarations, OT canonicals predate the audit window. Two surfaces (`CX.exempt_paths`, `acknowledged_empty`) lack debt metadata because the schema does not carry it — named schema gaps for follow-up issues #48 and #49.
 
 ---
 
@@ -230,11 +230,11 @@ Policy Guard (PR #46, merged into `origin/main` at audit time) closes the prospe
 
 - **PG001** blocks new `default_max_*` raises — what PR #42 proposed, what PR #41's second half proposed.
 - **PG002** blocks new `module_overrides` / `overrides` entries without prior approval — what both PRs proposed.
-- **PG003** blocks new `exempt_paths` entries — would block widening of the CX `exempt_paths` surface (schema gap #1).
-- **PG004** blocks new `acknowledged_empty` entries — would block adding further vacancy suppressions without review (schema gap #2).
+- **PG003** blocks new `exempt_paths` entries — would block widening of the CX `exempt_paths` surface (schema gap #48).
+- **PG004** blocks new `acknowledged_empty` entries — would block adding further vacancy suppressions without review (schema gap #49).
 - **PG006** requires debt metadata on new overrides — confirms the schema gaps are real requirements, not invented.
 
-The two schema gaps (#1, #2) are now blocked from expanding silently, but existing entries are not retroactively required to carry metadata. The follow-up issues (#1 and #2) track the schema work needed to retrofit debt metadata onto these surfaces.
+The two schema gaps (#48, #49) are now blocked from expanding silently, but existing entries are not retroactively required to carry metadata. The follow-up issues (#48 and #49) track the schema work needed to retrofit debt metadata onto these surfaces.
 
 ---
 
