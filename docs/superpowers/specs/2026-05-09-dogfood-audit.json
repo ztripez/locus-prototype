@@ -1,0 +1,724 @@
+{
+  "audit_baseline_ref": "c479ce3",
+  "audit_target_ref": "2144368",
+  "audit_date": "2026-05-09",
+  "methodology": "see docs/superpowers/specs/2026-05-09-dogfood-audit-design.md §Methodology",
+  "methodology_note": "build isolation required: per-worktree --target-dir + RUSTC_WRAPPER= overrides global ~/.cargo/config.toml shared cache; failure to isolate produces stale-binary measurement artifacts (see audit doc § Methodology)",
+  "measurement_mode": "bulk_cluster_for_uniform_cx_severity_tier; per-mechanism classification for lockfile suppressions",
+  "verdict_taxonomy": [
+    "resolved_by_code",
+    "resolved_by_deletion",
+    "resolved_by_symbol_move",
+    "accepted_by_exception",
+    "suppressed_by_public_api",
+    "suppressed_by_converter_paths",
+    "suppressed_by_exempt_paths",
+    "suppressed_by_acknowledged_empty",
+    "suppressed_by_budget_increase",
+    "suppressed_by_override",
+    "suppressed_by_severity_tier",
+    "remaining_warning_debt",
+    "remaining_fatal",
+    "proposed_but_not_landed",
+    "unknown"
+  ],
+  "totals": {
+    "active_fatals": 0,
+    "active_warnings": 143,
+    "accepted_debt_entries": 16,
+    "accepted_debt_entries_definition": "lockfile.exceptions (14) + paradigms.MO.overrides (2); each entry carries expires + reason; MO overrides carry full debt metadata",
+    "policy_suppressions": 148,
+    "policy_suppressions_definition": "sum of all suppressed_by_* class counters across rules; includes severity-tier demotions",
+    "policy_suppressions_no_debt_metadata": 13,
+    "policy_suppressions_no_debt_metadata_definition": "subset of policy_suppressions whose responsible lockfile field has no debt-metadata schema today: 12 acknowledged_empty + 1 CX.exempt_paths-covered hit; tracked in follow-up issues #49 and #48",
+    "severity_tier_demotions": 133,
+    "remaining_warning_debt": 143,
+    "remaining_warning_debt_definition": "current after_warning total at target (113 CX001 + 30 CX002); equals sum of per-rule after_warning fields",
+    "post_baseline_drift": 10,
+    "post_baseline_drift_definition": "warnings appearing at target that did not exist at pre_36 baseline (+7 CX001, +3 CX002 from source code added on main after PR #39 merge)"
+  },
+  "rules": [
+    {
+      "rule": "CX001",
+      "description": "per-function line budget (default 50)",
+      "before_diagnostics": 106,
+      "after_fatal": 0,
+      "after_warning": 113,
+      "post_baseline_drift": 7,
+      "resolved_by_code": 0,
+      "resolved_by_deletion": 0,
+      "resolved_by_symbol_move": 0,
+      "accepted_by_exception": 0,
+      "suppressed_by_public_api": 0,
+      "suppressed_by_converter_paths": 0,
+      "suppressed_by_exempt_paths": 0,
+      "suppressed_by_acknowledged_empty": 0,
+      "suppressed_by_budget_increase": 0,
+      "suppressed_by_override": 0,
+      "suppressed_by_severity_tier": 106,
+      "remaining_warning_debt": 0,
+      "remaining_fatal": 0,
+      "proposed_but_not_landed": 0,
+      "unknown": 0,
+      "verdict": "not_remediated_remaining_warning_debt",
+      "notes": "PR #36 demoted CX001 from strict-immediate Fatal to Advisory. All 106 pre-baseline hits remain as warnings. Source drift added 7 more hits between pre_36 and target (106 → 113), leaving 113 active warnings at target.",
+      "responsible_policy": [
+        {
+          "field": "rule_severity_tier",
+          "source": "PR #36",
+          "ref": "docs/PARADIGMS.md §Severity tiers",
+          "mechanism": "suppressed_by_severity_tier"
+        }
+      ],
+      "findings": []
+    },
+    {
+      "rule": "CX002",
+      "description": "per-module line budget (default 400)",
+      "before_diagnostics": 27,
+      "after_fatal": 0,
+      "after_warning": 30,
+      "post_baseline_drift": 3,
+      "resolved_by_code": 0,
+      "resolved_by_deletion": 0,
+      "resolved_by_symbol_move": 0,
+      "accepted_by_exception": 0,
+      "suppressed_by_public_api": 0,
+      "suppressed_by_converter_paths": 0,
+      "suppressed_by_exempt_paths": 0,
+      "suppressed_by_acknowledged_empty": 0,
+      "suppressed_by_budget_increase": 0,
+      "suppressed_by_override": 0,
+      "suppressed_by_severity_tier": 27,
+      "remaining_warning_debt": 0,
+      "remaining_fatal": 0,
+      "proposed_but_not_landed": 0,
+      "unknown": 0,
+      "verdict": "not_remediated_remaining_warning_debt",
+      "notes": "PR #36 demoted CX002 from strict-immediate Fatal to Advisory. All 27 pre-baseline hits remain as warnings. Source drift added 3 more hits between pre_36 and target (27 → 30), leaving 30 active warnings at target.",
+      "responsible_policy": [
+        {
+          "field": "rule_severity_tier",
+          "source": "PR #36",
+          "ref": "docs/PARADIGMS.md §Severity tiers",
+          "mechanism": "suppressed_by_severity_tier"
+        }
+      ],
+      "findings": []
+    },
+    {
+      "rule": "CX007",
+      "description": "per-module public-API count budget (default 30)",
+      "before_diagnostics": 1,
+      "after_fatal": 0,
+      "after_warning": 0,
+      "post_baseline_drift": 0,
+      "resolved_by_code": 0,
+      "resolved_by_deletion": 0,
+      "resolved_by_symbol_move": 0,
+      "accepted_by_exception": 0,
+      "suppressed_by_public_api": 0,
+      "suppressed_by_converter_paths": 0,
+      "suppressed_by_exempt_paths": 1,
+      "suppressed_by_acknowledged_empty": 0,
+      "suppressed_by_budget_increase": 0,
+      "suppressed_by_override": 0,
+      "suppressed_by_severity_tier": 0,
+      "remaining_warning_debt": 0,
+      "remaining_fatal": 0,
+      "proposed_but_not_landed": 0,
+      "unknown": 0,
+      "verdict": "suppressed_no_debt_metadata",
+      "notes": "Single hit at pre_36: module locus_air exposes 43 public items (budget 30). PR #39 added CX.exempt_paths = ['*::tests::*', 'locus_air::*']; the locus_air::* pattern covers this hit. No debt metadata on CX.exempt_paths (schema gap, follow-up issue #48). MO001 also covers the same locus_air surface via a separate override with full debt metadata.",
+      "responsible_policy": [
+        {
+          "field": "paradigms.CX.exempt_paths",
+          "value": "locus_air::*",
+          "source": "PR #39",
+          "ref": "locus.lock §paradigms.CX",
+          "mechanism": "suppressed_by_exempt_paths",
+          "schema_gap": "no debt metadata on CX.exempt_paths entries (follow-up issue #48)"
+        }
+      ],
+      "findings": [
+        {
+          "symbol": "locus_air",
+          "file": "crates/locus-air/src/lib.rs",
+          "count": 43,
+          "budget": 30,
+          "disposition": "suppressed_by_exempt_paths"
+        }
+      ]
+    },
+    {
+      "rule": "ER007",
+      "description": "duplicate error variant name across two or more *Error* enums",
+      "before_diagnostics": 11,
+      "after_fatal": 0,
+      "after_warning": 0,
+      "post_baseline_drift": 0,
+      "resolved_by_code": 0,
+      "resolved_by_deletion": 0,
+      "resolved_by_symbol_move": 0,
+      "accepted_by_exception": 11,
+      "suppressed_by_public_api": 0,
+      "suppressed_by_converter_paths": 0,
+      "suppressed_by_exempt_paths": 0,
+      "suppressed_by_acknowledged_empty": 0,
+      "suppressed_by_budget_increase": 0,
+      "suppressed_by_override": 0,
+      "suppressed_by_severity_tier": 0,
+      "remaining_warning_debt": 0,
+      "remaining_fatal": 0,
+      "proposed_but_not_landed": 0,
+      "unknown": 0,
+      "verdict": "accepted_with_expires_and_reason",
+      "notes": "11 hits covered by 9 lockfile exceptions: 7 single-hit files (one exception each) + 2 files covering 2 hits each (responsibility/edit.rs: EmptyDomainPath + EmptyExemptPath on RmEditError; module_ownership/edit.rs: EmptyModule + DuplicateOverride on MoEditError). Exception diagnostic span is on the duplicate type's file, not the incumbent's file. All 9 exceptions carry expires=2027-05-09 and reason text. The architectural justification: each *EditError is paradigm-scoped, not cross-paradigm taxonomy drift.",
+      "responsible_policy": [
+        {
+          "field": "exceptions[]",
+          "count": 9,
+          "source": "PR #39",
+          "ref": "locus.lock §exceptions",
+          "mechanism": "accepted_by_exception",
+          "coverage": "11 hits across 9 files (2 files contribute 2 hits each)"
+        }
+      ],
+      "findings": [
+        {
+          "target": "crates/locus-core/src/paradigms/demand_driven/edit.rs",
+          "hits": 1,
+          "variants": ["EmptyPattern on DaEditError"],
+          "expires": "2027-05-09",
+          "disposition": "accepted_by_exception"
+        },
+        {
+          "target": "crates/locus-core/src/paradigms/error_taxonomy/edit.rs",
+          "hits": 1,
+          "variants": ["EmptyDomainPath on ErEditError"],
+          "expires": "2027-05-09",
+          "disposition": "accepted_by_exception"
+        },
+        {
+          "target": "crates/locus-core/src/paradigms/failure_lineage/edit.rs",
+          "hits": 1,
+          "variants": ["EmptyDomainPath on FlEditError"],
+          "expires": "2027-05-09",
+          "disposition": "accepted_by_exception"
+        },
+        {
+          "target": "crates/locus-core/src/paradigms/feature_ownership/edit.rs",
+          "hits": 1,
+          "variants": ["EmptyModule on FoEditError"],
+          "expires": "2027-05-09",
+          "disposition": "accepted_by_exception"
+        },
+        {
+          "target": "crates/locus-core/src/paradigms/module_ownership/edit.rs",
+          "hits": 2,
+          "variants": ["EmptyModule on MoEditError", "DuplicateOverride on MoEditError"],
+          "expires": "2027-05-09",
+          "disposition": "accepted_by_exception"
+        },
+        {
+          "target": "crates/locus-core/src/paradigms/port_adapter/edit.rs",
+          "hits": 1,
+          "variants": ["EmptyPattern on PaEditError"],
+          "expires": "2027-05-09",
+          "disposition": "accepted_by_exception"
+        },
+        {
+          "target": "crates/locus-core/src/paradigms/responsibility/edit.rs",
+          "hits": 2,
+          "variants": ["EmptyDomainPath on RmEditError", "EmptyExemptPath on RmEditError"],
+          "expires": "2027-05-09",
+          "disposition": "accepted_by_exception"
+        },
+        {
+          "target": "crates/locus-rust/src/lib.rs",
+          "hits": 1,
+          "variants": ["Io on ScanError"],
+          "expires": "2027-05-09",
+          "disposition": "accepted_by_exception"
+        },
+        {
+          "target": "crates/locus-cli/src/diff.rs",
+          "hits": 1,
+          "variants": ["Io on DiffError"],
+          "expires": "2027-05-09",
+          "disposition": "accepted_by_exception"
+        }
+      ]
+    },
+    {
+      "rule": "DC002",
+      "description": "public function doc comment contains doc-residue phrase",
+      "before_diagnostics": 3,
+      "after_fatal": 0,
+      "after_warning": 0,
+      "post_baseline_drift": 0,
+      "resolved_by_code": 0,
+      "resolved_by_deletion": 0,
+      "resolved_by_symbol_move": 0,
+      "accepted_by_exception": 3,
+      "suppressed_by_public_api": 0,
+      "suppressed_by_converter_paths": 0,
+      "suppressed_by_exempt_paths": 0,
+      "suppressed_by_acknowledged_empty": 0,
+      "suppressed_by_budget_increase": 0,
+      "suppressed_by_override": 0,
+      "suppressed_by_severity_tier": 0,
+      "remaining_warning_debt": 0,
+      "remaining_fatal": 0,
+      "proposed_but_not_landed": 0,
+      "unknown": 0,
+      "verdict": "accepted_with_expires_and_reason",
+      "notes": "3 hits at pre_36: 2 warning-level (lockfile_schema.rs 'placeholder', accept.rs 'previously') + 1 info-level (init.rs 'later'). All 3 covered by 3 lockfile exceptions with expires=2027-05-09 and documented reasons (legitimate technical phrasing, not LLM transcript residue). The 2 warning-level hits were fatal under --agent-strict; the info hit was not but is included in before_diagnostics for consistent accounting across all severity tiers.",
+      "responsible_policy": [
+        {
+          "field": "exceptions[]",
+          "count": 3,
+          "source": "PR #39",
+          "ref": "locus.lock §exceptions",
+          "mechanism": "accepted_by_exception"
+        }
+      ],
+      "findings": [
+        {
+          "target": "crates/locus-core/src/paradigms/config_data/lockfile_schema.rs",
+          "severity_at_pre36": "warning",
+          "phrase": "placeholder",
+          "expires": "2027-05-09",
+          "disposition": "accepted_by_exception"
+        },
+        {
+          "target": "crates/locus-core/src/paradigms/one_truth/accept.rs",
+          "severity_at_pre36": "warning",
+          "phrase": "previously",
+          "expires": "2027-05-09",
+          "disposition": "accepted_by_exception"
+        },
+        {
+          "target": "crates/locus-core/src/paradigms/one_truth/init.rs",
+          "severity_at_pre36": "info",
+          "phrase": "later",
+          "expires": "2027-05-09",
+          "disposition": "accepted_by_exception"
+        }
+      ]
+    },
+    {
+      "rule": "MO001",
+      "description": "module public-type count exceeds budget (default 5)",
+      "before_diagnostics": 2,
+      "after_fatal": 0,
+      "after_warning": 0,
+      "post_baseline_drift": 0,
+      "resolved_by_code": 0,
+      "resolved_by_deletion": 0,
+      "resolved_by_symbol_move": 0,
+      "accepted_by_exception": 0,
+      "suppressed_by_public_api": 0,
+      "suppressed_by_converter_paths": 0,
+      "suppressed_by_exempt_paths": 0,
+      "suppressed_by_acknowledged_empty": 0,
+      "suppressed_by_budget_increase": 0,
+      "suppressed_by_override": 2,
+      "suppressed_by_severity_tier": 0,
+      "remaining_warning_debt": 0,
+      "remaining_fatal": 0,
+      "proposed_but_not_landed": 0,
+      "unknown": 0,
+      "verdict": "suppressed_with_full_debt_metadata",
+      "notes": "2 hits: locus_air (43 public types, budget 5) and locus_core::paradigms::one_truth::lockfile_schema (7 public types, budget 5). Both covered by MO.overrides entries with full debt metadata (expires, reason, owner, debt_id, introduced_by). The locus_air module is also covered by CX.exempt_paths, but MO001 uses the override mechanism instead. CX007 also fired on locus_air (public item count), handled via suppressed_by_exempt_paths.",
+      "responsible_policy": [
+        {
+          "field": "paradigms.MO.overrides",
+          "count": 2,
+          "source": "PR #39",
+          "ref": "locus.lock §paradigms.MO",
+          "mechanism": "suppressed_by_override",
+          "metadata_present": true
+        }
+      ],
+      "findings": [
+        {
+          "module": "locus_air",
+          "public_types": 43,
+          "override_budget": 50,
+          "debt_id": "MO001-locus-air-canonical-data-crate",
+          "expires": "2027-05-09",
+          "disposition": "suppressed_by_override"
+        },
+        {
+          "module": "locus_core::paradigms::one_truth::lockfile_schema",
+          "public_types": 7,
+          "override_budget": 10,
+          "debt_id": "MO001-ot-lockfile-schema-grouped-shape",
+          "expires": "2027-05-09",
+          "disposition": "suppressed_by_override"
+        }
+      ]
+    },
+    {
+      "rule": "LOCUS002",
+      "description": "vacancy nudge: paradigm has no definitions; rules cannot fire",
+      "before_diagnostics": 13,
+      "after_fatal": 0,
+      "after_warning": 0,
+      "post_baseline_drift": 0,
+      "resolved_by_code": 1,
+      "resolved_by_deletion": 0,
+      "resolved_by_symbol_move": 0,
+      "accepted_by_exception": 0,
+      "suppressed_by_public_api": 0,
+      "suppressed_by_converter_paths": 0,
+      "suppressed_by_exempt_paths": 0,
+      "suppressed_by_acknowledged_empty": 12,
+      "suppressed_by_budget_increase": 0,
+      "suppressed_by_override": 0,
+      "suppressed_by_severity_tier": 0,
+      "remaining_warning_debt": 0,
+      "remaining_fatal": 0,
+      "proposed_but_not_landed": 0,
+      "unknown": 0,
+      "verdict": "suppressed_no_debt_metadata",
+      "notes": "13 advisory hits at pre_36 for paradigms: DG, BO, CF, CR, DA, ER, FL, FO, PA, RM, RW, TA, UT. DG (1 hit) is resolved_by_code: PR #39 populated 5 DG features, which provides definitions and silences the LOCUS002 for DG. The remaining 12 (BO, CF, CR, DA, ER, FL, FO, PA, RM, RW, TA, UT) are suppressed by acknowledged_empty entries in locus.lock. LOCUS002 is an advisory-level diagnostic (info tier); before_diagnostics=13 counts all pre_36 advisory instances for consistent accounting. No debt metadata schema for acknowledged_empty entries (schema gap, follow-up issue #49).",
+      "responsible_policy": [
+        {
+          "field": "acknowledged_empty",
+          "count": 12,
+          "source": "PR #39",
+          "ref": "locus.lock §acknowledged_empty",
+          "mechanism": "suppressed_by_acknowledged_empty",
+          "schema_gap": "no debt metadata on acknowledged_empty entries (follow-up issue #49)"
+        },
+        {
+          "field": "paradigms.DG.features",
+          "count": 5,
+          "source": "PR #39",
+          "ref": "locus.lock §paradigms.DG",
+          "mechanism": "resolved_by_code",
+          "note": "DG LOCUS002 silenced by populating DG definitions (5 features), not by acknowledged_empty"
+        }
+      ],
+      "findings": [
+        {
+          "paradigm": "DG",
+          "disposition": "resolved_by_code",
+          "note": "DG populated with 5 features; LOCUS002 no longer fires because definitions exist"
+        },
+        {
+          "paradigm": "BO",
+          "disposition": "suppressed_by_acknowledged_empty"
+        },
+        {
+          "paradigm": "CF",
+          "disposition": "suppressed_by_acknowledged_empty"
+        },
+        {
+          "paradigm": "CR",
+          "disposition": "suppressed_by_acknowledged_empty"
+        },
+        {
+          "paradigm": "DA",
+          "disposition": "suppressed_by_acknowledged_empty"
+        },
+        {
+          "paradigm": "ER",
+          "disposition": "suppressed_by_acknowledged_empty"
+        },
+        {
+          "paradigm": "FL",
+          "disposition": "suppressed_by_acknowledged_empty"
+        },
+        {
+          "paradigm": "FO",
+          "disposition": "suppressed_by_acknowledged_empty"
+        },
+        {
+          "paradigm": "PA",
+          "disposition": "suppressed_by_acknowledged_empty"
+        },
+        {
+          "paradigm": "RM",
+          "disposition": "suppressed_by_acknowledged_empty"
+        },
+        {
+          "paradigm": "RW",
+          "disposition": "suppressed_by_acknowledged_empty"
+        },
+        {
+          "paradigm": "TA",
+          "disposition": "suppressed_by_acknowledged_empty"
+        },
+        {
+          "paradigm": "UT",
+          "disposition": "suppressed_by_acknowledged_empty"
+        }
+      ]
+    },
+    {
+      "rule": "OT009",
+      "description": "adapter parser naming mismatch: parse_X function doesn't return X",
+      "before_diagnostics": 0,
+      "after_fatal": 0,
+      "after_warning": 0,
+      "post_baseline_drift": 0,
+      "resolved_by_code": 0,
+      "resolved_by_deletion": 0,
+      "resolved_by_symbol_move": 0,
+      "accepted_by_exception": 0,
+      "suppressed_by_public_api": 0,
+      "suppressed_by_converter_paths": 0,
+      "suppressed_by_exempt_paths": 0,
+      "suppressed_by_acknowledged_empty": 0,
+      "suppressed_by_budget_increase": 0,
+      "suppressed_by_override": 0,
+      "suppressed_by_severity_tier": 0,
+      "remaining_warning_debt": 0,
+      "remaining_fatal": 0,
+      "proposed_but_not_landed": 0,
+      "unknown": 0,
+      "verdict": "pre_emptive_exception",
+      "notes": "0 hits at pre_36 (rule may not have existed or did not match). 2 lockfile exceptions added in PR #39 for locus-rust/src/hints.rs and locus-rust/src/loaders/markers.rs. These are pre-emptive: the rule fires on adapter-internal parser naming (parse_hint_body, parse_ot_hint, parse_fact_kind) which are false positives for adapter parsers. The exceptions are in place to prevent future hits if the rule's detection surface is widened. before_diagnostics=0 and all class counters=0 since there were no pre_36 hits to classify.",
+      "responsible_policy": [
+        {
+          "field": "exceptions[]",
+          "count": 2,
+          "source": "PR #39",
+          "ref": "locus.lock §exceptions",
+          "mechanism": "pre_emptive_accepted_by_exception",
+          "note": "pre-emptive: no pre_36 hits; exceptions block future false-positive recurrence"
+        }
+      ],
+      "findings": []
+    },
+    {
+      "rule": "OT_CANONICALS",
+      "description": "aggregate: 47 OT canonical type declarations persisted to locus.lock",
+      "before_diagnostics": 0,
+      "after_fatal": 0,
+      "after_warning": 0,
+      "post_baseline_drift": 0,
+      "resolved_by_code": 0,
+      "resolved_by_deletion": 0,
+      "resolved_by_symbol_move": 0,
+      "accepted_by_exception": 0,
+      "suppressed_by_public_api": 0,
+      "suppressed_by_converter_paths": 0,
+      "suppressed_by_exempt_paths": 0,
+      "suppressed_by_acknowledged_empty": 0,
+      "suppressed_by_budget_increase": 0,
+      "suppressed_by_override": 0,
+      "suppressed_by_severity_tier": 0,
+      "remaining_warning_debt": 0,
+      "remaining_fatal": 0,
+      "proposed_but_not_landed": 0,
+      "unknown": 0,
+      "verdict": "resolved_by_code_source_hints_predated_audit_window",
+      "notes": "47 OT canonical type declarations in locus.lock. Authority was already present in source hints (// locus: ot canonical) before the audited PR window; PR #39 persisted it into locus.lock. Classified as resolved_by_code per the design spec convention, but since no OT001/OT002 diagnostics fired at pre_36 (source hints suppressed them), before_diagnostics=0 and all class counters are 0. The 47 canonicals are informational — they represent lockfile declarations, not diagnostic suppressions. The invariant holds: 0 == 0.",
+      "responsible_policy": [
+        {
+          "field": "OT.canonicals[]",
+          "count": 47,
+          "source": "PR #39",
+          "ref": "locus.lock §OT.canonicals",
+          "mechanism": "resolved_by_code",
+          "note": "authority was already present in source hints before the audited PR window; PR #39 persisted it into locus.lock"
+        }
+      ],
+      "findings": []
+    }
+  ],
+  "prs": [
+    {
+      "pr": 36,
+      "title": "Severity tier policy + CX001/CX002 advisory elevation",
+      "merged": true,
+      "merged_at": "2026-05-09",
+      "primary_mechanism": "suppressed_by_severity_tier",
+      "rule_deltas": [
+        {
+          "rule": "CX001",
+          "before_diagnostics": 106,
+          "after_fatal": 0,
+          "after_warning": 106,
+          "class": "suppressed_by_severity_tier",
+          "source": "measured",
+          "verified": true
+        },
+        {
+          "rule": "CX002",
+          "before_diagnostics": 27,
+          "after_fatal": 0,
+          "after_warning": 27,
+          "class": "suppressed_by_severity_tier",
+          "source": "measured",
+          "verified": true
+        }
+      ],
+      "verdict": "blocking_status_changed_diagnostics_remained",
+      "notes": "PR #36 changed severity tier; 133 diagnostics demoted Fatal → Warning under --agent-strict. CX001 and CX002 still emit as warnings at every measured ref including target. Exit code changed from 1 to 0 under --agent-strict, but no diagnostics were eliminated."
+    },
+    {
+      "pr": 39,
+      "title": "Locus self-onboarding completion",
+      "merged": true,
+      "merged_at": "2026-05-09",
+      "primary_mechanism": [
+        "accepted_by_exception",
+        "suppressed_by_public_api",
+        "suppressed_by_converter_paths",
+        "suppressed_by_exempt_paths",
+        "suppressed_by_acknowledged_empty",
+        "suppressed_by_override"
+      ],
+      "rule_deltas": [
+        {
+          "rule": "ER007",
+          "before_diagnostics": 11,
+          "after_fatal": 0,
+          "after_warning": 0,
+          "class": "accepted_by_exception",
+          "source": "measured",
+          "verified": true,
+          "mechanism_detail": "9 lockfile exceptions with expires=2027-05-09 and reason text; 2 exceptions each cover 2 hits"
+        },
+        {
+          "rule": "OT009",
+          "before_diagnostics": 0,
+          "after_fatal": 0,
+          "after_warning": 0,
+          "class": "accepted_by_exception",
+          "source": "measured",
+          "verified": true,
+          "mechanism_detail": "2 pre-emptive lockfile exceptions; 0 hits at pre_36 baseline"
+        },
+        {
+          "rule": "DC002",
+          "before_diagnostics": 3,
+          "after_fatal": 0,
+          "after_warning": 0,
+          "class": "accepted_by_exception",
+          "source": "measured",
+          "verified": true,
+          "mechanism_detail": "3 lockfile exceptions with expires=2027-05-09 and reason text; 2 warning-level + 1 info-level hits"
+        },
+        {
+          "rule": "MO001",
+          "before_diagnostics": 2,
+          "after_fatal": 0,
+          "after_warning": 0,
+          "class": "suppressed_by_override",
+          "source": "measured",
+          "verified": true,
+          "mechanism_detail": "2 MO.overrides with full debt metadata (expires, reason, owner, debt_id, introduced_by)"
+        },
+        {
+          "rule": "LOCUS002",
+          "before_diagnostics": 13,
+          "after_fatal": 0,
+          "after_warning": 0,
+          "class": "suppressed_by_acknowledged_empty",
+          "source": "measured",
+          "verified": true,
+          "mechanism_detail": "12 paradigm prefixes in acknowledged_empty (BO, CF, CR, DA, ER, FL, FO, PA, RM, RW, TA, UT); DG resolved_by_code via 5 DG feature definitions. Schema gap: no debt metadata on acknowledged_empty entries."
+        },
+        {
+          "rule": "CX007",
+          "before_diagnostics": 1,
+          "after_fatal": 0,
+          "after_warning": 0,
+          "class": "suppressed_by_exempt_paths",
+          "source": "measured",
+          "verified": true,
+          "mechanism_detail": "CX.exempt_paths includes locus_air::* pattern which covers the single locus_air hit. Schema gap: no debt metadata on CX.exempt_paths entries."
+        },
+        {
+          "rule": "OT_CANONICALS",
+          "count": 47,
+          "before_diagnostics": 0,
+          "class": "resolved_by_code",
+          "source": "measured",
+          "verified": true,
+          "mechanism_detail": "47 canonical type declarations persisted to locus.lock; authority was present in source hints before the audit window"
+        },
+        {
+          "rule": "DG_FEATURES",
+          "count": 5,
+          "before_diagnostics": 0,
+          "class": "suppressed_by_public_api",
+          "source": "measured",
+          "verified": true,
+          "mechanism_detail": "5 DG features declared with public_api patterns; legitimate architectural boundary declarations. Also resolves LOCUS002 for DG."
+        },
+        {
+          "rule": "OT_CONVERTER_PATHS",
+          "count": 3,
+          "before_diagnostics": 0,
+          "class": "suppressed_by_converter_paths",
+          "source": "measured",
+          "verified": true,
+          "mechanism_detail": "3 OT.converter_paths patterns: locus_rust::* (adapter authority, ADR), *::tests::* (test carve-out), *::layer_detection_tests::* (test carve-out)"
+        }
+      ],
+      "schema_gaps": [
+        {
+          "surface": "CX.exempt_paths",
+          "gap": "no debt metadata (expires, reason, owner) on exempt_paths entries",
+          "follow_up_issue": 1
+        },
+        {
+          "surface": "acknowledged_empty",
+          "gap": "no debt metadata (expires, reason, owner) on acknowledged_empty entries",
+          "follow_up_issue": 2
+        }
+      ],
+      "verdict": "mixed_legitimate_onboarding_plus_two_schema_gaps",
+      "notes": "Most entries are legitimate onboarding: ER007/DC002/OT009 exceptions carry expires+reason, MO001 overrides carry full debt metadata, DG features are genuine architectural declarations, OT canonicals predate the audit window. Two surfaces (CX.exempt_paths, acknowledged_empty) lack debt metadata because the schema doesn't carry it — these are named schema gaps for follow-up issues #48 and #49."
+    },
+    {
+      "pr": 41,
+      "title": "CX002 cleanup: extract tests + calibrate module budgets",
+      "merged": false,
+      "contributes_to_current_state": false,
+      "primary_mechanism": "proposed_but_not_landed",
+      "rule_deltas": [
+        {
+          "rule": "CX002",
+          "before_diagnostics": 27,
+          "would_have_after_fatal": 0,
+          "would_have_after_warning": 0,
+          "class": "proposed_but_not_landed",
+          "source": "PR description",
+          "verified": false,
+          "mechanism_detail": "two halves: (1) test extraction (19 paradigm rules.rs → rules_tests.rs) — would have been resolved_by_code for test-module CX002 hits; (2) CX.default_max_module_lines=700 + 8 module_overrides — would have been suppressed_by_budget_increase + suppressed_by_override for remaining hits"
+        }
+      ],
+      "verdict": "proposed_but_not_landed",
+      "notes": "PR #41 bundled a real test-extraction refactor (legitimate, would have been resolved_by_code) with policy calibration (suppressed_by_budget_increase + suppressed_by_override). Not merged. The test-extraction half remains a viable refactor candidate (follow-up issue #3). Any future re-attempt under Policy Guard (#46) would now require PG001/PG002/PG006 debt metadata on the budget+override changes."
+    },
+    {
+      "pr": 42,
+      "title": "CX001 cleanup: calibrate per-function budget",
+      "merged": false,
+      "contributes_to_current_state": false,
+      "primary_mechanism": "proposed_but_not_landed",
+      "rule_deltas": [
+        {
+          "rule": "CX001",
+          "before_diagnostics": 106,
+          "would_have_after_fatal": 0,
+          "would_have_after_warning": 0,
+          "class": "proposed_but_not_landed",
+          "source": "PR description",
+          "verified": false,
+          "mechanism_detail": "pure calibration: CX.default_max_function_lines=120 + 6 per-file overrides — would have been suppressed_by_budget_increase + suppressed_by_override for all 109 hits (109 measured at PR #42 baseline; 106 at pre_36 audit baseline due to source drift)"
+        }
+      ],
+      "verdict": "proposed_but_not_landed",
+      "notes": "PR #42 was pure policy calibration with no code changes. 'Zero diagnostics' claim would have meant suppressed_by_budget_increase + suppressed_by_override, not remediation. Not merged. Re-evaluation under Policy Guard (#46) would now fire PG001 (budget raise) + PG002 (new overrides) + PG006 (missing debt metadata on new overrides)."
+    }
+  ]
+}

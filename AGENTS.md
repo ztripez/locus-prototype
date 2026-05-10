@@ -28,11 +28,24 @@ This file is the per-repo dev-handoff for Claude Code (and other agents — `CLA
 - **Default posture: noisy until configured, narrow with the lockfile.** Numeric/structural rules (CX001/CX002/CX007/MO001/MO002, plus structural rules like ER001/ER007/DC002/DC004/AB001/AB002) fire on un-onboarded code with built-in defaults. Vacant-by-definition paradigms emit `LOCUS002` instead of silence. Configuration narrows via `paradigms.<prefix>.*` overrides, `acknowledged_empty`, or `// locus: allow XX###` exception hints.
 - **Policy Guard (`PG000`/`PG001`/`PG002`/`PG003`/`PG004`/`PG006`)** — agents cannot clear `--agent-strict` by widening policy. Compares current `locus.lock` to `git show <baseline>:locus.lock`; fires Fatal under strict on missing baseline (PG000), default- or override-budget raises (PG001), new overrides (PG002, regardless of metadata), new `exempt_paths` (PG003), new `acknowledged_empty` (PG004), and new overrides missing debt metadata (PG006). PG runs **after** `apply_exceptions` so lockfile exceptions cannot silence it. `--allow-policy-calibration` downgrades PG001–PG004 to Advisory but **not** PG000 (audit gap) or PG006 (justification gap). `--allow-missing-policy-baseline` silences PG000 when the gap is intentional. Spec: `docs/superpowers/specs/2026-05-09-policy-guard-paradigm.md` (#44).
 
-Locus's own source is annotated. `locus check --workspace .` against the
-unconfigured repo (no `locus.lock` at the root) intentionally emits a
-mix of warnings (CX/MO/DC/ER) and `LOCUS002` advisories — those are the
-"noisy default" working as designed. Self-application clean-status now
-means *zero unexpected fatals*, not zero warnings.
+Self-application status is not "zero findings."
+
+Current dogfood status means: zero unexpected fatals under the current
+lockfile and severity policy. Known remaining surfaces include CX001/CX002
+warning debt, accepted lockfile exceptions, acknowledged-empty paradigms,
+declared public API / converter authority, and policy suppressions
+tracked in the dogfood audit.
+
+Snapshot numbers live in
+[`docs/superpowers/specs/2026-05-09-dogfood-audit.md`](docs/superpowers/specs/2026-05-09-dogfood-audit.md).
+Update that audit when changing policy or dogfood claims.
+
+Snapshot as of 2026-05-09: 0 active fatals, 143 warning debt
+(113 CX001 + 30 CX002 advisory), 16 accepted debt entries (14 lockfile
+exceptions + 2 MO overrides with full metadata), 13 policy suppressions
+without debt metadata (12 acknowledged_empty paradigms + 1 CX
+exempt_paths-covered CX007), 133 severity-tier demotions, +10
+post-baseline source drift.
 
 Workspace layout:
 
