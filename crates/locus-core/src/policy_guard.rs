@@ -60,6 +60,13 @@
 //!   `paradigms.OT.converter_paths` vs baseline. Widens the
 //!   architectural-authority surface for OT004 (converter authority).
 //!   Calibration mode downgrades to Advisory.
+//! - [`PG009_ACKNOWLEDGED_EMPTY_LACKS_DEBT_METADATA`] — a new
+//!   `acknowledged_empty` entry is missing `reason` / `expires` /
+//!   `owner`. Mirrors PG007 for the acknowledged-empty surface.
+//!   Grandfather-by-prefix: any prefix in the baseline (legacy-string OR
+//!   Full-struct form) is grandfathered. Always Fatal under
+//!   `--agent-strict`; calibration does NOT downgrade — metadata is
+//!   non-negotiable.
 //!
 //! Deferred:
 //! - **PG005** (severity lowered) — needs a severity-override schema
@@ -72,13 +79,13 @@
 //!
 //! Calibration mode: `--allow-policy-calibration` downgrades
 //! PG001/PG002/PG003/PG004/PG008 to `Severity::Advisory`. PG000,
-//! PG006, and PG007 ignore calibration — missing baseline and missing
+//! PG006, PG007, and PG009 ignore calibration — missing baseline and missing
 //! debt metadata aren't legitimately calibratable.
 
 // locus: ot canonical
 
 use crate::diagnostics::{CheckMode, Diagnostic, Severity};
-use crate::lockfile::Lockfile;
+use crate::lockfile::{AcknowledgedEmpty, AcknowledgedEmptyEntry, Lockfile};
 use crate::paradigms::complexity_budget::lockfile_schema::{
     CxExemptPath, CxModuleOverride, CxOverride, CxSection,
 };
@@ -150,6 +157,29 @@ pub const PG007_EXEMPT_PATH_LACKS_DEBT_METADATA: &str = "PG007";
 /// downgrades to Advisory.
 pub const PG008_CONVERTER_PATH_ADDED: &str = "PG008";
 
+/// PG009 — a new `acknowledged_empty` entry lacks structured debt metadata
+/// (`reason` + `expires` + `owner`). Mirrors `PG007` for the
+/// acknowledged-empty surface: calibration legitimizes the addition
+/// (`PG004` → Advisory under calibration), but it does NOT waive the
+/// metadata requirement. Always Fatal under `--agent-strict`; PG004 itself
+/// is what calibration can downgrade.
+///
+/// **Grandfather-by-prefix:** if the prefix already exists in the baseline
+/// lockfile (in any form — `Legacy` string or `Full` struct), PG009 stays
+/// silent for it. Only prefixes that are genuinely *new* vs the baseline are
+/// required to arrive with complete metadata.
+///
+/// This applies to both entry forms:
+/// - New `AcknowledgedEmptyEntry::Legacy` (bare string) whose prefix is not
+///   in the baseline → PG009 fires. An agent cannot bypass PG009 by using
+///   the legacy string form for new additions.
+/// - New `AcknowledgedEmptyEntry::Full` (struct) missing `reason`/`expires`/`owner`
+///   → PG009 fires.
+/// - Any entry (either form) whose prefix was already in the baseline →
+///   PG009 stays silent; it surfaces in `locus debt` as "legacy-no-metadata"
+///   if it's a `Legacy` form.
+pub const PG009_ACKNOWLEDGED_EMPTY_LACKS_DEBT_METADATA: &str = "PG009";
+
 /// Run all PG checks against `current` vs `baseline`.
 ///
 /// When `baseline` is `None`, emits a single `PG000` diagnostic unless
@@ -204,6 +234,7 @@ pub fn check_policy_mutation(
         mode,
         calibration,
     ));
+    out.extend(check_acknowledged_empty_metadata(current, baseline, mode));
     out
 }
 
@@ -901,31 +932,123 @@ fn check_new_acknowledged_empty(
     let base: std::collections::HashSet<&str> = baseline
         .acknowledged_empty
         .iter()
-        .map(String::as_str)
+        .map(|e| e.prefix())
         .collect();
     current
         .acknowledged_empty
         .iter()
-        .filter(|p| !base.contains(p.as_str()))
-        .map(|prefix| Diagnostic {
-            rule_id: PG004_ACKNOWLEDGED_EMPTY_ADDED.to_string(),
-            severity: pg_severity(mode, calibration),
-            span: lockfile_span(),
-            concept: Some(prefix.clone()),
-            message: format!("paradigm `{prefix}` newly added to `acknowledged_empty`"),
-            why: vec![
-                "acknowledging a paradigm as empty silences its `LOCUS002` \
-                 vacancy nudge; the paradigm's rules cannot fire until the \
-                 user populates declarations or removes the acknowledgement"
-                    .into(),
-            ],
-            suggested_fix: Some(
-                "if deliberate, re-run with `--allow-policy-calibration`. \
-                 Otherwise populate the paradigm's section in `locus.lock`."
-                    .into(),
-            ),
+        .filter(|e| !base.contains(e.prefix()))
+        .map(|entry| {
+            let prefix = entry.prefix();
+            Diagnostic {
+                rule_id: PG004_ACKNOWLEDGED_EMPTY_ADDED.to_string(),
+                severity: pg_severity(mode, calibration),
+                span: lockfile_span(),
+                concept: Some(prefix.to_string()),
+                message: format!("paradigm `{prefix}` newly added to `acknowledged_empty`"),
+                why: vec![
+                    "acknowledging a paradigm as empty silences its `LOCUS002` \
+                     vacancy nudge; the paradigm's rules cannot fire until the \
+                     user populates declarations or removes the acknowledgement"
+                        .into(),
+                ],
+                suggested_fix: Some(
+                    "if deliberate, re-run with `--allow-policy-calibration`. \
+                     Otherwise populate the paradigm's section in `locus.lock`."
+                        .into(),
+                ),
+            }
         })
         .collect()
+}
+
+// ---- PG009 acknowledged_empty new entry lacking metadata ----------
+
+/// PG009 — fires when a new `acknowledged_empty` entry lacks `reason` /
+/// `expires` / `owner`. Always uses strict severity (calibration does NOT
+/// downgrade): calibration legitimizes the act of adding the entry
+/// (PG004 → Advisory under calibration), but it does NOT excuse missing
+/// justification metadata.
+fn check_acknowledged_empty_metadata(
+    current: &Lockfile,
+    baseline: &Lockfile,
+    mode: CheckMode,
+) -> Vec<Diagnostic> {
+    // Build the set of grandfathered prefixes from the baseline (both forms).
+    let base_prefixes: std::collections::HashSet<&str> = baseline
+        .acknowledged_empty
+        .iter()
+        .map(|e| e.prefix())
+        .collect();
+
+    let mut out = Vec::new();
+    for entry in &current.acknowledged_empty {
+        let prefix = entry.prefix();
+        // Only check entries that are genuinely new (not in baseline).
+        if base_prefixes.contains(prefix) {
+            continue;
+        }
+        // Synthesize the metadata fields from whichever variant this is.
+        let pg009_target: AcknowledgedEmpty = match entry {
+            AcknowledgedEmptyEntry::Full(meta) => meta.clone(),
+            AcknowledgedEmptyEntry::Legacy(s) => AcknowledgedEmpty {
+                prefix: s.clone(),
+                ..Default::default()
+            },
+        };
+        if let Some(d) = acknowledged_empty_metadata_diagnostic(prefix, &pg009_target, mode) {
+            out.push(d);
+        }
+    }
+    out
+}
+
+fn acknowledged_empty_metadata_diagnostic(
+    prefix: &str,
+    meta: &AcknowledgedEmpty,
+    mode: CheckMode,
+) -> Option<Diagnostic> {
+    let mut missing: Vec<&'static str> = Vec::new();
+    if meta.reason.as_deref().is_none_or(str::is_empty) {
+        missing.push("reason");
+    }
+    if meta.expires.as_deref().is_none_or(str::is_empty) {
+        missing.push("expires");
+    }
+    if meta.owner.as_deref().is_none_or(str::is_empty) {
+        missing.push("owner");
+    }
+    if missing.is_empty() {
+        return None;
+    }
+    let missing_label = missing.join(", ");
+    Some(Diagnostic {
+        rule_id: PG009_ACKNOWLEDGED_EMPTY_LACKS_DEBT_METADATA.to_string(),
+        severity: pg_strict_severity(mode),
+        span: lockfile_span(),
+        concept: Some(prefix.to_string()),
+        message: format!(
+            "new `acknowledged_empty` entry `{prefix}` lacks debt metadata \
+             ({missing_label})"
+        ),
+        why: vec![
+            "acknowledging a paradigm as empty silences its `LOCUS002` \
+             vacancy nudge; without `reason` / `expires` / `owner` it \
+             becomes invisible debt"
+                .into(),
+            format!("missing field(s): {missing_label}"),
+            "PG009 is unaffected by `--allow-policy-calibration`: calibration \
+             accepts the addition itself (PG004), but does not waive the \
+             requirement to record why, when to revisit, and who owns it"
+                .into(),
+        ],
+        suggested_fix: Some(
+            "use the struct form: `{\"prefix\": \"…\", \"reason\": \"…\", \
+             \"expires\": \"YYYY-MM-DD\", \"owner\": \"…\"}` and populate \
+             all three fields."
+                .into(),
+        ),
+    })
 }
 
 // ---- PG008 new OT.converter_paths entry --------------------------
