@@ -15,6 +15,7 @@ use std::collections::BTreeMap;
 pub struct OtSection {
     /// concept-id → entry. Concept ids come from the inferred name stem
     /// (e.g. `user`, `email-address`).
+    #[serde(default)]
     pub concepts: BTreeMap<String, ConceptEntry>,
     /// Module/function patterns with converter authority for OT004.
     /// Useful for adapter surfaces that intentionally construct canonicals
