@@ -116,18 +116,26 @@ pub const PG004_ACKNOWLEDGED_EMPTY_ADDED: &str = "PG004";
 /// justification.
 pub const PG006_OVERRIDE_LACKS_DEBT_METADATA: &str = "PG006";
 
-/// PG007 — a new `CX.exempt_paths` entry (struct form) lacks structured debt
-/// metadata (`reason` + `expires` + `owner`). Mirrors `PG006` for the
-/// exempt-paths surface: calibration legitimizes the addition (`PG003` →
-/// Advisory), but it does NOT waive the metadata requirement. Always Fatal
-/// under `--agent-strict`; PG003 itself is what calibration can downgrade.
+/// PG007 — a new `CX.exempt_paths` entry lacks structured debt metadata
+/// (`reason` + `expires` + `owner`). Mirrors `PG006` for the exempt-paths
+/// surface: calibration legitimizes the addition (`PG003` → Advisory), but
+/// it does NOT waive the metadata requirement. Always Fatal under
+/// `--agent-strict`; PG003 itself is what calibration can downgrade.
 ///
-/// Legacy string entries do not trigger PG007 (they pre-date the metadata
-/// schema). Only entries that arrive as `CxExemptPathEntry::Full` structs
-/// are checked — the user explicitly chose the struct form and must supply
-/// metadata. Entries that arrive as `CxExemptPathEntry::Legacy` were present
-/// before the schema upgrade and surface instead via `locus debt` as
-/// "legacy-no-metadata" rows.
+/// **Grandfather-by-pattern:** if the pattern already exists in the baseline
+/// lockfile (in any form — `Legacy` string or `Full` struct), PG007 stays
+/// silent for it. Only patterns that are genuinely *new* vs the baseline are
+/// required to arrive with complete metadata.
+///
+/// This applies to both entry forms:
+/// - New `CxExemptPathEntry::Legacy` (bare string) whose pattern is not in
+///   the baseline → PG007 fires. An agent cannot bypass PG007 by using the
+///   legacy string form for new additions.
+/// - New `CxExemptPathEntry::Full` (struct) missing `reason`/`expires`/`owner`
+///   → PG007 fires (existing behavior).
+/// - Any entry (either form) whose pattern was already in the baseline →
+///   PG007 stays silent; it surfaces in `locus debt` as "legacy-no-metadata"
+///   if it's a `Legacy` form.
 pub const PG007_EXEMPT_PATH_LACKS_DEBT_METADATA: &str = "PG007";
 
 /// Run all PG checks against `current` vs `baseline`.
@@ -718,12 +726,29 @@ fn check_new_exempt_paths(
             mode,
             calibration,
         ));
-        // PG007 — new struct-form entries must carry debt metadata.
-        // Legacy string entries pre-date the schema and are not checked here;
-        // they surface in `locus debt` as legacy-no-metadata rows instead.
-        if let crate::paradigms::complexity_budget::lockfile_schema::CxExemptPathEntry::Full(ep) =
-            entry
-            && let Some(d) = exempt_path_metadata_diagnostic("paradigms.CX.exempt_paths", ep, mode)
+        // PG007 — new entries must carry debt metadata regardless of form.
+        // Grandfather-by-pattern: only patterns NOT present in the baseline
+        // are subject to PG007. Patterns already in the baseline (in any
+        // form) are silently grandfathered; legacy baseline strings also
+        // surface in `locus debt` as "legacy-no-metadata" rows.
+        //
+        // For new Legacy-string entries (not in baseline), we synthesise a
+        // metadata-check against a pattern-only struct — all fields will be
+        // None, so PG007 fires listing all three missing fields.
+        let pg007_target: crate::paradigms::complexity_budget::lockfile_schema::CxExemptPath =
+            match entry {
+                crate::paradigms::complexity_budget::lockfile_schema::CxExemptPathEntry::Full(
+                    ep,
+                ) => ep.clone(),
+                crate::paradigms::complexity_budget::lockfile_schema::CxExemptPathEntry::Legacy(
+                    s,
+                ) => crate::paradigms::complexity_budget::lockfile_schema::CxExemptPath {
+                    pattern: s.clone(),
+                    ..Default::default()
+                },
+            };
+        if let Some(d) =
+            exempt_path_metadata_diagnostic("paradigms.CX.exempt_paths", &pg007_target, mode)
         {
             out.push(d);
         }
