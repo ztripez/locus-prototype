@@ -1,7 +1,8 @@
 use super::super::lockfile_schema::{MoOverride, MoSection};
 use super::*;
 use locus_air::{
-    AIR_SCHEMA_VERSION, AirCallSite, AirFunction, AirPackage, AirType, CallKind, TypeKind,
+    AIR_SCHEMA_VERSION, AirCallSite, AirConversion, AirFunction, AirImplBlock, AirPackage, AirType,
+    CallKind, ConversionMechanism, TypeKind,
 };
 
 fn pub_type(name: &str) -> AirItem {
@@ -627,4 +628,404 @@ fn mo004_agent_strict_elevates_to_fatal() {
     let diags = mo004(&air, &section, CheckMode::AgentStrict);
     assert_eq!(diags.len(), 1);
     assert_eq!(diags[0].severity, Severity::Fatal);
+}
+
+// ---- MO005 test helpers ----
+
+fn type_item(name: &str, kind: TypeKind) -> AirItem {
+    AirItem::Type(AirType {
+        kind,
+        name: name.into(),
+        symbol: format!("x::{name}"),
+        visibility: Visibility::Public,
+        fields: Vec::new(),
+        variants: Vec::new(),
+        decorators: Vec::new(),
+        symbol_segments: Vec::new(),
+        span: AirSpan::new("main.rs", 5, 5),
+        doc: None,
+    })
+}
+
+fn impl_item(target: &str) -> AirItem {
+    AirItem::Impl(AirImplBlock {
+        interface: None,
+        target_type: target.into(),
+        method_names: Vec::new(),
+        dispatch: locus_air::ImplDispatch::Static,
+        span: AirSpan::new("main.rs", 10, 15),
+    })
+}
+
+fn func_with_lines(name: &str, line_count: u32) -> AirItem {
+    AirItem::Function(AirFunction {
+        name: name.into(),
+        symbol: format!("x::{name}"),
+        visibility: Visibility::Public,
+        params: Vec::new(),
+        return_type: None,
+        span: AirSpan::new("main.rs", 1, line_count),
+        line_count,
+        decorators: Vec::new(),
+        symbol_segments: Vec::new(),
+        doc: None,
+    })
+}
+
+fn conversion_item(from: &str, to: &str) -> AirItem {
+    AirItem::Conversion(AirConversion {
+        from: from.into(),
+        to: to.into(),
+        mechanism: ConversionMechanism::InfallibleAdapter,
+        symbol: format!("{from}::from_{to}"),
+        span: AirSpan::new("main.rs", 20, 25),
+    })
+}
+
+fn air_with_module_and_items(module: &str, items: Vec<AirItem>) -> AirWorkspace {
+    air_with_module_path_and_file(module, "main.rs", items)
+}
+
+fn air_with_module_path_and_file(
+    module: &str,
+    file_path: &str,
+    items: Vec<AirItem>,
+) -> AirWorkspace {
+    AirWorkspace {
+        schema_version: AIR_SCHEMA_VERSION,
+        packages: vec![AirPackage {
+            name: "x".into(),
+            version: "0".into(),
+            root_dir: "/".into(),
+            files: vec![AirFile {
+                path: file_path.into(),
+                module_path: Some(module.to_string()),
+                items,
+                hints: Vec::new(),
+                parse_error: None,
+                line_count: 50,
+            }],
+        }],
+        facts: Vec::new(),
+    }
+}
+
+// ---- MO005 tests ----
+
+#[test]
+fn mo005_flags_struct_in_main() {
+    let air =
+        air_with_module_and_items("locus_cli::main", vec![type_item("Cli", TypeKind::Struct)]);
+    let diags = mo005(&air, CheckMode::Human);
+    assert_eq!(diags.len(), 1, "expected one diag, got {diags:?}");
+    assert_eq!(diags[0].rule_id, "MO005");
+    assert_eq!(diags[0].severity, Severity::Warning);
+    assert!(
+        diags[0].message.contains("struct"),
+        "expected 'struct' in message; got: {}",
+        diags[0].message
+    );
+    assert!(
+        diags[0].message.contains("Cli"),
+        "expected struct name in message; got: {}",
+        diags[0].message
+    );
+}
+
+#[test]
+fn mo005_flags_enum_in_main() {
+    let air = air_with_module_and_items(
+        "locus_cli::main",
+        vec![type_item("Command", TypeKind::Enum)],
+    );
+    let diags = mo005(&air, CheckMode::Human);
+    assert_eq!(diags.len(), 1, "expected one diag, got {diags:?}");
+    assert_eq!(diags[0].rule_id, "MO005");
+    assert!(
+        diags[0].message.contains("enum"),
+        "expected 'enum' in message"
+    );
+    assert!(
+        diags[0].message.contains("Command"),
+        "expected enum name in message"
+    );
+}
+
+#[test]
+fn mo005_flags_trait_in_main() {
+    let air = air_with_module_and_items("pkg::main", vec![type_item("Runner", TypeKind::Trait)]);
+    let diags = mo005(&air, CheckMode::Human);
+    assert_eq!(diags.len(), 1, "expected one diag, got {diags:?}");
+    assert!(diags[0].message.contains("trait"));
+}
+
+#[test]
+fn mo005_flags_impl_block_in_main() {
+    let air = air_with_module_and_items("pkg::main", vec![impl_item("Cli")]);
+    let diags = mo005(&air, CheckMode::Human);
+    assert_eq!(diags.len(), 1, "expected one diag, got {diags:?}");
+    assert!(diags[0].message.contains("impl block"));
+    assert!(diags[0].message.contains("Cli"));
+}
+
+#[test]
+fn mo005_flags_long_helper_function_in_main() {
+    // Function named `helper_xyz` — not a permitted name, any line count fires.
+    let air = air_with_module_and_items("pkg::main", vec![func_with_lines("helper_xyz", 10)]);
+    let diags = mo005(&air, CheckMode::Human);
+    assert_eq!(diags.len(), 1, "expected one diag, got {diags:?}");
+    assert!(
+        diags[0].message.contains("helper_xyz"),
+        "expected fn name in message"
+    );
+}
+
+#[test]
+fn mo005_flags_named_fn_exceeding_budget_in_main() {
+    // `main` is a permitted name but exceeds the line budget.
+    let budget = MO005_THIN_FN_MAX_LINES;
+    let air = air_with_module_and_items("pkg::main", vec![func_with_lines("main", budget + 1)]);
+    let diags = mo005(&air, CheckMode::Human);
+    assert_eq!(diags.len(), 1, "expected one diag, got {diags:?}");
+    assert!(
+        diags[0].message.contains("main"),
+        "expected fn name in message"
+    );
+    assert!(
+        diags[0].message.contains(&budget.to_string()),
+        "expected budget in message"
+    );
+}
+
+#[test]
+fn mo005_silent_for_thin_main_fn() {
+    // A small `fn main` (≤ budget lines) is allowed — classic composition glue.
+    let budget = MO005_THIN_FN_MAX_LINES;
+    let air = air_with_module_and_items("pkg::main", vec![func_with_lines("main", budget)]);
+    let diags = mo005(&air, CheckMode::Human);
+    assert!(
+        diags.is_empty(),
+        "expected no diags for thin main fn, got {diags:?}"
+    );
+}
+
+#[test]
+fn mo005_silent_for_thin_run_fn() {
+    // `fn run(cli: Cli) -> Result<()> { commands::run(cli) }` — thin dispatch
+    // glue; allowed.
+    let air = air_with_module_and_items("pkg::main", vec![func_with_lines("run", 5)]);
+    let diags = mo005(&air, CheckMode::Human);
+    assert!(
+        diags.is_empty(),
+        "expected no diags for thin run fn, got {diags:?}"
+    );
+}
+
+#[test]
+fn mo005_silent_for_thin_init_fn() {
+    let air = air_with_module_and_items("pkg::main", vec![func_with_lines("init", 3)]);
+    let diags = mo005(&air, CheckMode::Human);
+    assert!(
+        diags.is_empty(),
+        "expected no diags for thin init fn, got {diags:?}"
+    );
+}
+
+#[test]
+fn mo005_silent_for_imports_in_main() {
+    // Imports are passive observations — not declarations.
+    let air = air_with_module_and_items(
+        "pkg::main",
+        vec![
+            import("anyhow::Result"),
+            import("clap::Parser"),
+            import("crate::cli::Cli"),
+        ],
+    );
+    let diags = mo005(&air, CheckMode::Human);
+    assert!(
+        diags.is_empty(),
+        "expected no diags for imports, got {diags:?}"
+    );
+}
+
+#[test]
+fn mo005_applies_to_lib_module() {
+    // The rule also fires for `::lib` module paths.
+    let air = AirWorkspace {
+        schema_version: AIR_SCHEMA_VERSION,
+        packages: vec![AirPackage {
+            name: "x".into(),
+            version: "0".into(),
+            root_dir: "/".into(),
+            files: vec![AirFile {
+                path: "src/lib.rs".into(),
+                module_path: Some("my_crate::lib".to_string()),
+                items: vec![type_item("InternalHelper", TypeKind::Struct)],
+                hints: Vec::new(),
+                parse_error: None,
+                line_count: 30,
+            }],
+        }],
+        facts: Vec::new(),
+    };
+    let diags = mo005(&air, CheckMode::Human);
+    assert_eq!(
+        diags.len(),
+        1,
+        "expected one diag for struct in lib, got {diags:?}"
+    );
+    assert_eq!(diags[0].rule_id, "MO005");
+}
+
+#[test]
+fn mo005_applies_to_mod_module() {
+    // The rule also fires for `::mod` module paths.
+    let air = AirWorkspace {
+        schema_version: AIR_SCHEMA_VERSION,
+        packages: vec![AirPackage {
+            name: "x".into(),
+            version: "0".into(),
+            root_dir: "/".into(),
+            files: vec![AirFile {
+                path: "src/commands/mod.rs".into(),
+                module_path: Some("my_crate::commands::mod".to_string()),
+                items: vec![type_item("InternalState", TypeKind::Struct)],
+                hints: Vec::new(),
+                parse_error: None,
+                line_count: 30,
+            }],
+        }],
+        facts: Vec::new(),
+    };
+    let diags = mo005(&air, CheckMode::Human);
+    assert_eq!(
+        diags.len(),
+        1,
+        "expected one diag for struct in mod.rs, got {diags:?}"
+    );
+}
+
+#[test]
+fn mo005_does_not_apply_to_non_entrypoint_files() {
+    // `pkg::other` does not end in `main`/`lib`/`mod`, and the file is `other.rs`
+    // — rule must not fire.
+    let air = air_with_module_path_and_file(
+        "pkg::other",
+        "other.rs",
+        vec![
+            type_item("Foo", TypeKind::Struct),
+            type_item("Bar", TypeKind::Enum),
+        ],
+    );
+    let diags = mo005(&air, CheckMode::Human);
+    assert!(
+        diags.is_empty(),
+        "MO005 must not fire on non-entrypoint modules; got {diags:?}"
+    );
+}
+
+#[test]
+fn mo005_does_not_fire_on_module_path_containing_main_as_non_suffix() {
+    // `pkg::main_loop` in `main_loop.rs` — neither the module segment nor
+    // the file stem is `main` / `lib` / `mod` — must not match.
+    let air = air_with_module_path_and_file(
+        "pkg::main_loop",
+        "main_loop.rs",
+        vec![type_item("State", TypeKind::Struct)],
+    );
+    let diags = mo005(&air, CheckMode::Human);
+    assert!(
+        diags.is_empty(),
+        "MO005 must not fire on `main_loop` module; got {diags:?}"
+    );
+}
+
+#[test]
+fn mo005_multiple_violations_emit_one_diagnostic_per_item() {
+    // Three forbidden items in the same entrypoint → three diagnostics.
+    let air = air_with_module_and_items(
+        "locus_cli::main",
+        vec![
+            type_item("Cli", TypeKind::Struct),
+            type_item("Command", TypeKind::Enum),
+            impl_item("Cli"),
+        ],
+    );
+    let diags = mo005(&air, CheckMode::Human);
+    assert_eq!(
+        diags.len(),
+        3,
+        "expected one diag per forbidden item; got {diags:?}"
+    );
+}
+
+#[test]
+fn mo005_agent_strict_elevates_to_fatal() {
+    let air = air_with_module_and_items("pkg::main", vec![type_item("Foo", TypeKind::Struct)]);
+    let diags = mo005(&air, CheckMode::AgentStrict);
+    assert_eq!(diags.len(), 1);
+    assert_eq!(diags[0].severity, Severity::Fatal);
+}
+
+#[test]
+fn mo005_skips_files_without_module_path() {
+    // Files without a module_path cannot be classified as entrypoints.
+    let air = air_with_module_and_items("pkg::main", vec![type_item("Foo", TypeKind::Struct)]);
+    // Manually create workspace with no module_path to test the skip.
+    let air_no_path = AirWorkspace {
+        schema_version: AIR_SCHEMA_VERSION,
+        packages: vec![AirPackage {
+            name: "x".into(),
+            version: "0".into(),
+            root_dir: "/".into(),
+            files: vec![AirFile {
+                path: "main.rs".into(),
+                module_path: None,
+                items: vec![type_item("Foo", TypeKind::Struct)],
+                hints: Vec::new(),
+                parse_error: None,
+                line_count: 10,
+            }],
+        }],
+        facts: Vec::new(),
+    };
+    assert!(
+        mo005(&air_no_path, CheckMode::Human).is_empty(),
+        "must skip files with no module_path"
+    );
+    // But with a module_path it fires normally.
+    let diags = mo005(&air, CheckMode::Human);
+    assert_eq!(diags.len(), 1);
+}
+
+#[test]
+fn mo005_flags_conversion_in_entrypoint() {
+    // A converter in an entrypoint module is misplaced.
+    let air = air_with_module_and_items("pkg::main", vec![conversion_item("FooDto", "Foo")]);
+    let diags = mo005(&air, CheckMode::Human);
+    assert_eq!(diags.len(), 1, "expected conversion to fire; got {diags:?}");
+    assert_eq!(diags[0].rule_id, "MO005");
+}
+
+#[test]
+fn mo005_detects_binary_crate_root_by_file_path() {
+    // Rust binary crate roots have module_path = crate name (no `::main`
+    // suffix). MO005 must still fire because the file is `main.rs`.
+    // This is the critical real-world case — `locus_cli` itself.
+    let air = air_with_module_path_and_file(
+        "locus_cli", // flat crate-name module path, as Rust adapter emits
+        "crates/locus-cli/src/main.rs",
+        vec![
+            type_item("Cli", TypeKind::Struct),
+            type_item("Command", TypeKind::Enum),
+        ],
+    );
+    let diags = mo005(&air, CheckMode::Human);
+    assert_eq!(
+        diags.len(),
+        2,
+        "must detect binary-crate root via file path; got {diags:?}"
+    );
+    assert_eq!(diags[0].rule_id, "MO005");
 }

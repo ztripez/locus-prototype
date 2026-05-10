@@ -117,7 +117,7 @@ This document is the *target* spec — the full set of paradigms Locus is design
 | PA (6) | PA001, PA002, PA003, PA004 | many | port+impl colocation; concrete adapter imports; **external-IO fact in application without port**; adapter construction outside CR. |
 | CR (7) | CR001, CR002 | many | service-shaped construction outside CR; high-density wiring inside CR. |
 | RM (8) | RM001, RM002, RM003, RM004, **RM005**, **RM006** | many | action-kind density; converter side-effects; handler policy density; repository branch density; **validator IO fact**; **domain-method persistence-write fact**. |
-| MO (9) | MO001, MO002, MO003, MO004 | many | public-type budget; responsibility entropy; canonical+boundary colocation; canonical+handler colocation. |
+| MO (9) | MO001, MO002, MO003, MO004, **MO005** | many | public-type budget; responsibility entropy; canonical+boundary colocation; canonical+handler colocation; **entrypoint-module ownership (main.rs/lib.rs/mod.rs as composition surface)**. |
 | CX (10) | CX001, CX007, CX008 | several | function line budget; public-surface budget; fan-out budget. |
 | UT (11) | UT001–UT005 | many | public type in utility; forbidden import; generic-utility module; domain logic in utility; validate/normalize in utility. |
 | FL (12) | FL001–FL007, **FL010**, FL011, **FL012**, FL013 | many | Boundary error; panic-shaped; silent `.ok()`; `let _ = call`; partial `if let`; `map_err(|_|)`; catch-all `Err(_)`; **`unwrap_or(literal/call)` invalid-to-default**; bare `_` failure sink; **retry-shaped loop without policy**; lossy stringification. Residual gaps: spawned-task no-sink (needs framework loader). |
@@ -163,7 +163,7 @@ table is the policy the rule code is meant to encode.
 | PA | — | PA001–PA004 | — |
 | CR | CR001, CR002 | — | — |
 | RM | — | RM001–RM006 | — |
-| MO | — | MO003, MO004 | MO001, MO002 |
+| MO | — | MO003, MO004, **MO005** | MO001, MO002 |
 | CX | — | CX008 | **CX001**, **CX002**, CX007 |
 | UT | — | UT001–UT005 | — |
 | FL | — | FL001–FL013 | — |
@@ -818,6 +818,49 @@ A large generated table may be fine. A smaller file containing six architectural
 ```text
 MO — Module / File Ownership
 ```
+
+### Implementation status
+
+| Rule | Detects | AIR consumed | Severity (human / agent-strict) |
+|------|---------|--------------|---------------------------------|
+| MO001 | File has more public top-level types than its budget (default 5; per-module override via `paradigms.MO.overrides`) | `AirItem::Type` (visibility) | Warning / Fatal |
+| MO002 | File carries ≥ `entropy_threshold` (default 3) distinct architectural roles: canonical hint, boundary hint, converter hint, handler-named function, persistence import, io call-site | `AirItem::Import`, `AirItem::CallSite`, `AirHint` | Warning / Fatal |
+| MO003 | Canonical hint co-located with boundary hint in the same file — the two opposing roles blur ownership | `AirHint` | Warning / Fatal |
+| MO004 | Canonical hint co-located with a handler-named function in the same file | `AirHint`, `AirItem::Function` | Warning / Fatal |
+| MO005 | Entrypoint module (`main.rs`, `lib.rs`, `mod.rs`) contains type declarations, impl blocks, converters, or substantial non-glue functions | `AirItem::Type`, `AirItem::Impl`, `AirItem::Function`, `AirItem::Conversion` | Warning / Fatal |
+
+#### MO005 — Entrypoint Declaration Ownership
+
+Entrypoint modules are composition surfaces, not ownership sites. They wire
+modules together via `mod` declarations, imports, crate-level attrs, thin
+`main`/`run`/`init` functions, and `pub use` re-exports — but they must not
+declare substantial types, impl blocks, converters, or command/business
+implementation functions.
+
+**Scope:** module paths ending in `::main`, `::lib`, or `::mod`.
+
+**Allowed in entrypoint modules:**
+- `mod` declarations (not captured at the AIR item level)
+- imports (`AirItem::Import`) and re-exports
+- crate-level doc attrs / hints
+- functions named `main` / `run` / `init` / `setup` / `start` with ≤ 25 lines each
+
+**Forbidden:**
+- `struct`, `enum`, `trait`, `type alias`, `union` declarations (`AirItem::Type`)
+- impl blocks (`AirItem::Impl`)
+- converter declarations (`AirItem::Conversion`)
+- functions not named `main`/`run`/`init`/`setup`/`start` (any line count)
+- functions with a permitted name but exceeding the 25-line thin-function budget
+
+**Thin-function budget (25 lines):** chosen to accommodate a `fn main() ->
+Result<()>` that parses CLI args and hands off to a `commands::run()`, while
+flagging multi-branch dispatch bodies that belong in a dedicated `commands/`
+module.
+
+**No lockfile configuration** in the first pass. Exemption via the standard
+`// locus: allow MO005` source-hint when a genuine carve-out is needed.
+
+Severity: Warning by default; `--agent-strict` elevates to Fatal.
 
 ---
 

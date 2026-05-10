@@ -10,6 +10,9 @@
 //! - MO003: canonical type co-located with a boundary type in the same file.
 //! - MO004: canonical type co-located with a handler-named function in the
 //!   same file.
+//! - MO005: entrypoint modules (`main.rs`, `lib.rs`, `mod.rs`) must be
+//!   composition surfaces, not ownership sites — they may not declare types,
+//!   impl blocks, converters, or substantial non-glue functions.
 //!
 //! `init` returns `Null`: there's no automatic inference for "this module
 //! is allowed to be wide" — the user has to declare the override (or the
@@ -52,6 +55,7 @@ impl Paradigm for ModuleOwnership {
         diags.extend(rules::mo002(air, &section, mode));
         diags.extend(rules::mo003(air, mode));
         diags.extend(rules::mo004(air, &section, mode));
+        diags.extend(rules::mo005(air, mode));
         diags
     }
     fn suggest(&self, air: &AirWorkspace, lockfile: &Lockfile) -> Vec<crate::init::Suggestion> {

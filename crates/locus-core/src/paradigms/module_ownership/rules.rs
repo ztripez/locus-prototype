@@ -8,6 +8,9 @@
 //! - [`mo003`]: canonical hint co-located with a boundary hint in the same file.
 //! - [`mo004`]: canonical hint co-located with a handler-named function in the
 //!   same file.
+//! - [`mo005`]: entrypoint modules (`main.rs`, `lib.rs`, `mod.rs`) contain
+//!   type declarations, impl blocks, or substantial functions — forbidden
+//!   because entrypoint modules are composition surfaces, not ownership sites.
 
 use locus_air::{
     AirFile, AirHint, AirImport, AirItem, AirSpan, AirWorkspace, HintKind, Visibility,
@@ -402,6 +405,222 @@ pub fn mo004(air: &AirWorkspace, section: &MoSection, mode: CheckMode) -> Vec<Di
                     handler.name
                 )),
             });
+        }
+    }
+    out
+}
+
+/// Entrypoint-module names that MO005 applies to.
+///
+/// A file's `module_path` last segment is compared against this set.
+/// - `main` covers `src/main.rs` and `src/bin/<name>.rs` (Rust convention).
+/// - `lib` covers `src/lib.rs` (library crate root).
+/// - `mod` covers `<dir>/mod.rs` (directory sub-module root).
+const ENTRYPOINT_SUFFIXES: &[&str] = &["main", "lib", "mod"];
+
+/// Line-count budget for "thin" functions that MO005 permits in entrypoint
+/// modules. A `main`, `run`, or `init` function up to this many lines is
+/// accepted as composition glue. A function exceeding this limit is
+/// substantial enough that it belongs in a dedicated module.
+///
+/// 25 lines is deliberate: it accommodates `fn main() -> Result<()>` that
+/// parses args and dispatches a single `run()` call, plus small helpers like
+/// `fn run(cli: Cli) -> Result<()> { commands::run(cli) }`, while still
+/// flagging multi-branch dispatch bodies that belong in a `commands/` module.
+pub const MO005_THIN_FN_MAX_LINES: u32 = 25;
+
+/// Function names that MO005 treats as composition glue and therefore
+/// exempts from the line-count check **in addition to** the thin-function
+/// budget. An entrypoint module may contain any number of these functions
+/// provided each is individually below `MO005_THIN_FN_MAX_LINES` lines.
+///
+/// `main` / `run` / `init` are the conventional Rust entrypoint names.
+/// `setup` / `start` appear in test harnesses and integration crates.
+const ENTRYPOINT_FN_NAMES: &[&str] = &["main", "run", "init", "setup", "start"];
+
+/// Check whether a file is an entrypoint module based on its module path
+/// and file path.
+///
+/// Detection uses two complementary signals:
+///
+/// 1. **Module-path suffix** — the last segment of `module_path` is compared
+///    against `ENTRYPOINT_SUFFIXES`. Catches `my_crate::commands::mod` and
+///    `my_crate::other_main` as entrypoints because they explicitly use the
+///    canonical names.
+///
+/// 2. **File-path basename** — the file's OS path (when provided) is also
+///    checked. This catches the common case in Rust where binary-crate
+///    `main.rs` and library-crate `lib.rs` produce a flat `module_path`
+///    equal to just the crate name (e.g. `locus_cli` rather than
+///    `locus_cli::main`). Likewise `mod.rs` files inside subdirectories
+///    have module paths like `pkg::commands`, not `pkg::commands::mod`.
+///
+/// Both checks use the same `ENTRYPOINT_SUFFIXES` set so the semantics
+/// are symmetric — either the logical name or the filesystem name can
+/// trigger the rule.
+fn is_entrypoint_module_by_path(module_path: &str, file_path: &str) -> bool {
+    // Check 1: last module_path segment.
+    let last_segment = module_path.rsplit("::").next().unwrap_or(module_path);
+    if ENTRYPOINT_SUFFIXES.contains(&last_segment) {
+        return true;
+    }
+    // Check 2: file basename stem (e.g. "main" from ".../src/main.rs").
+    let stem = std::path::Path::new(file_path)
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("");
+    ENTRYPOINT_SUFFIXES.contains(&stem)
+}
+
+/// Classify an `AirItem` as allowed or forbidden in an entrypoint module.
+///
+/// Returns `None` when the item is permitted; returns `Some(reason)` when
+/// it is a forbidden declaration that MO005 should flag.
+fn mo005_classify_item(item: &AirItem) -> Option<String> {
+    match item {
+        AirItem::Type(t) => {
+            let kind = match t.kind {
+                locus_air::TypeKind::Struct => "struct",
+                locus_air::TypeKind::Enum => "enum",
+                locus_air::TypeKind::Trait => "trait",
+                locus_air::TypeKind::Alias => "type alias",
+                locus_air::TypeKind::Union => "union",
+            };
+            Some(format!(
+                "{kind} `{}` declared in entrypoint module — move to a sibling module",
+                t.name
+            ))
+        }
+        AirItem::Impl(i) => {
+            let target = &i.target_type;
+            Some(format!(
+                "impl block for `{target}` in entrypoint module — move to the module that owns `{target}`"
+            ))
+        }
+        AirItem::Function(f) => {
+            let is_permitted_name = ENTRYPOINT_FN_NAMES.contains(&f.name.as_str());
+            let within_budget = f.line_count <= MO005_THIN_FN_MAX_LINES;
+            if is_permitted_name && within_budget {
+                // Thin composition-glue function: allowed.
+                return None;
+            }
+            if is_permitted_name {
+                // Named correctly but too large — this is itself a smell.
+                Some(format!(
+                    "function `{}` in entrypoint module spans {} lines (budget {}); \
+                     move its body into a dedicated module",
+                    f.name, f.line_count, MO005_THIN_FN_MAX_LINES
+                ))
+            } else {
+                // Non-permitted name — regardless of line count this is a
+                // domain/business function that belongs elsewhere.
+                Some(format!(
+                    "function `{}` in entrypoint module is not composition glue; \
+                     move it to a sibling module (e.g. `commands/`, `routes/`, \
+                     `handlers/`)",
+                    f.name
+                ))
+            }
+        }
+        AirItem::Conversion(c) => {
+            // Converter / From/TryFrom impls in an entrypoint are unlikely;
+            // flag them as misplaced.
+            Some(format!(
+                "converter `{}` declared in entrypoint module — move to a `convert.rs` \
+                 or the owning domain module",
+                c.symbol
+            ))
+        }
+        // All other item kinds — imports, hints, facts, call-sites, etc.
+        // — are passive observations, not declarations. Permitted.
+        _ => None,
+    }
+}
+
+/// MO005 — entrypoint modules must be composition surfaces, not ownership
+/// sites.
+///
+/// Fires for every `AirItem` in a file whose `module_path` ends in `::main`,
+/// `::lib`, or `::mod` that is a type declaration, impl block, converter,
+/// or a function that is not a thin composition-glue wrapper (≤25 lines
+/// named `main`/`run`/`init`/`setup`/`start`).
+///
+/// **Allowed in entrypoint modules:**
+/// - `mod` declarations (not captured in AIR at the item level)
+/// - imports (`AirItem::Import`)
+/// - crate-level doc attrs / hints
+/// - thin `fn main` / `fn run` / `fn init` (≤ `MO005_THIN_FN_MAX_LINES` lines)
+/// - `pub use` re-exports in `lib.rs` (`AirItem::Import`)
+///
+/// **Forbidden:**
+/// - struct / enum / trait / alias / union declarations
+/// - impl blocks
+/// - converter declarations
+/// - functions not named `main`/`run`/`init`/`setup`/`start`
+/// - functions whose line count exceeds the budget
+///
+/// **Rationale:** entrypoint modules are the last place agents look when
+/// adding new behavior, so they accumulate it. Enforcing that they contain
+/// only composition glue keeps the dependency tree legible and prevents
+/// god-module accumulation at the binary root.
+///
+/// Severity: Warning by default; `--agent-strict` elevates to Fatal.
+///
+/// No lockfile configuration in the first pass — exemption via the standard
+/// `// locus: allow MO005` source-hint.
+pub fn mo005(air: &AirWorkspace, mode: CheckMode) -> Vec<Diagnostic> {
+    let mut out = Vec::new();
+    for pkg in &air.packages {
+        for file in &pkg.files {
+            let Some(module_path) = file.module_path.as_deref() else {
+                continue;
+            };
+            if !is_entrypoint_module_by_path(module_path, &file.path) {
+                continue;
+            }
+            // Compute a human-readable entrypoint label for the diagnostic.
+            // Prefer the file basename (e.g. "main.rs") so the message
+            // remains clear even when the module_path is flat (crate root).
+            let file_label = std::path::Path::new(&file.path)
+                .file_name()
+                .and_then(|s| s.to_str())
+                .unwrap_or(&file.path);
+            for item in &file.items {
+                if let Some(reason) = mo005_classify_item(item) {
+                    let span = match item {
+                        AirItem::Type(t) => t.span.clone(),
+                        AirItem::Function(f) => f.span.clone(),
+                        AirItem::Impl(i) => i.span.clone(),
+                        AirItem::Conversion(c) => c.span.clone(),
+                        _ => AirSpan::new(file.path.clone(), 1, 1),
+                    };
+                    out.push(Diagnostic {
+                        rule_id: "MO005".to_string(),
+                        severity: mode.elevate(Severity::Warning),
+                        span,
+                        concept: None,
+                        message: format!("MO005: {reason}"),
+                        why: vec![
+                            format!(
+                                "`{file_label}` (module `{module_path}`) is an entrypoint \
+                                 module — it must be a composition surface, not an ownership site"
+                            ),
+                            "entrypoint modules are composition surfaces — they wire \
+                             modules together via `mod` declarations, imports, and thin \
+                             `main`/`run`/`init` functions. Substantial declarations \
+                             belong in dedicated sibling modules."
+                                .into(),
+                        ],
+                        suggested_fix: Some(
+                            "move this declaration into a dedicated sibling module \
+                             (e.g. `cli.rs` for the root arg struct, `commands/` for \
+                             command implementations). Entrypoint should contain only \
+                             `mod` decls, imports, and a thin `main` or `run` function."
+                                .into(),
+                        ),
+                    });
+                }
+            }
         }
     }
     out
