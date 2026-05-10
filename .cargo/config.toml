@@ -1,0 +1,15 @@
+[build]
+# Keep target-dir under the workspace root (cargo default) so each git
+# worktree has its own target/. Overrides the user-level
+# ~/.cargo/config.toml setting that points elsewhere globally.
+#
+# Rationale: locus is tiny (~1-2 GB debug target). Global off-tree
+# target-dirs exist to keep multi-GB Bevy/game targets from filling
+# disks; locus doesn't need that. Per-worktree isolation matters more:
+# without it, one worktree's cached binary contaminates another
+# worktree's `cargo run` invocation, breaking dogfood-audit
+# measurements at historical refs.
+#
+# See docs/superpowers/specs/2026-05-09-dogfood-audit.md §Methodology
+# for the audit-time discovery that motivated this.
+target-dir = "target"
