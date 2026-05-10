@@ -144,7 +144,7 @@ Both expire 2027-05-09. This is the correct shape for suppression with debt meta
 
 `paradigms.CX.exempt_paths` entries: `*::tests::*` and `locus_air::*`. The `locus_air::*` pattern covers the single CX007 hit (43 public items in `locus_air`, budget 30). The `*::tests::*` pattern is a blanket test carve-out.
 
-**Schema gap (follow-up issue #1):** `CX.exempt_paths` is `Vec<String>` with no `expires`, `reason`, `owner`, or `debt_id` fields. There is no way to attach debt metadata. The 2 entries are currently active suppressions with no expiry or justification trail.
+**Schema gap (follow-up issue #48):** `CX.exempt_paths` is `Vec<String>` with no `expires`, `reason`, `owner`, or `debt_id` fields. There is no way to attach debt metadata. The 2 entries are currently active suppressions with no expiry or justification trail.
 
 #### Lockfile exceptions — 14 entries (full debt metadata)
 
@@ -160,7 +160,7 @@ All carry `expires=2027-05-09` and documented `reason` text. This is the correct
 
 12 paradigm prefixes in `acknowledged_empty`: BO, CF, CR, DA, ER, FL, FO, PA, RM, RW, TA, UT. Each silences one LOCUS002 vacancy nudge.
 
-**Schema gap (follow-up issue #2):** `acknowledged_empty` is `Vec<String>` with no per-prefix metadata (`expires`, `reason`, `owner`). There is no way to attach a rationale or expiry to any of these suppressions.
+**Schema gap (follow-up issue #49):** `acknowledged_empty` is `Vec<String>` with no per-prefix metadata (`expires`, `reason`, `owner`). There is no way to attach a rationale or expiry to any of these suppressions.
 
 #### Overall verdict
 
@@ -176,7 +176,7 @@ Most entries are legitimate onboarding: ER007/DC002/OT009 exceptions carry `expi
 
 PR #41 targeted CX002 with two distinct halves:
 
-**Half 1 — test extraction (legitimate refactor):** 19 paradigm `rules.rs` files would have been split into `rules.rs` + `rules_tests.rs`, moving inline `mod tests {}` blocks out. This would have been `resolved_by_code` for any CX002 hits in those test-heavy modules. This half is viable as a standalone refactor — see follow-up issue #3.
+**Half 1 — test extraction (legitimate refactor):** 19 paradigm `rules.rs` files would have been split into `rules.rs` + `rules_tests.rs`, moving inline `mod tests {}` blocks out. This would have been `resolved_by_code` for any CX002 hits in those test-heavy modules. This half is viable as a standalone refactor — see follow-up issue #50.
 
 **Half 2 — policy calibration:** `CX.default_max_module_lines = 700` (from default 400) + 8 per-module overrides. This would have been `suppressed_by_budget_increase` + `suppressed_by_override` for the remaining CX002 hits. Under Policy Guard (PR #46), this shape now requires PG001 (budget raise) + PG002 (new overrides) + PG006 (debt metadata on overrides). The calibration half cannot land without that metadata.
 
@@ -204,14 +204,14 @@ PR #42 was pure policy calibration with no code changes: `CX.default_max_functio
 
 **Verdict:** `proposed_but_not_landed`. The PR's "0 diagnostics" claim would have meant `suppressed_by_budget_increase` + `suppressed_by_override`, not remediation. The issue's framing that this is a policy decision rather than a fix is correct.
 
-Under Policy Guard (PR #46), this same shape would now fire PG001 (budget raise from 50 → 120) + PG002 (6 new overrides) + PG006 (missing debt metadata on new overrides). The calibration is not ruled out as a future direction, but it requires explicit debt metadata (`expires`, `reason`, `debt_id`) on each override — and a defensible `--allow-policy-calibration` flag invocation to downgrade PG001/PG002 from Fatal. Re-evaluation is tracked in follow-up issue #4.
+Under Policy Guard (PR #46), this same shape would now fire PG001 (budget raise from 50 → 120) + PG002 (6 new overrides) + PG006 (missing debt metadata on new overrides). The calibration is not ruled out as a future direction, but it requires explicit debt metadata (`expires`, `reason`, `debt_id`) on each override — and a defensible `--allow-policy-calibration` flag invocation to downgrade PG001/PG002 from Fatal. Re-evaluation is tracked in follow-up issue #51.
 
 ---
 
 ## Schema gaps (tracked as follow-up issues)
 
-- **`paradigms.CX.exempt_paths`** is `Vec<String>` with no `expires`, `reason`, `owner`, or `debt_id` fields. Currently 2 entries (`*::tests::*`, `locus_air::*`) silencing 1 known CX007 hit. → tracked as follow-up issue #1.
-- **`acknowledged_empty`** is `Vec<String>` with no per-prefix metadata. Currently 12 paradigm prefixes silencing 12 LOCUS002 vacancy nudges (one per prefix). → tracked as follow-up issue #2.
+- **`paradigms.CX.exempt_paths`** is `Vec<String>` with no `expires`, `reason`, `owner`, or `debt_id` fields. Currently 2 entries (`*::tests::*`, `locus_air::*`) silencing 1 known CX007 hit. → tracked as follow-up issue #48.
+- **`acknowledged_empty`** is `Vec<String>` with no per-prefix metadata. Currently 12 paradigm prefixes silencing 12 LOCUS002 vacancy nudges (one per prefix). → tracked as follow-up issue #49.
 
 PG006 (Policy Guard) requires debt metadata on new MO overrides — confirming these two surfaces are real gaps to close, not invented requirements.
 
@@ -219,8 +219,8 @@ PG006 (Policy Guard) requires debt metadata on new MO overrides — confirming t
 
 ## Refactor candidates (named, non-blocking)
 
-- **Split `locus_rust::visitor::scan_expr` per AST variant** (~298 lines). The single largest CX001 contributor and the structural reason PR #42 proposed a per-file budget override on the visitor module. → tracked as follow-up issue #5.
-- **Per-rule splits in `failure_lineage::rules` and `one_truth::rules`** — the two largest paradigm rule files. Splitting per-rule would let CX002 fire honestly without per-file overrides. → tracked as follow-up issue #6.
+- **Split `locus_rust::visitor::scan_expr` per AST variant** (~298 lines). The single largest CX001 contributor and the structural reason PR #42 proposed a per-file budget override on the visitor module. → tracked as follow-up issue #52.
+- **Per-rule splits in `failure_lineage::rules` and `one_truth::rules`** — the two largest paradigm rule files. Splitting per-rule would let CX002 fire honestly without per-file overrides. → tracked as follow-up issue #53.
 
 ---
 
