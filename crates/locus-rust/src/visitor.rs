@@ -188,7 +188,21 @@ fn emit_trait(t: &ItemTrait, module: &str, file_path: &str, out: &mut Vec<AirIte
 fn emit_fn(f: &ItemFn, module: &str, file_path: &str, out: &mut Vec<AirItem>) {
     let name = f.sig.ident.to_string();
     let symbol = format!("{module}::{name}");
-    let symbol_segments = segments_of(&symbol);
+    let (params, return_type) = emit_fn_air_function(f, &symbol, file_path, out);
+    emit_fn_converter(f, &name, &symbol, &params, &return_type, file_path, out);
+    scan_fn_body_for_truth_actions(&f.block, &symbol, file_path, out);
+}
+
+/// Collect function signature facts and push an `AirFunction` item.
+/// Returns `(params, return_type)` so the caller can reuse them for
+/// converter detection without re-parsing the signature.
+fn emit_fn_air_function(
+    f: &ItemFn,
+    symbol: &str,
+    file_path: &str,
+    out: &mut Vec<AirItem>,
+) -> (Vec<(String, String)>, Option<String>) {
+    let symbol_segments = segments_of(symbol);
     let params = f
         .sig
         .inputs
@@ -204,33 +218,42 @@ fn emit_fn(f: &ItemFn, module: &str, file_path: &str, out: &mut Vec<AirItem>) {
             }
         })
         .collect::<Vec<_>>();
-
     let return_type = match &f.sig.output {
         ReturnType::Default => None,
         ReturnType::Type(_, ty) => Some(render_type(ty)),
     };
-
     let span = span_of(file_path, f.span());
     let line_count = span.line_end.saturating_sub(span.line_start) + 1;
     let (decorators, doc) = split_attrs(&f.attrs);
-
     out.push(AirItem::Function(AirFunction {
-        name: name.clone(),
-        symbol: symbol.clone(),
-        symbol_segments: symbol_segments.clone(),
+        name: f.sig.ident.to_string(),
+        symbol: symbol.to_string(),
+        symbol_segments,
         visibility: vis_of(&f.vis),
         params: params.clone(),
         return_type: return_type.clone(),
-        span: span.clone(),
+        span,
         line_count,
-        decorators: decorators.clone(),
+        decorators,
         doc,
     }));
+    (params, return_type)
+}
 
-    // Free-function converter signal: single arg, returns something concept-shaped.
-    if let Some(mech) = free_fn_converter_kind(&name)
+/// Free-function converter signal: single arg, returns something concept-shaped.
+/// Pushes an `AirConversion` when the name matches a converter prefix.
+fn emit_fn_converter(
+    f: &ItemFn,
+    name: &str,
+    symbol: &str,
+    params: &[(String, String)],
+    return_type: &Option<String>,
+    file_path: &str,
+    out: &mut Vec<AirItem>,
+) {
+    if let Some(mech) = free_fn_converter_kind(name)
         && params.len() == 1
-        && let Some(ret) = &return_type
+        && let Some(ret) = return_type
     {
         let from_ty = strip_refs(&params[0].1);
         let to_ty = strip_result_or_option(ret).unwrap_or_else(|| ret.clone());
@@ -239,22 +262,28 @@ fn emit_fn(f: &ItemFn, module: &str, file_path: &str, out: &mut Vec<AirItem>) {
                 from: from_ty,
                 to: to_ty,
                 mechanism: mech,
-                symbol: symbol.clone(),
+                symbol: symbol.to_string(),
                 span: span_of(file_path, f.span()),
             }));
         }
     }
-
-    scan_fn_body_for_truth_actions(&f.block, &symbol, file_path, out);
 }
 
 fn emit_impl(i: &ItemImpl, module: &str, file_path: &str, out: &mut Vec<AirItem>) {
     let self_ty = render_type(&i.self_ty);
+    emit_impl_impl_block(i, &self_ty, file_path, out);
+    if let Some((_, trait_path, _)) = &i.trait_ {
+        emit_impl_trait_conversion(i, trait_path, &self_ty, module, file_path, out);
+    } else {
+        emit_impl_inherent_conversions(i, &self_ty, module, file_path, out);
+    }
+}
 
-    // Emit a summary AirItem::Impl for every impl block. Conversion-shaped
-    // impls additionally produce AirItem::Conversion below; that overlap is
-    // intentional — different paradigms (PA, AB) consume the impl summary,
-    // while OT consumes the conversion view.
+/// Push an `AirImplBlock` summary for every impl block. Conversion-shaped
+/// impls additionally produce `AirConversion` items (via the other handlers);
+/// that overlap is intentional — different paradigms (PA, AB) consume the
+/// impl summary, while OT consumes the conversion view.
+fn emit_impl_impl_block(i: &ItemImpl, self_ty: &str, file_path: &str, out: &mut Vec<AirItem>) {
     let trait_path_text = i
         .trait_
         .as_ref()
@@ -267,64 +296,83 @@ fn emit_impl(i: &ItemImpl, module: &str, file_path: &str, out: &mut Vec<AirItem>
             _ => None,
         })
         .collect();
+    // Rust adapter emits Static for explicit `impl Trait for Type`.
+    // `impl dyn Trait` would be Dynamic, but those don't appear at
+    // item-level — they're type-position only. Future Go adapter
+    // will emit Structural for implicit interface satisfaction.
     out.push(AirItem::Impl(AirImplBlock {
         interface: trait_path_text,
-        target_type: self_ty.clone(),
+        target_type: self_ty.to_string(),
         method_names,
-        // Rust adapter emits Static for explicit `impl Trait for Type`.
-        // `impl dyn Trait` would be Dynamic, but those don't appear at
-        // item-level — they're type-position only. Future Go adapter
-        // will emit Structural for implicit interface satisfaction.
         dispatch: ImplDispatch::Static,
         span: span_of(file_path, i.span()),
     }));
+}
 
-    if let Some((_, trait_path, _)) = &i.trait_ {
-        let last = trait_path
-            .segments
-            .last()
-            .map(|s| s.ident.to_string())
-            .unwrap_or_default();
-        if last == "From" || last == "TryFrom" {
-            // Pull <T> out of the trait's last segment generics.
-            if let Some(seg) = trait_path.segments.last()
-                && let syn::PathArguments::AngleBracketed(ab) = &seg.arguments
-                && let Some(syn::GenericArgument::Type(t)) = ab.args.first()
-            {
-                let from_ty = render_type(t);
-                let mech = if last == "TryFrom" {
-                    ConversionMechanism::FallibleAdapter
-                } else {
-                    ConversionMechanism::InfallibleAdapter
-                };
+/// For `impl From<T> for Self` / `impl TryFrom<T> for Self`, emit an
+/// `AirConversion` so the OT paradigm can track the conversion path.
+fn emit_impl_trait_conversion(
+    i: &ItemImpl,
+    trait_path: &syn::Path,
+    self_ty: &str,
+    module: &str,
+    file_path: &str,
+    out: &mut Vec<AirItem>,
+) {
+    let last = trait_path
+        .segments
+        .last()
+        .map(|s| s.ident.to_string())
+        .unwrap_or_default();
+    if last != "From" && last != "TryFrom" {
+        return;
+    }
+    // Pull <T> out of the trait's last segment generics.
+    if let Some(seg) = trait_path.segments.last()
+        && let syn::PathArguments::AngleBracketed(ab) = &seg.arguments
+        && let Some(syn::GenericArgument::Type(t)) = ab.args.first()
+    {
+        let from_ty = render_type(t);
+        let mech = if last == "TryFrom" {
+            ConversionMechanism::FallibleAdapter
+        } else {
+            ConversionMechanism::InfallibleAdapter
+        };
+        out.push(AirItem::Conversion(AirConversion {
+            from: from_ty,
+            to: self_ty.to_string(),
+            mechanism: mech,
+            symbol: format!("{module}::impl {} for {}", render_path(trait_path), self_ty),
+            span: span_of(file_path, i.span()),
+        }));
+    }
+}
+
+/// Inherent impl: detect `to_*` / `into_*` methods returning a different type
+/// and emit an `AirConversion` for each one found.
+fn emit_impl_inherent_conversions(
+    i: &ItemImpl,
+    self_ty: &str,
+    module: &str,
+    file_path: &str,
+    out: &mut Vec<AirItem>,
+) {
+    for item in &i.items {
+        if let ImplItem::Fn(m) = item
+            && let Some(mech) = inherent_method_converter_kind(&m.sig.ident.to_string())
+            && let ReturnType::Type(_, ty) = &m.sig.output
+        {
+            let return_text = render_type(ty);
+            let to_ty = strip_result_or_option(&return_text).unwrap_or(return_text);
+            let from_ty = strip_refs(self_ty);
+            if !to_ty.is_empty() && from_ty != to_ty {
                 out.push(AirItem::Conversion(AirConversion {
                     from: from_ty,
-                    to: self_ty.clone(),
+                    to: to_ty,
                     mechanism: mech,
-                    symbol: format!("{module}::impl {} for {}", render_path(trait_path), self_ty),
-                    span: span_of(file_path, i.span()),
+                    symbol: format!("{module}::{}::{}", self_ty, m.sig.ident),
+                    span: span_of(file_path, m.span()),
                 }));
-            }
-        }
-    } else {
-        // Inherent impl: detect `to_*` / `into_*` methods returning a different type.
-        for item in &i.items {
-            if let ImplItem::Fn(m) = item
-                && let Some(mech) = inherent_method_converter_kind(&m.sig.ident.to_string())
-                && let ReturnType::Type(_, ty) = &m.sig.output
-            {
-                let return_text = render_type(ty);
-                let to_ty = strip_result_or_option(&return_text).unwrap_or(return_text);
-                let from_ty = strip_refs(&self_ty);
-                if !to_ty.is_empty() && from_ty != to_ty {
-                    out.push(AirItem::Conversion(AirConversion {
-                        from: from_ty,
-                        to: to_ty,
-                        mechanism: mech,
-                        symbol: format!("{module}::{}::{}", self_ty, m.sig.ident),
-                        span: span_of(file_path, m.span()),
-                    }));
-                }
             }
         }
     }

@@ -45,18 +45,35 @@ fn collect_rule_ids_from_rules_files(root: &Path) -> BTreeSet<String> {
             continue;
         }
 
-        let content = fs::read_to_string(&rules_file).expect("rules file should be readable");
-        for line in content.lines() {
-            let marker = "rule_id: \"";
-            if let Some(start) = line.find(marker) {
-                let suffix = &line[start + marker.len()..];
-                if let Some(end) = suffix.find('"') {
-                    let candidate = &suffix[..end];
-                    if candidate.len() == 5
-                        && candidate[..2].chars().all(|c| c.is_ascii_uppercase())
-                        && candidate[2..].chars().all(|c| c.is_ascii_digit())
-                    {
-                        ids.insert(candidate.to_string());
+        // Collect all files to scan: rules.rs itself plus any per-rule files
+        // under the sibling rules/ sub-directory (the per-rule-split layout).
+        let mut files_to_scan: Vec<PathBuf> = vec![rules_file];
+        let rules_subdir = path.join("rules");
+        if rules_subdir.is_dir()
+            && let Ok(sub_entries) = fs::read_dir(&rules_subdir)
+        {
+            for sub_entry in sub_entries.flatten() {
+                let sub_path = sub_entry.path();
+                if sub_path.extension().and_then(|e| e.to_str()) == Some("rs") {
+                    files_to_scan.push(sub_path);
+                }
+            }
+        }
+
+        for file_path in &files_to_scan {
+            let content = fs::read_to_string(file_path).expect("rules file should be readable");
+            for line in content.lines() {
+                let marker = "rule_id: \"";
+                if let Some(start) = line.find(marker) {
+                    let suffix = &line[start + marker.len()..];
+                    if let Some(end) = suffix.find('"') {
+                        let candidate = &suffix[..end];
+                        if candidate.len() == 5
+                            && candidate[..2].chars().all(|c| c.is_ascii_uppercase())
+                            && candidate[2..].chars().all(|c| c.is_ascii_digit())
+                        {
+                            ids.insert(candidate.to_string());
+                        }
                     }
                 }
             }
