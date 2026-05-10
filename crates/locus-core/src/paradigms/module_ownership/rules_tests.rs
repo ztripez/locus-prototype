@@ -2,7 +2,7 @@ use super::super::lockfile_schema::{MoOverride, MoSection};
 use super::*;
 use locus_air::{
     AIR_SCHEMA_VERSION, AirCallSite, AirConversion, AirFunction, AirImplBlock, AirPackage, AirType,
-    CallKind, ConversionMechanism, TypeKind,
+    CallKind, ConversionMechanism, ImplDispatch, TypeKind,
 };
 
 fn pub_type(name: &str) -> AirItem {
@@ -1034,4 +1034,242 @@ fn mo005_detects_binary_crate_root_by_file_path() {
         "must detect binary-crate root via file path; got {diags:?}"
     );
     assert_eq!(diags[0].rule_id, "MO005");
+}
+
+// ---- MO005 composition-host helpers ----
+
+/// Build a unit struct `AirItem` (no fields) for use in composition-host tests.
+fn unit_struct_item(name: &str) -> AirItem {
+    AirItem::Type(AirType {
+        kind: TypeKind::Struct,
+        name: name.into(),
+        symbol: format!("x::{name}"),
+        visibility: Visibility::Public,
+        fields: Vec::new(),
+        variants: Vec::new(),
+        decorators: Vec::new(),
+        symbol_segments: Vec::new(),
+        span: AirSpan::new("mod.rs", 1, 1),
+        doc: None,
+    })
+}
+
+/// Build a struct WITH fields (non-unit) for negative tests.
+fn struct_with_fields(name: &str) -> AirItem {
+    AirItem::Type(AirType {
+        kind: TypeKind::Struct,
+        name: name.into(),
+        symbol: format!("x::{name}"),
+        visibility: Visibility::Public,
+        fields: vec![locus_air::AirField {
+            name: "state".into(),
+            type_text: "u32".into(),
+            visibility: Visibility::Private,
+        }],
+        variants: Vec::new(),
+        decorators: Vec::new(),
+        symbol_segments: Vec::new(),
+        span: AirSpan::new("mod.rs", 1, 1),
+        doc: None,
+    })
+}
+
+/// Build a thin `impl Paradigm for <target>` block (within the line budget).
+fn paradigm_impl_thin(target: &str) -> AirItem {
+    AirItem::Impl(AirImplBlock {
+        interface: Some("Paradigm".into()),
+        target_type: target.into(),
+        method_names: vec![
+            "name".into(),
+            "rule_prefix".into(),
+            "init".into(),
+            "check".into(),
+        ],
+        dispatch: ImplDispatch::Static,
+        // 40 lines — well within the 120-line budget.
+        span: AirSpan::new("mod.rs", 10, 50),
+    })
+}
+
+/// Build a `impl Paradigm for <target>` block that exceeds the line budget.
+fn paradigm_impl_over_budget(target: &str) -> AirItem {
+    AirItem::Impl(AirImplBlock {
+        interface: Some("Paradigm".into()),
+        target_type: target.into(),
+        method_names: vec!["check".into()],
+        dispatch: ImplDispatch::Static,
+        // 150 lines — exceeds MO005_COMPOSITION_HOST_IMPL_MAX_LINES (120).
+        span: AirSpan::new("mod.rs", 10, 160),
+    })
+}
+
+/// Build an impl block that does NOT implement Paradigm.
+fn non_paradigm_impl(trait_name: &str, target: &str) -> AirItem {
+    AirItem::Impl(AirImplBlock {
+        interface: Some(trait_name.into()),
+        target_type: target.into(),
+        method_names: vec!["do_thing".into()],
+        dispatch: ImplDispatch::Static,
+        span: AirSpan::new("mod.rs", 10, 30),
+    })
+}
+
+/// Build an inherent (no-trait) impl block for a target.
+fn inherent_impl(target: &str) -> AirItem {
+    AirItem::Impl(AirImplBlock {
+        interface: None,
+        target_type: target.into(),
+        method_names: vec!["new".into()],
+        dispatch: ImplDispatch::Static,
+        span: AirSpan::new("mod.rs", 10, 20),
+    })
+}
+
+/// Build a workspace with a `mod.rs` file at the given module path containing
+/// the supplied items.
+fn mod_rs_air(module_path: &str, items: Vec<AirItem>) -> AirWorkspace {
+    AirWorkspace {
+        schema_version: AIR_SCHEMA_VERSION,
+        packages: vec![AirPackage {
+            name: "x".into(),
+            version: "0".into(),
+            root_dir: "/".into(),
+            files: vec![AirFile {
+                path: "src/something/mod.rs".into(),
+                module_path: Some(module_path.to_string()),
+                items,
+                hints: Vec::new(),
+                parse_error: None,
+                line_count: 200,
+            }],
+        }],
+        facts: Vec::new(),
+    }
+}
+
+// ---- MO005 composition-host tests ----
+
+#[test]
+fn mo005_silent_for_composition_host_pattern() {
+    // pub struct Foo; + impl Paradigm for Foo with thin methods in mod.rs.
+    // Both the unit struct and the impl must be allowed — 0 MO005 hits.
+    let items = vec![
+        unit_struct_item("MyParadigm"),
+        paradigm_impl_thin("MyParadigm"),
+    ];
+    let air = mod_rs_air("my_crate::paradigms::my_paradigm::mod", items);
+    let diags = mo005(&air, CheckMode::Human);
+    assert!(
+        diags.is_empty(),
+        "composition-host pattern (unit struct + thin impl Paradigm) must be silent; \
+         got {diags:?}"
+    );
+}
+
+#[test]
+fn mo005_fires_for_non_paradigm_impl_in_mod_rs() {
+    // pub struct Foo; + impl SomeOtherTrait for Foo in mod.rs.
+    // The impl does not implement Paradigm — must fire.
+    let items = vec![
+        unit_struct_item("Foo"),
+        non_paradigm_impl("SomeOtherTrait", "Foo"),
+    ];
+    let air = mod_rs_air("x::foo::mod", items);
+    let diags = mo005(&air, CheckMode::Human);
+    // Both the struct (now without a matching Paradigm impl) and the non-Paradigm
+    // impl should fire.
+    assert!(
+        !diags.is_empty(),
+        "non-Paradigm impl in mod.rs must fire; got {diags:?}"
+    );
+    assert!(
+        diags.iter().any(|d| d.message.contains("impl block")),
+        "expected impl-block diagnostic; got {diags:?}"
+    );
+}
+
+#[test]
+fn mo005_fires_for_paradigm_impl_with_long_method_in_mod_rs() {
+    // pub struct Foo; + impl Paradigm for Foo with a check() method that
+    // makes the impl block exceed 120 lines.
+    let items = vec![
+        unit_struct_item("BigParadigm"),
+        paradigm_impl_over_budget("BigParadigm"),
+    ];
+    let air = mod_rs_air("x::paradigms::big::mod", items);
+    let diags = mo005(&air, CheckMode::Human);
+    assert!(
+        !diags.is_empty(),
+        "impl Paradigm with total span >120 lines must fire; got {diags:?}"
+    );
+    assert!(
+        diags.iter().any(|d| d.message.contains("impl block")),
+        "expected impl-block diagnostic; got {diags:?}"
+    );
+}
+
+#[test]
+fn mo005_fires_for_paradigm_impl_on_non_local_target() {
+    // impl Paradigm for ForeignType in mod.rs, but ForeignType is NOT
+    // declared in this file (not in same_file_items as a unit struct).
+    let items = vec![paradigm_impl_thin("ForeignType")];
+    let air = mod_rs_air("x::paradigms::mod", items);
+    let diags = mo005(&air, CheckMode::Human);
+    assert!(
+        !diags.is_empty(),
+        "impl Paradigm on non-local type must fire (local unit struct not found); \
+         got {diags:?}"
+    );
+    assert!(
+        diags.iter().any(|d| d.message.contains("impl block")),
+        "expected impl-block diagnostic; got {diags:?}"
+    );
+}
+
+#[test]
+fn mo005_fires_for_paradigm_impl_on_non_unit_struct() {
+    // pub struct Foo { state: u32 } + impl Paradigm for Foo (thin methods).
+    // The host is not a unit struct — composition-host pattern requires unit struct.
+    let items = vec![struct_with_fields("Foo"), paradigm_impl_thin("Foo")];
+    let air = mod_rs_air("x::paradigms::mod", items);
+    let diags = mo005(&air, CheckMode::Human);
+    assert!(
+        !diags.is_empty(),
+        "impl Paradigm on non-unit struct must fire; got {diags:?}"
+    );
+    assert!(
+        diags.iter().any(|d| d.message.contains("impl block")),
+        "expected impl-block diagnostic; got {diags:?}"
+    );
+}
+
+#[test]
+fn mo005_silent_for_unit_struct_paired_with_paradigm_impl() {
+    // The host unit struct itself must not be flagged when its impl Paradigm
+    // is allowed. This test verifies the struct-level silent pass.
+    let items = vec![unit_struct_item("Host"), paradigm_impl_thin("Host")];
+    let air = mod_rs_air("x::paradigms::my::mod", items);
+    let diags = mo005(&air, CheckMode::Human);
+    assert!(
+        diags.is_empty(),
+        "host unit struct paired with allowed impl Paradigm must not be flagged; \
+         got {diags:?}"
+    );
+}
+
+#[test]
+fn mo005_arbitrary_impl_in_mod_rs_still_fires() {
+    // An inherent impl block (no trait) for a locally-declared struct in mod.rs
+    // is still forbidden — the composition-host exception does not apply.
+    let items = vec![unit_struct_item("State"), inherent_impl("State")];
+    let air = mod_rs_air("x::paradigms::mod", items);
+    let diags = mo005(&air, CheckMode::Human);
+    assert!(
+        !diags.is_empty(),
+        "inherent impl block in mod.rs must still fire; got {diags:?}"
+    );
+    assert!(
+        diags.iter().any(|d| d.message.contains("impl block")),
+        "expected impl-block diagnostic; got {diags:?}"
+    );
 }

@@ -27,10 +27,8 @@ pub mod rules;
 
 pub const DC_PREFIX: &str = "DC";
 
-// locus: allow MO005 — paradigm host struct intentionally lives in mod.rs by convention
 pub struct Documentation;
 
-// locus: allow MO005 — paradigm Paradigm impl intentionally lives in mod.rs by convention
 impl Paradigm for Documentation {
     fn name(&self) -> &'static str {
         "Documentation / Comment Ownership"

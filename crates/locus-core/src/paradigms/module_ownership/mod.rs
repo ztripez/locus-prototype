@@ -36,10 +36,8 @@ pub mod rules;
 
 pub const MO_PREFIX: &str = "MO";
 
-// locus: allow MO005 — paradigm host struct intentionally lives in mod.rs by convention
 pub struct ModuleOwnership;
 
-// locus: allow MO005 — paradigm Paradigm impl intentionally lives in mod.rs by convention
 impl Paradigm for ModuleOwnership {
     fn name(&self) -> &'static str {
         "Module / File Ownership"
