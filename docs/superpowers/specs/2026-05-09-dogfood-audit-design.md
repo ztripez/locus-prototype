@@ -133,8 +133,8 @@ counted as `resolved_by_code` with the JSON note:
 ### Per-rule record
 
 One per rule that has any non-zero count in any class. Counters are
-mutually-exclusive disposition buckets — every diagnostic from `before_fatal`
-lands in exactly one class, and `before_fatal == sum(all classes)`. This
+mutually-exclusive disposition buckets — every diagnostic from `before_diagnostics`
+lands in exactly one class, and `before_diagnostics == sum(all classes)`. This
 makes the JSON arithmetically auditable.
 
 `LOCUS002` (vacancy nudge) is included as its own per-rule record when
@@ -151,7 +151,7 @@ audit must classify the same way.
 ```jsonc
 {
   "rule": "CX001",
-  "before_fatal":   107,
+  "before_diagnostics":   107,
   "after_fatal":    0,
   "after_warning":  107,
   "resolved_by_code":              0,
@@ -187,8 +187,8 @@ audit must classify the same way.
   "merged_at": "2026-05-09T14:47:31Z",
   "primary_mechanism": "suppressed_by_severity_tier",
   "rule_deltas": [
-    { "rule": "CX001", "before_fatal": 107, "after_fatal": 0, "after_warning": 107, "class": "suppressed_by_severity_tier" },
-    { "rule": "CX002", "before_fatal": 27,  "after_fatal": 0, "after_warning": 27,  "class": "suppressed_by_severity_tier" }
+    { "rule": "CX001", "before_diagnostics": 107, "after_fatal": 0, "after_warning": 107, "class": "suppressed_by_severity_tier" },
+    { "rule": "CX002", "before_diagnostics": 27,  "after_fatal": 0, "after_warning": 27,  "class": "suppressed_by_severity_tier" }
   ],
   "verdict": "blocking_status_changed_diagnostics_remained",
   "notes": "PR #36 changed severity tier; diagnostics did not disappear."

@@ -61,9 +61,9 @@ Mitigations:
 
 ## Per-rule disposition table
 
-Generated from [`2026-05-09-dogfood-audit.json`](2026-05-09-dogfood-audit.json). `Before fatal` counts all diagnostics at `pre_36` regardless of severity tier; `After fatal` and `After warning` are measured at `target`. The `Primary class` column is the largest non-zero disposition bucket per rule.
+Generated from [`2026-05-09-dogfood-audit.json`](2026-05-09-dogfood-audit.json). `Before diagnostics` counts all diagnostics at `pre_36` regardless of severity tier (fatals, warnings, advisories — the JSON formerly called this `before_fatal`, which leaked the same severity assumption the audit critiques; renamed). `After fatal` and `After warning` are measured at `target`. The `Primary class` column is the largest non-zero disposition bucket per rule.
 
-| Rule | Before fatal | After fatal | After warning | Primary class | Verdict |
+| Rule | Before diagnostics | After fatal | After warning | Primary class | Verdict |
 |---|---:|---:|---:|---|---|
 | CX001 | 106 | 0 | 113 | `suppressed_by_severity_tier` | not_remediated_remaining_warning_debt |
 | CX002 | 27 | 0 | 30 | `suppressed_by_severity_tier` | not_remediated_remaining_warning_debt |
@@ -89,7 +89,7 @@ Generated from [`2026-05-09-dogfood-audit.json`](2026-05-09-dogfood-audit.json).
 
 PR #36 changed the severity tier for CX001 and CX002 from strict-immediate Fatal to Advisory. No code was changed. No lockfile was created.
 
-| Rule | Before fatal | After fatal | After warning | Class |
+| Rule | Before diagnostics | After fatal | After warning | Class |
 |---|---:|---:|---:|---|
 | CX001 | 106 | 0 | 106 | `suppressed_by_severity_tier` |
 | CX002 | 27 | 0 | 27 | `suppressed_by_severity_tier` |
@@ -182,7 +182,7 @@ PR #41 targeted CX002 with two distinct halves:
 
 **Rule deltas (from PR description; `verified: false`):**
 
-| Rule | Before fatal | Would have: after fatal | Would have: after warning | Class |
+| Rule | Before diagnostics | Would have: after fatal | Would have: after warning | Class |
 |---|---:|---:|---:|---|
 | CX002 | 27 | 0 | 0 | `proposed_but_not_landed` |
 
@@ -198,7 +198,7 @@ PR #42 was pure policy calibration with no code changes: `CX.default_max_functio
 
 **Rule deltas (from PR description; `verified: false`):**
 
-| Rule | Before fatal | Would have: after fatal | Would have: after warning | Class |
+| Rule | Before diagnostics | Would have: after fatal | Would have: after warning | Class |
 |---|---:|---:|---:|---|
 | CX001 | 106 | 0 | 0 | `proposed_but_not_landed` |
 

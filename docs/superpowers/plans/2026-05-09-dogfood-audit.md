@@ -1,6 +1,8 @@
 # Dogfood Audit Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **Status: historical / executed.** This plan was executed during the dogfood-audit work and is retained for audit traceability. The unchecked `- [ ]` boxes below are the original task list; they are **not** active project tasks. Don't re-execute. The audit deliverables this plan produced live alongside it: [`2026-05-09-dogfood-audit-design.md`](../specs/2026-05-09-dogfood-audit-design.md), [`2026-05-09-dogfood-audit.md`](../specs/2026-05-09-dogfood-audit.md), [`2026-05-09-dogfood-audit.json`](../specs/2026-05-09-dogfood-audit.json).
+>
+> *(Original plan header — for tooling that needs the agentic-workers cue:)* For agentic workers: REQUIRED SUB-SKILL: superpowers:subagent-driven-development or superpowers:executing-plans. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Land the dogfood audit defined in [`docs/superpowers/specs/2026-05-09-dogfood-audit-design.md`](../specs/2026-05-09-dogfood-audit-design.md) — a per-rule, per-PR forensic accounting that distinguishes real fixes from policy suppression, plus the CLAUDE.md honest-status update and six follow-up issues. Closes [#45](https://github.com/ztripez/locus/issues/45).
 
@@ -376,19 +378,19 @@ These greps are heuristic — adjust if they undercount. Cross-check against the
 - Read: `/tmp/dogfood-audit/*-counts.txt`, `/tmp/dogfood-audit/lockfile-policy-summary.txt`, `/tmp/dogfood-audit/lockfile-target.lock`, `/tmp/dogfood-audit/post_39-summary.txt`, `/tmp/dogfood-audit/target-summary.txt`
 - Create: `docs/superpowers/specs/2026-05-09-dogfood-audit.json`
 
-Following the JSON shape defined in the design spec §"JSON shape". All counters are mutually-exclusive; `before_fatal == sum(all classes)` for each rule record.
+Following the JSON shape defined in the design spec §"JSON shape". All counters are mutually-exclusive; `before_diagnostics == sum(all classes)` for each rule record.
 
 - [ ] **Step 1: Compute the per-rule disposition counts.**
 
 For each rule that has any non-zero count at any ref, compute the row:
 
-- **CX001:** `before_fatal = pre_36 count`, `after_fatal = 0`, `after_warning = target count`, `suppressed_by_severity_tier = before_fatal` (all CX001 demotions are bulk-classified to severity tier per the design spec). If `target count != before_fatal`, the difference goes to `resolved_by_code` (deletion of code) or `unknown` (further investigation needed). If `target count > before_fatal`, the difference goes to `remaining_warning_debt` (new warnings appeared post-baseline; not part of dogfood "fix" claim).
+- **CX001:** `before_diagnostics = pre_36 count`, `after_fatal = 0`, `after_warning = target count`, `suppressed_by_severity_tier = before_diagnostics` (all CX001 demotions are bulk-classified to severity tier per the design spec). If `target count != before_diagnostics`, the difference goes to `resolved_by_code` (deletion of code) or `unknown` (further investigation needed). If `target count > before_diagnostics`, the difference goes to `remaining_warning_debt` (new warnings appeared post-baseline; not part of dogfood "fix" claim).
 - **CX002:** same shape as CX001.
-- **ER007:** `before_fatal = pre_36 count`, `after_fatal = target count`, `accepted_by_exception = (pre_36 count - target count)` (the 9 ER007 lockfile exceptions). If the exception list covers fewer hits than were silenced, the remainder is `resolved_by_code`.
+- **ER007:** `before_diagnostics = pre_36 count`, `after_fatal = target count`, `accepted_by_exception = (pre_36 count - target count)` (the 9 ER007 lockfile exceptions). If the exception list covers fewer hits than were silenced, the remainder is `resolved_by_code`.
 - **OT009:** same shape — 2 lockfile exceptions account for 2 silenced hits.
 - **DC002:** same shape — 3 lockfile exceptions account for 3 silenced hits.
 - **MO001:** `accepted_by_exception` counts hits silenced by `MO.overrides` (2 entries with full debt metadata).
-- **LOCUS002:** `before_fatal = post_36 count` (LOCUS002 added by PR's introducing vacancy nudge — confirm at post_36 vs pre_36), `after_warning = target count`, `suppressed_by_acknowledged_empty = (before - target)` covering the 12 paradigm prefixes.
+- **LOCUS002:** `before_diagnostics = post_36 count` (LOCUS002 added by PR's introducing vacancy nudge — confirm at post_36 vs pre_36), `after_warning = target count`, `suppressed_by_acknowledged_empty = (before - target)` covering the 12 paradigm prefixes.
 
 For rules where the measurement at `pre_36` failed (build failure), use PR-text fallback numbers and set `verified: false` on the per-rule record.
 
@@ -449,7 +451,7 @@ Create `docs/superpowers/specs/2026-05-09-dogfood-audit.json` with the full stru
   "rules": [
     {
       "rule": "CX001",
-      "before_fatal": <int>,
+      "before_diagnostics": <int>,
       "after_fatal": 0,
       "after_warning": <int>,
       "resolved_by_code": 0,
@@ -483,8 +485,8 @@ Create `docs/superpowers/specs/2026-05-09-dogfood-audit.json` with the full stru
       "merged_at": "2026-05-09T14:47:31Z",
       "primary_mechanism": "suppressed_by_severity_tier",
       "rule_deltas": [
-        { "rule": "CX001", "before_fatal": <int>, "after_fatal": 0, "after_warning": <int>, "class": "suppressed_by_severity_tier" },
-        { "rule": "CX002", "before_fatal": <int>, "after_fatal": 0, "after_warning": <int>, "class": "suppressed_by_severity_tier" }
+        { "rule": "CX001", "before_diagnostics": <int>, "after_fatal": 0, "after_warning": <int>, "class": "suppressed_by_severity_tier" },
+        { "rule": "CX002", "before_diagnostics": <int>, "after_fatal": 0, "after_warning": <int>, "class": "suppressed_by_severity_tier" }
       ],
       "verdict": "blocking_status_changed_diagnostics_remained",
       "notes": "PR #36 changed severity tier; diagnostics did not disappear."
@@ -553,7 +555,7 @@ Expected: `valid JSON`. If invalid, fix syntax and re-validate.
 
 - [ ] **Step 6: Verify the per-rule arithmetic invariant.**
 
-For each rule record, confirm `before_fatal == sum(all class counters)`. The skeleton above puts CX001's full count into `suppressed_by_severity_tier` + `remaining_warning_debt`. If the sum doesn't match, classification is incomplete — find the unaccounted hits and assign them to `unknown` (which becomes a follow-up issue).
+For each rule record, confirm `before_diagnostics == sum(all class counters)`. The skeleton above puts CX001's full count into `suppressed_by_severity_tier` + `remaining_warning_debt`. If the sum doesn't match, classification is incomplete — find the unaccounted hits and assign them to `unknown` (which becomes a follow-up issue).
 
 ```bash
 python3 <<'PY'
@@ -571,9 +573,9 @@ class_keys = [
 ok = True
 for r in audit["rules"]:
     s = sum(r.get(k, 0) for k in class_keys)
-    bf = r.get("before_fatal", 0)
+    bf = r.get("before_diagnostics", 0)
     if s != bf:
-        print(f"MISMATCH {r['rule']}: before_fatal={bf} sum_of_classes={s}")
+        print(f"MISMATCH {r['rule']}: before_diagnostics={bf} sum_of_classes={s}")
         ok = False
 print("invariant holds" if ok else "FIX UNCLASSIFIED HITS")
 PY
@@ -593,7 +595,7 @@ docs(audit): add dogfood-audit JSON — per-rule + per-PR forensic accounting
 
 Structured records for the dogfood audit. 15-class verdict taxonomy
 (locked in design spec). Counters are mutually-exclusive disposition
-buckets: before_fatal == sum(all classes) for each rule record.
+buckets: before_diagnostics == sum(all classes) for each rule record.
 
 CX001/CX002 cluster bulk-classified as suppressed_by_severity_tier
 (PR #36 demotion); ER007/OT009/DC002 hits classified as
@@ -645,7 +647,7 @@ The "exit 0 under strict" claim is structurally honest given current policy, but
 
 ## Per-rule disposition table
 
-<table from JSON; columns: rule, before_fatal, after_fatal, after_warning, primary_class, verdict>
+<table from JSON; columns: rule, before_diagnostics, after_fatal, after_warning, primary_class, verdict>
 
 ## Per-PR forensic accounting
 
@@ -730,7 +732,7 @@ Replace each `<N>` placeholder with the actual count from the JSON file (Task 7)
 
 - [ ] **Step 3: Build the per-rule disposition table.**
 
-From the JSON's `rules` array, render a Markdown table with columns: `rule`, `before_fatal`, `after_fatal`, `after_warning`, `primary_class`, `verdict`. Use the rule with the highest non-zero counter as `primary_class`.
+From the JSON's `rules` array, render a Markdown table with columns: `rule`, `before_diagnostics`, `after_fatal`, `after_warning`, `primary_class`, `verdict`. Use the rule with the highest non-zero counter as `primary_class`.
 
 ```python
 # helper script — paste into a bash heredoc to run, or run interactively:
@@ -750,7 +752,7 @@ print("| Rule | Before fatal | After fatal | After warning | Primary class | Ver
 print("|---|---:|---:|---:|---|---|")
 for r in audit["rules"]:
     primary = max(class_keys, key=lambda k: r.get(k, 0))
-    print(f"| {r['rule']} | {r.get('before_fatal',0)} | {r.get('after_fatal',0)} | {r.get('after_warning',0)} | `{primary}` | {r.get('verdict','')} |")
+    print(f"| {r['rule']} | {r.get('before_diagnostics',0)} | {r.get('after_fatal',0)} | {r.get('after_warning',0)} | `{primary}` | {r.get('verdict','')} |")
 PY
 ```
 
@@ -762,7 +764,7 @@ Counts in MD prose should match counts in JSON. Spot-check 3-4 rules:
 
 ```bash
 grep -E '(CX001|CX002|ER007|MO001).*[0-9]+' docs/superpowers/specs/2026-05-09-dogfood-audit.md | head -10
-python3 -c "import json; a=json.load(open('docs/superpowers/specs/2026-05-09-dogfood-audit.json')); [print(r['rule'], r.get('before_fatal',0), r.get('after_warning',0)) for r in a['rules']]"
+python3 -c "import json; a=json.load(open('docs/superpowers/specs/2026-05-09-dogfood-audit.json')); [print(r['rule'], r.get('before_diagnostics',0), r.get('after_warning',0)) for r in a['rules']]"
 ```
 
 If counts diverge, fix the MD inline.
@@ -844,7 +846,7 @@ Use the Edit tool with `old_string` set to the full existing paragraph (multi-li
 
 The current CLAUDE.md uses plain prose, not blockquote — adapt the formatting to match the existing style. If the existing paragraph is plain prose (not `> ` blockquoted), drop the `> ` prefixes from the new text.
 
-If a Layer 1 measurement at any historical ref failed (build couldn't complete) — meaning some `before_fatal` counters in the JSON carry `verified: false` — then **omit the snapshot line** entirely and replace it with: *"Measured snapshot in audit doc; partial measurement at historical refs (see audit `verified: false` flags)."*
+If a Layer 1 measurement at any historical ref failed (build couldn't complete) — meaning some `before_diagnostics` counters in the JSON carry `verified: false` — then **omit the snapshot line** entirely and replace it with: *"Measured snapshot in audit doc; partial measurement at historical refs (see audit `verified: false` flags)."*
 
 - [ ] **Step 4: Sanity-check the edit.**
 
@@ -1290,7 +1292,7 @@ Closes #45. Lands the retrospective dogfood audit that distinguishes real fixes 
 ## What's in this PR
 
 - **Design spec:** [`docs/superpowers/specs/2026-05-09-dogfood-audit-design.md`](docs/superpowers/specs/2026-05-09-dogfood-audit-design.md). 15-class verdict taxonomy (locked), three-layer methodology, six follow-up issues.
-- **Structured audit:** [`docs/superpowers/specs/2026-05-09-dogfood-audit.json`](docs/superpowers/specs/2026-05-09-dogfood-audit.json). Per-rule and per-PR records; arithmetically auditable counters (`before_fatal == sum(all classes)`).
+- **Structured audit:** [`docs/superpowers/specs/2026-05-09-dogfood-audit.json`](docs/superpowers/specs/2026-05-09-dogfood-audit.json). Per-rule and per-PR records; arithmetically auditable counters (`before_diagnostics == sum(all classes)`).
 - **Narrative audit:** [`docs/superpowers/specs/2026-05-09-dogfood-audit.md`](docs/superpowers/specs/2026-05-09-dogfood-audit.md). Honest project status snapshot, per-rule disposition table, per-PR forensics, methodology, reproducibility commands.
 - **CLAUDE.md update:** replaces the existing "self-application clean-status now means zero unexpected fatals" paragraph with explicit enumeration of remaining surfaces and a measured snapshot.
 - **6 follow-up issues opened:** debt-metadata schemas for `CX.exempt_paths` and `acknowledged_empty`; re-land path for PR #41 test extraction; re-evaluation path for PR #42 calibration; refactor candidates for `scan_expr` and FL/OT rule files.
@@ -1316,7 +1318,7 @@ Closes #45. Lands the retrospective dogfood audit that distinguishes real fixes 
 - [ ] `cargo test --workspace` green (no code changes; should remain green).
 - [ ] `cargo run -p locus-cli -- check --workspace . --agent-strict` exit code matches `target` measurement (probably exit 0).
 - [ ] JSON syntax valid: `python3 -m json.tool docs/superpowers/specs/2026-05-09-dogfood-audit.json > /dev/null`.
-- [ ] Per-rule arithmetic invariant holds: each `before_fatal == sum(all class counters)`.
+- [ ] Per-rule arithmetic invariant holds: each `before_diagnostics == sum(all class counters)`.
 - [ ] CLAUDE.md no longer contains the phrase "zero unexpected fatals".
 - [ ] All 6 follow-up issues exist and are properly cross-linked.
 
