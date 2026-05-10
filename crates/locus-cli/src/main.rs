@@ -1899,6 +1899,7 @@ fn debt(args: DebtArgs) -> Result<()> {
                 "source": match e.source {
                     ExceptionSource::Hint => "hint",
                     ExceptionSource::Lockfile => "lockfile",
+                    ExceptionSource::CxExemptPath => "cx_exempt_path",
                 },
                 "rule": e.rule,
                 "target": e.target,
@@ -1908,6 +1909,7 @@ fn debt(args: DebtArgs) -> Result<()> {
                     ExceptionStatus::Active => "active",
                     ExceptionStatus::Expired => "expired",
                     ExceptionStatus::Unbounded => "unbounded",
+                    ExceptionStatus::LegacyNoMetadata => "legacy_no_metadata",
                 },
             });
             serde_json::to_writer(&mut w, &row)?;
@@ -1981,27 +1983,32 @@ fn group_debt_by_rule(
     use locus_core::exceptions::ExceptionStatus;
     use std::collections::BTreeMap;
 
-    let mut rows: BTreeMap<String, (usize, usize, usize, usize)> = BTreeMap::new();
+    // (total, active, expired, unbounded, legacy_no_metadata)
+    let mut rows: BTreeMap<String, (usize, usize, usize, usize, usize)> = BTreeMap::new();
     for e in entries {
-        let slot = rows.entry(e.rule.clone()).or_insert((0, 0, 0, 0));
+        let slot = rows.entry(e.rule.clone()).or_insert((0, 0, 0, 0, 0));
         slot.0 += 1;
         match e.status {
             ExceptionStatus::Active => slot.1 += 1,
             ExceptionStatus::Expired => slot.2 += 1,
             ExceptionStatus::Unbounded => slot.3 += 1,
+            ExceptionStatus::LegacyNoMetadata => slot.4 += 1,
         }
     }
 
     rows.into_iter()
-        .map(|(rule, (total, active, expired, unbounded))| {
-            serde_json::json!({
-                "rule": rule,
-                "total": total,
-                "active": active,
-                "expired": expired,
-                "unbounded": unbounded,
-            })
-        })
+        .map(
+            |(rule, (total, active, expired, unbounded, legacy_no_metadata))| {
+                serde_json::json!({
+                    "rule": rule,
+                    "total": total,
+                    "active": active,
+                    "expired": expired,
+                    "unbounded": unbounded,
+                    "legacy_no_metadata": legacy_no_metadata,
+                })
+            },
+        )
         .collect()
 }
 
@@ -2010,12 +2017,13 @@ fn print_debt_by_rule_text(entries: &[locus_core::exceptions::ExceptionEntry]) {
     println!("debt by rule ({} rules with suppressions)", grouped.len());
     for row in grouped {
         println!(
-            "  {:<6} total {:<4} active {:<4} expired {:<4} unbounded {:<4}",
+            "  {:<6} total {:<4} active {:<4} expired {:<4} unbounded {:<4} legacy-no-metadata {:<4}",
             row["rule"].as_str().unwrap_or(""),
             row["total"].as_u64().unwrap_or(0),
             row["active"].as_u64().unwrap_or(0),
             row["expired"].as_u64().unwrap_or(0),
-            row["unbounded"].as_u64().unwrap_or(0)
+            row["unbounded"].as_u64().unwrap_or(0),
+            row["legacy_no_metadata"].as_u64().unwrap_or(0)
         );
     }
 }
@@ -2023,16 +2031,19 @@ fn print_debt_by_rule_text(entries: &[locus_core::exceptions::ExceptionEntry]) {
 fn print_debt_text(entries: &[locus_core::exceptions::ExceptionEntry]) {
     use locus_core::exceptions::{ExceptionSource, ExceptionStatus};
 
-    let (mut active, mut expired, mut unbounded) = (0usize, 0usize, 0usize);
+    let (mut active, mut expired, mut unbounded, mut legacy_no_metadata) =
+        (0usize, 0usize, 0usize, 0usize);
     for e in entries {
         match e.status {
             ExceptionStatus::Active => active += 1,
             ExceptionStatus::Expired => expired += 1,
             ExceptionStatus::Unbounded => unbounded += 1,
+            ExceptionStatus::LegacyNoMetadata => legacy_no_metadata += 1,
         }
     }
     println!(
-        "debt: {active} active, {expired} expired, {unbounded} unbounded ({} total)",
+        "debt: {active} active, {expired} expired, {unbounded} unbounded, \
+         {legacy_no_metadata} legacy-no-metadata ({} total)",
         entries.len()
     );
 
@@ -2040,6 +2051,7 @@ fn print_debt_text(entries: &[locus_core::exceptions::ExceptionEntry]) {
         let source = match e.source {
             ExceptionSource::Hint => "hint",
             ExceptionSource::Lockfile => "lock",
+            ExceptionSource::CxExemptPath => "cx-exempt",
         };
         let expires = e.expires.as_deref().unwrap_or("—");
         let reason = e.reason.as_deref().unwrap_or("");
@@ -2058,6 +2070,18 @@ fn print_debt_text(entries: &[locus_core::exceptions::ExceptionEntry]) {
         println!();
         println!("EXPIRED  (re-run `locus check` for LOCUS001 advisories)");
         for e in expired_rows {
+            println!("{}", render(e));
+        }
+    }
+
+    let legacy_rows = by_status(ExceptionStatus::LegacyNoMetadata);
+    if !legacy_rows.is_empty() {
+        println!();
+        println!(
+            "LEGACY-NO-METADATA  (pre-schema entries — add reason/expires/owner \
+             or migrate to struct form)"
+        );
+        for e in legacy_rows {
             println!("{}", render(e));
         }
     }

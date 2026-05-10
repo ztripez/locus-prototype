@@ -51,6 +51,11 @@
 //!   Fatal under `--agent-strict`, even with
 //!   `--allow-policy-calibration` — calibration legitimizes the
 //!   *act* of adding an override, not the absence of justification.
+//! - [`PG007_EXEMPT_PATH_LACKS_DEBT_METADATA`] — a new
+//!   `CX.exempt_paths` struct entry is missing `reason` / `expires` /
+//!   `owner`. Mirrors PG006 for the exempt-paths surface. Legacy
+//!   string entries (pre-schema) do not trigger PG007; they surface
+//!   in `locus debt` as legacy-no-metadata rows instead.
 //! - [`PG008_CONVERTER_PATH_ADDED`] — a new entry in
 //!   `paradigms.OT.converter_paths` vs baseline. Widens the
 //!   architectural-authority surface for OT004 (converter authority).
@@ -66,16 +71,16 @@
 //!   check pipeline.
 //!
 //! Calibration mode: `--allow-policy-calibration` downgrades
-//! PG001/PG002/PG003/PG004/PG008 to `Severity::Advisory`. PG000 and
-//! PG006 ignore calibration — missing baseline and missing debt
-//! metadata aren't legitimately calibratable.
+//! PG001/PG002/PG003/PG004/PG008 to `Severity::Advisory`. PG000,
+//! PG006, and PG007 ignore calibration — missing baseline and missing
+//! debt metadata aren't legitimately calibratable.
 
 // locus: ot canonical
 
 use crate::diagnostics::{CheckMode, Diagnostic, Severity};
 use crate::lockfile::Lockfile;
 use crate::paradigms::complexity_budget::lockfile_schema::{
-    CxModuleOverride, CxOverride, CxSection,
+    CxExemptPath, CxModuleOverride, CxOverride, CxSection,
 };
 use crate::paradigms::module_ownership::lockfile_schema::{MoOverride, MoSection};
 use crate::paradigms::one_truth::lockfile_schema::OtSection;
@@ -115,6 +120,28 @@ pub const PG004_ACKNOWLEDGED_EMPTY_ADDED: &str = "PG004";
 /// legitimizes the act of adding an override, not the absence of
 /// justification.
 pub const PG006_OVERRIDE_LACKS_DEBT_METADATA: &str = "PG006";
+
+/// PG007 — a new `CX.exempt_paths` entry lacks structured debt metadata
+/// (`reason` + `expires` + `owner`). Mirrors `PG006` for the exempt-paths
+/// surface: calibration legitimizes the addition (`PG003` → Advisory), but
+/// it does NOT waive the metadata requirement. Always Fatal under
+/// `--agent-strict`; PG003 itself is what calibration can downgrade.
+///
+/// **Grandfather-by-pattern:** if the pattern already exists in the baseline
+/// lockfile (in any form — `Legacy` string or `Full` struct), PG007 stays
+/// silent for it. Only patterns that are genuinely *new* vs the baseline are
+/// required to arrive with complete metadata.
+///
+/// This applies to both entry forms:
+/// - New `CxExemptPathEntry::Legacy` (bare string) whose pattern is not in
+///   the baseline → PG007 fires. An agent cannot bypass PG007 by using the
+///   legacy string form for new additions.
+/// - New `CxExemptPathEntry::Full` (struct) missing `reason`/`expires`/`owner`
+///   → PG007 fires (existing behavior).
+/// - Any entry (either form) whose pattern was already in the baseline →
+///   PG007 stays silent; it surfaces in `locus debt` as "legacy-no-metadata"
+///   if it's a `Legacy` form.
+pub const PG007_EXEMPT_PATH_LACKS_DEBT_METADATA: &str = "PG007";
 
 /// PG008 — a new entry exists in `paradigms.OT.converter_paths` vs
 /// baseline. `converter_paths` patterns grant architectural authority
@@ -702,18 +729,47 @@ fn check_new_exempt_paths(
     let mut out = Vec::new();
     let cur_cx: CxSection = current.paradigm_section("CX").unwrap_or_default();
     let base_cx: CxSection = baseline.paradigm_section("CX").unwrap_or_default();
+    // Key the baseline set by the raw pattern string. Both legacy `String`
+    // entries and struct entries use `.pattern()` as their identity.
     let base_set: std::collections::HashSet<&str> =
-        base_cx.exempt_paths.iter().map(String::as_str).collect();
+        base_cx.exempt_paths.iter().map(|e| e.pattern()).collect();
     for entry in &cur_cx.exempt_paths {
-        if base_set.contains(entry.as_str()) {
+        let pattern = entry.pattern();
+        if base_set.contains(pattern) {
             continue;
         }
         out.push(exempt_path_added_diagnostic(
             "paradigms.CX.exempt_paths",
-            entry,
+            pattern,
             mode,
             calibration,
         ));
+        // PG007 — new entries must carry debt metadata regardless of form.
+        // Grandfather-by-pattern: only patterns NOT present in the baseline
+        // are subject to PG007. Patterns already in the baseline (in any
+        // form) are silently grandfathered; legacy baseline strings also
+        // surface in `locus debt` as "legacy-no-metadata" rows.
+        //
+        // For new Legacy-string entries (not in baseline), we synthesise a
+        // metadata-check against a pattern-only struct — all fields will be
+        // None, so PG007 fires listing all three missing fields.
+        let pg007_target: crate::paradigms::complexity_budget::lockfile_schema::CxExemptPath =
+            match entry {
+                crate::paradigms::complexity_budget::lockfile_schema::CxExemptPathEntry::Full(
+                    ep,
+                ) => ep.clone(),
+                crate::paradigms::complexity_budget::lockfile_schema::CxExemptPathEntry::Legacy(
+                    s,
+                ) => crate::paradigms::complexity_budget::lockfile_schema::CxExemptPath {
+                    pattern: s.clone(),
+                    ..Default::default()
+                },
+            };
+        if let Some(d) =
+            exempt_path_metadata_diagnostic("paradigms.CX.exempt_paths", &pg007_target, mode)
+        {
+            out.push(d);
+        }
     }
     // DC's exempt_paths is the only other paradigm with one today.
     let cur_dc: serde_json::Value = current
@@ -738,6 +794,60 @@ fn check_new_exempt_paths(
         ));
     }
     out
+}
+
+/// PG007 — fires when a new `CX.exempt_paths` Full-struct entry lacks
+/// `reason` / `expires` / `owner`. Always uses strict severity (calibration
+/// does NOT downgrade): calibration legitimizes the act of adding the entry
+/// (PG003 → Advisory under calibration), but it does NOT excuse missing
+/// justification metadata.
+fn exempt_path_metadata_diagnostic(
+    list_field: &str,
+    ep: &CxExemptPath,
+    mode: CheckMode,
+) -> Option<Diagnostic> {
+    let mut missing: Vec<&'static str> = Vec::new();
+    if ep.reason.as_deref().is_none_or(str::is_empty) {
+        missing.push("reason");
+    }
+    if ep.expires.as_deref().is_none_or(str::is_empty) {
+        missing.push("expires");
+    }
+    if ep.owner.as_deref().is_none_or(str::is_empty) {
+        missing.push("owner");
+    }
+    if missing.is_empty() {
+        return None;
+    }
+    let missing_label = missing.join(", ");
+    Some(Diagnostic {
+        rule_id: PG007_EXEMPT_PATH_LACKS_DEBT_METADATA.to_string(),
+        severity: pg_strict_severity(mode),
+        span: lockfile_span(),
+        concept: None,
+        message: format!(
+            "new exempt path `{}` in `{list_field}` lacks debt metadata \
+             ({missing_label})",
+            ep.pattern
+        ),
+        why: vec![
+            "an exempt-path silences a rule for matching modules; without \
+             `reason` / `expires` / `owner` it becomes invisible debt"
+                .into(),
+            format!("missing field(s): {missing_label}"),
+            "PG007 is unaffected by `--allow-policy-calibration`: calibration \
+             accepts the addition itself (PG003), but does not waive the \
+             requirement to record why, when to revisit, and who owns it"
+                .into(),
+        ],
+        suggested_fix: Some(
+            "populate `reason` (why this exemption exists), `expires` \
+             (`YYYY-MM-DD` review date), and `owner` (team/individual). \
+             Use the struct form: `{\"pattern\": \"…\", \"reason\": \"…\", \
+             \"expires\": \"YYYY-MM-DD\", \"owner\": \"…\"}`."
+                .into(),
+        ),
+    })
 }
 
 fn exempt_path_added_diagnostic(

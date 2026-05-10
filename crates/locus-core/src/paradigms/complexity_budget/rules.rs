@@ -229,7 +229,7 @@ pub fn cx007(air: &AirWorkspace, section: &CxSection, mode: CheckMode) -> Vec<Di
             if section
                 .exempt_paths
                 .iter()
-                .any(|pat| matches_pattern(pat, module_path))
+                .any(|pat| matches_pattern(pat.pattern(), module_path))
             {
                 continue;
             }

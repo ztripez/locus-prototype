@@ -614,237 +614,16 @@ fn classify_discard_init(expr: &Expr) -> (Option<String>, DiscardKind) {
 
 fn scan_expr(expr: &Expr, function: &str, file_path: &str, out: &mut Vec<AirItem>) {
     match expr {
-        Expr::Struct(s) => {
-            let target = s.path.to_token_stream().to_string();
-            out.push(AirItem::TruthAction(AirTruthAction {
-                action: ActionKind::Construct,
-                target,
-                function: Some(function.to_string()),
-                span: span_of(file_path, s.span()),
-                confidence: 0.95,
-                reasons: vec!["struct literal in function body".into()],
-            }));
-            for f in &s.fields {
-                scan_expr(&f.expr, function, file_path, out);
-            }
-        }
-        Expr::Match(m) => {
-            let scrutinee = m.expr.to_token_stream().to_string();
-            out.push(AirItem::TruthAction(AirTruthAction {
-                action: ActionKind::DiscriminatedMatch,
-                target: scrutinee.clone(),
-                function: Some(function.to_string()),
-                span: span_of(file_path, m.span()),
-                confidence: 0.6,
-                reasons: vec!["match expression".into()],
-            }));
-            // Per-arm shape capture so paradigm rules (FL007 catch-all
-            // `Err(_)`, FL011 default-variant sinks, ER005 catch-all error
-            // mapping) can reason about silence at the arm level.
-            for arm in &m.arms {
-                let pattern = arm.pat.to_token_stream().to_string();
-                let pattern_has_wildcard = pat_has_wildcard(&arm.pat);
-                let body_shape = classify_body(&arm.body);
-                out.push(AirItem::MatchArm(AirMatchArm {
-                    scrutinee: scrutinee.clone(),
-                    pattern,
-                    pattern_has_wildcard,
-                    body_shape,
-                    function: Some(function.to_string()),
-                    span: span_of(file_path, arm.span()),
-                }));
-                // ScrutineeLiteral: a literal-pattern arm (CF002 /
-                // CF003 territory). Only fires for patterns that are
-                // bare literals — `Pat::Lit("active")`, `Pat::Lit(42)`.
-                // Tuple/struct patterns containing literals don't emit
-                // here (they'd need recursive walking; defer).
-                if let Some((value, kind)) = literal_value_of_pat(&arm.pat) {
-                    out.push(AirItem::ScrutineeLiteral(AirScrutineeLiteral {
-                        value,
-                        kind,
-                        context: LiteralContext::MatchArm,
-                        function: Some(function.to_string()),
-                        span: span_of(file_path, arm.span()),
-                    }));
-                }
-            }
-            scan_expr(&m.expr, function, file_path, out);
-            for arm in &m.arms {
-                scan_expr(&arm.body, function, file_path, out);
-            }
-        }
+        Expr::Struct(s) => scan_expr_struct(s, function, file_path, out),
+        Expr::Match(m) => scan_expr_match(m, function, file_path, out),
         Expr::Binary(b) if matches!(b.op, syn::BinOp::Eq(_) | syn::BinOp::Ne(_)) => {
-            if is_string_compare(&b.left, &b.right) || is_string_compare(&b.right, &b.left) {
-                let target = b.left.to_token_stream().to_string();
-                out.push(AirItem::TruthAction(AirTruthAction {
-                    action: ActionKind::StringCompare,
-                    target,
-                    function: Some(function.to_string()),
-                    span: span_of(file_path, b.span()),
-                    confidence: 0.7,
-                    reasons: vec!["string-literal equality on field expression".into()],
-                }));
-            }
-            // ScrutineeLiteral on binary `==`/`!=`: capture the literal
-            // side when the *other* side isn't a literal. This is the
-            // CF002 / CF003 detection surface — `if role == "admin"`
-            // and similar magic-constant comparisons.
-            for (lit_side, other_side) in [(&b.left, &b.right), (&b.right, &b.left)] {
-                if let Some((value, kind)) = literal_value_of_expr(lit_side)
-                    && !is_literal_expr(other_side)
-                {
-                    out.push(AirItem::ScrutineeLiteral(AirScrutineeLiteral {
-                        value,
-                        kind,
-                        context: LiteralContext::BinaryCompare,
-                        function: Some(function.to_string()),
-                        span: span_of(file_path, b.span()),
-                    }));
-                    break;
-                }
-            }
-            scan_expr(&b.left, function, file_path, out);
-            scan_expr(&b.right, function, file_path, out);
+            scan_expr_binary_eq(b, function, file_path, out);
         }
-        Expr::Block(b) => {
-            for stmt in &b.block.stmts {
-                scan_stmt(stmt, function, file_path, out);
-            }
-        }
-        Expr::If(i) => {
-            // `if let Ok(...) = expr { ... }` or `if let Err(...) = expr
-            // { ... }` *without* an `else` branch. The unmatched arm is
-            // silent — the failure (or success) just falls through. FL005
-            // consumes this signal.
-            if i.else_branch.is_none()
-                && let Expr::Let(let_expr) = &*i.cond
-                && let Some(variant) = result_variant_of_pat(&let_expr.pat)
-            {
-                // AIR v13: `variant` is now a `ResultMatchVariant` enum
-                // rather than a `String` "Ok"|"Err". Map the Rust-side
-                // `Ok`/`Err` to the architectural `Success`/`Failure`.
-                let variant_enum = match variant {
-                    "Ok" => ResultMatchVariant::Success,
-                    "Err" => ResultMatchVariant::Failure,
-                    // result_variant_of_pat only returns these two
-                    // strings; this arm is unreachable.
-                    _ => unreachable!("result_variant_of_pat returned {variant:?}"),
-                };
-                out.push(AirItem::PartialResultMatch(AirPartialResultMatch {
-                    variant: variant_enum,
-                    function: Some(function.to_string()),
-                    span: span_of(file_path, i.span()),
-                }));
-            }
-            scan_expr(&i.cond, function, file_path, out);
-            for stmt in &i.then_branch.stmts {
-                scan_stmt(stmt, function, file_path, out);
-            }
-            if let Some((_, else_)) = &i.else_branch {
-                scan_expr(else_, function, file_path, out);
-            }
-        }
-        Expr::Call(c) => {
-            // Framework-neutral CallSite: just the callee's path text and a
-            // CallKind tag. Loaders translate this into normalized facts
-            // (SpawnsWork / ReadsEnv / NetworkCall / ...) — the visitor stays
-            // out of framework-specific reasoning.
-            //
-            // Path-shaped callees (`foo::bar(x)`) emit a CallSite; other
-            // callee shapes (e.g. an expression returning a fn) don't yet —
-            // their callee text isn't a useful path for a loader to match
-            // against. We still recurse into args so nested calls are seen.
-            if let Expr::Path(p) = &*c.func {
-                out.push(AirItem::CallSite(AirCallSite {
-                    callee: render_path(&p.path),
-                    kind: CallKind::Function,
-                    function: Some(function.to_string()),
-                    span: span_of(file_path, c.span()),
-                }));
-            }
-            scan_expr(&c.func, function, file_path, out);
-            for a in &c.args {
-                scan_expr(a, function, file_path, out);
-            }
-        }
-        Expr::Macro(m) => {
-            out.push(AirItem::CallSite(AirCallSite {
-                callee: render_path(&m.mac.path),
-                kind: CallKind::Meta,
-                function: Some(function.to_string()),
-                span: span_of(file_path, m.mac.span()),
-            }));
-        }
-        Expr::MethodCall(m) => {
-            // Method-call CallSites carry just the method name — receiver-
-            // type resolution is out of scope for this layer, so loaders
-            // that need to disambiguate (`x.lock()` on Mutex vs File) will
-            // need richer AIR. The CallSite is still useful: the bare name
-            // is enough for some loaders (e.g. `.execute(...)` for SQL).
-            out.push(AirItem::CallSite(AirCallSite {
-                callee: m.method.to_string(),
-                kind: CallKind::Method,
-                function: Some(function.to_string()),
-                span: span_of(file_path, m.span()),
-            }));
-            // ClosureMethodCall: emit when the first argument is a closure.
-            // Lets paradigm rules (FL006 `map_err(|_| ...)`, future
-            // closure-shape rules) inspect whether the closure discards
-            // its argument.
-            if let Some(Expr::Closure(closure)) = m.args.first() {
-                let closure_discards_arg = closure_discards_first_arg(closure);
-                let body_shape = classify_body(&closure.body);
-                out.push(AirItem::ClosureMethodCall(AirClosureMethodCall {
-                    callee: m.method.to_string(),
-                    closure_discards_arg,
-                    body_shape,
-                    function: Some(function.to_string()),
-                    span: span_of(file_path, m.span()),
-                }));
-            }
-            // FallbackCall: emit for `unwrap_or` family — methods whose
-            // first arg is a default-producing expression (literal /
-            // call). FL010 fires on these to catch the "invalid input
-            // converted to a valid default" pattern. `unwrap_or_default`
-            // takes no arg and is recorded with `Empty` shape so rules
-            // can distinguish it from explicit-default forms.
-            let method_name = m.method.to_string();
-            if matches!(
-                method_name.as_str(),
-                "unwrap_or" | "unwrap_or_default" | "or"
-            ) {
-                let default_shape = match m.args.first() {
-                    Some(arg) => classify_body(arg),
-                    None => ArmBodyShape::Empty,
-                };
-                // AIR v13: classify the Rust callee into the
-                // architectural `FallbackPattern` so non-Rust adapters
-                // can map their idioms (TS `??` / `||`, Go's
-                // two-value-fallback, Python `value or default`) to the
-                // same shape. The Rust method name stays on `callee`
-                // as evidence rules can quote.
-                let pattern = match method_name.as_str() {
-                    "unwrap_or" => FallbackPattern::ValueOr,
-                    "or" => FallbackPattern::Or,
-                    "unwrap_or_default" => FallbackPattern::DefaultOr,
-                    // Future Rust callees that fit the family: unreachable
-                    // today because the outer `matches!` gate covers exactly
-                    // these three.
-                    _ => unreachable!("unhandled fallback callee {method_name:?}"),
-                };
-                out.push(AirItem::FallbackCall(AirFallbackCall {
-                    pattern,
-                    callee: method_name,
-                    default_shape,
-                    function: Some(function.to_string()),
-                    span: span_of(file_path, m.span()),
-                }));
-            }
-            scan_expr(&m.receiver, function, file_path, out);
-            for a in &m.args {
-                scan_expr(a, function, file_path, out);
-            }
-        }
+        Expr::Block(b) => scan_expr_block(b, function, file_path, out),
+        Expr::If(i) => scan_expr_if(i, function, file_path, out),
+        Expr::Call(c) => scan_expr_call(c, function, file_path, out),
+        Expr::Macro(m) => scan_expr_macro(m, function, file_path, out),
+        Expr::MethodCall(m) => scan_expr_method_call(m, function, file_path, out),
         Expr::Return(r) => {
             if let Some(inner) = &r.expr {
                 scan_expr(inner, function, file_path, out);
@@ -852,62 +631,337 @@ fn scan_expr(expr: &Expr, function: &str, file_path: &str, out: &mut Vec<AirItem
         }
         Expr::Reference(r) => scan_expr(&r.expr, function, file_path, out),
         Expr::Paren(p) => scan_expr(&p.expr, function, file_path, out),
-        Expr::Tuple(t) => {
-            for e in &t.elems {
-                scan_expr(e, function, file_path, out);
-            }
-        }
+        Expr::Tuple(t) => scan_expr_tuple(t, function, file_path, out),
         Expr::Try(t) => scan_expr(&t.expr, function, file_path, out),
         Expr::Unary(u) => scan_expr(&u.expr, function, file_path, out),
         // Loop constructs — emit `RetryLoop` if the body looks like a
         // retry shape (uses `?` and has a `break`). FL012 consumes
         // these. We always emit the item with the propagates / has_break
         // flags so the rule can decide.
-        Expr::Loop(l) => {
-            let propagates = block_has_propagate(&l.body);
-            let has_break = block_has_break(&l.body);
-            out.push(AirItem::RetryLoop(AirRetryLoop {
-                loop_kind: LoopKind::Loop,
-                propagates,
-                has_break,
-                function: Some(function.to_string()),
-                span: span_of(file_path, l.span()),
-            }));
-            for stmt in &l.body.stmts {
-                scan_stmt(stmt, function, file_path, out);
-            }
-        }
-        Expr::ForLoop(f) => {
-            let propagates = block_has_propagate(&f.body);
-            let has_break = block_has_break(&f.body);
-            out.push(AirItem::RetryLoop(AirRetryLoop {
-                loop_kind: LoopKind::For,
-                propagates,
-                has_break,
-                function: Some(function.to_string()),
-                span: span_of(file_path, f.span()),
-            }));
-            scan_expr(&f.expr, function, file_path, out);
-            for stmt in &f.body.stmts {
-                scan_stmt(stmt, function, file_path, out);
-            }
-        }
-        Expr::While(w) => {
-            let propagates = block_has_propagate(&w.body);
-            let has_break = block_has_break(&w.body);
-            out.push(AirItem::RetryLoop(AirRetryLoop {
-                loop_kind: LoopKind::While,
-                propagates,
-                has_break,
-                function: Some(function.to_string()),
-                span: span_of(file_path, w.span()),
-            }));
-            scan_expr(&w.cond, function, file_path, out);
-            for stmt in &w.body.stmts {
-                scan_stmt(stmt, function, file_path, out);
-            }
-        }
+        Expr::Loop(l) => scan_expr_loop(l, function, file_path, out),
+        Expr::ForLoop(f) => scan_expr_for_loop(f, function, file_path, out),
+        Expr::While(w) => scan_expr_while(w, function, file_path, out),
         _ => {}
+    }
+}
+
+fn scan_expr_struct(s: &syn::ExprStruct, function: &str, file_path: &str, out: &mut Vec<AirItem>) {
+    let target = s.path.to_token_stream().to_string();
+    out.push(AirItem::TruthAction(AirTruthAction {
+        action: ActionKind::Construct,
+        target,
+        function: Some(function.to_string()),
+        span: span_of(file_path, s.span()),
+        confidence: 0.95,
+        reasons: vec!["struct literal in function body".into()],
+    }));
+    for f in &s.fields {
+        scan_expr(&f.expr, function, file_path, out);
+    }
+}
+
+fn scan_expr_match(m: &syn::ExprMatch, function: &str, file_path: &str, out: &mut Vec<AirItem>) {
+    let scrutinee = m.expr.to_token_stream().to_string();
+    out.push(AirItem::TruthAction(AirTruthAction {
+        action: ActionKind::DiscriminatedMatch,
+        target: scrutinee.clone(),
+        function: Some(function.to_string()),
+        span: span_of(file_path, m.span()),
+        confidence: 0.6,
+        reasons: vec!["match expression".into()],
+    }));
+    // Per-arm shape capture so paradigm rules (FL007 catch-all
+    // `Err(_)`, FL011 default-variant sinks, ER005 catch-all error
+    // mapping) can reason about silence at the arm level.
+    for arm in &m.arms {
+        let pattern = arm.pat.to_token_stream().to_string();
+        let pattern_has_wildcard = pat_has_wildcard(&arm.pat);
+        let body_shape = classify_body(&arm.body);
+        out.push(AirItem::MatchArm(AirMatchArm {
+            scrutinee: scrutinee.clone(),
+            pattern,
+            pattern_has_wildcard,
+            body_shape,
+            function: Some(function.to_string()),
+            span: span_of(file_path, arm.span()),
+        }));
+        // ScrutineeLiteral: a literal-pattern arm (CF002 /
+        // CF003 territory). Only fires for patterns that are
+        // bare literals — `Pat::Lit("active")`, `Pat::Lit(42)`.
+        // Tuple/struct patterns containing literals don't emit
+        // here (they'd need recursive walking; defer).
+        if let Some((value, kind)) = literal_value_of_pat(&arm.pat) {
+            out.push(AirItem::ScrutineeLiteral(AirScrutineeLiteral {
+                value,
+                kind,
+                context: LiteralContext::MatchArm,
+                function: Some(function.to_string()),
+                span: span_of(file_path, arm.span()),
+            }));
+        }
+    }
+    scan_expr(&m.expr, function, file_path, out);
+    for arm in &m.arms {
+        scan_expr(&arm.body, function, file_path, out);
+    }
+}
+
+fn scan_expr_binary_eq(
+    b: &syn::ExprBinary,
+    function: &str,
+    file_path: &str,
+    out: &mut Vec<AirItem>,
+) {
+    if is_string_compare(&b.left, &b.right) || is_string_compare(&b.right, &b.left) {
+        let target = b.left.to_token_stream().to_string();
+        out.push(AirItem::TruthAction(AirTruthAction {
+            action: ActionKind::StringCompare,
+            target,
+            function: Some(function.to_string()),
+            span: span_of(file_path, b.span()),
+            confidence: 0.7,
+            reasons: vec!["string-literal equality on field expression".into()],
+        }));
+    }
+    // ScrutineeLiteral on binary `==`/`!=`: capture the literal
+    // side when the *other* side isn't a literal. This is the
+    // CF002 / CF003 detection surface — `if role == "admin"`
+    // and similar magic-constant comparisons.
+    for (lit_side, other_side) in [(&b.left, &b.right), (&b.right, &b.left)] {
+        if let Some((value, kind)) = literal_value_of_expr(lit_side)
+            && !is_literal_expr(other_side)
+        {
+            out.push(AirItem::ScrutineeLiteral(AirScrutineeLiteral {
+                value,
+                kind,
+                context: LiteralContext::BinaryCompare,
+                function: Some(function.to_string()),
+                span: span_of(file_path, b.span()),
+            }));
+            break;
+        }
+    }
+    scan_expr(&b.left, function, file_path, out);
+    scan_expr(&b.right, function, file_path, out);
+}
+
+fn scan_expr_block(b: &syn::ExprBlock, function: &str, file_path: &str, out: &mut Vec<AirItem>) {
+    for stmt in &b.block.stmts {
+        scan_stmt(stmt, function, file_path, out);
+    }
+}
+
+fn scan_expr_if(i: &syn::ExprIf, function: &str, file_path: &str, out: &mut Vec<AirItem>) {
+    // `if let Ok(...) = expr { ... }` or `if let Err(...) = expr
+    // { ... }` *without* an `else` branch. The unmatched arm is
+    // silent — the failure (or success) just falls through. FL005
+    // consumes this signal.
+    if i.else_branch.is_none()
+        && let Expr::Let(let_expr) = &*i.cond
+        && let Some(variant) = result_variant_of_pat(&let_expr.pat)
+    {
+        // AIR v13: `variant` is now a `ResultMatchVariant` enum
+        // rather than a `String` "Ok"|"Err". Map the Rust-side
+        // `Ok`/`Err` to the architectural `Success`/`Failure`.
+        let variant_enum = match variant {
+            "Ok" => ResultMatchVariant::Success,
+            "Err" => ResultMatchVariant::Failure,
+            // result_variant_of_pat only returns these two
+            // strings; this arm is unreachable.
+            _ => unreachable!("result_variant_of_pat returned {variant:?}"),
+        };
+        out.push(AirItem::PartialResultMatch(AirPartialResultMatch {
+            variant: variant_enum,
+            function: Some(function.to_string()),
+            span: span_of(file_path, i.span()),
+        }));
+    }
+    scan_expr(&i.cond, function, file_path, out);
+    for stmt in &i.then_branch.stmts {
+        scan_stmt(stmt, function, file_path, out);
+    }
+    if let Some((_, else_)) = &i.else_branch {
+        scan_expr(else_, function, file_path, out);
+    }
+}
+
+fn scan_expr_call(c: &syn::ExprCall, function: &str, file_path: &str, out: &mut Vec<AirItem>) {
+    // Framework-neutral CallSite: just the callee's path text and a
+    // CallKind tag. Loaders translate this into normalized facts
+    // (SpawnsWork / ReadsEnv / NetworkCall / ...) — the visitor stays
+    // out of framework-specific reasoning.
+    //
+    // Path-shaped callees (`foo::bar(x)`) emit a CallSite; other
+    // callee shapes (e.g. an expression returning a fn) don't yet —
+    // their callee text isn't a useful path for a loader to match
+    // against. We still recurse into args so nested calls are seen.
+    if let Expr::Path(p) = &*c.func {
+        out.push(AirItem::CallSite(AirCallSite {
+            callee: render_path(&p.path),
+            kind: CallKind::Function,
+            function: Some(function.to_string()),
+            span: span_of(file_path, c.span()),
+        }));
+    }
+    scan_expr(&c.func, function, file_path, out);
+    for a in &c.args {
+        scan_expr(a, function, file_path, out);
+    }
+}
+
+fn scan_expr_macro(m: &syn::ExprMacro, function: &str, file_path: &str, out: &mut Vec<AirItem>) {
+    out.push(AirItem::CallSite(AirCallSite {
+        callee: render_path(&m.mac.path),
+        kind: CallKind::Meta,
+        function: Some(function.to_string()),
+        span: span_of(file_path, m.mac.span()),
+    }));
+}
+
+fn scan_expr_method_call(
+    m: &syn::ExprMethodCall,
+    function: &str,
+    file_path: &str,
+    out: &mut Vec<AirItem>,
+) {
+    // Method-call CallSites carry just the method name — receiver-
+    // type resolution is out of scope for this layer, so loaders
+    // that need to disambiguate (`x.lock()` on Mutex vs File) will
+    // need richer AIR. The CallSite is still useful: the bare name
+    // is enough for some loaders (e.g. `.execute(...)` for SQL).
+    out.push(AirItem::CallSite(AirCallSite {
+        callee: m.method.to_string(),
+        kind: CallKind::Method,
+        function: Some(function.to_string()),
+        span: span_of(file_path, m.span()),
+    }));
+    // ClosureMethodCall: emit when the first argument is a closure.
+    // Lets paradigm rules (FL006 `map_err(|_| ...)`, future
+    // closure-shape rules) inspect whether the closure discards
+    // its argument.
+    if let Some(Expr::Closure(closure)) = m.args.first() {
+        let closure_discards_arg = closure_discards_first_arg(closure);
+        let body_shape = classify_body(&closure.body);
+        out.push(AirItem::ClosureMethodCall(AirClosureMethodCall {
+            callee: m.method.to_string(),
+            closure_discards_arg,
+            body_shape,
+            function: Some(function.to_string()),
+            span: span_of(file_path, m.span()),
+        }));
+    }
+    scan_expr_method_call_fallback(m, function, file_path, out);
+    scan_expr(&m.receiver, function, file_path, out);
+    for a in &m.args {
+        scan_expr(a, function, file_path, out);
+    }
+}
+
+/// Emit a `FallbackCall` item for `unwrap_or` / `unwrap_or_default` / `or`
+/// method calls. FL010 consumes this to detect invalid-input-to-valid-default
+/// conversions. `unwrap_or_default` takes no arg and is recorded with an
+/// `Empty` shape so rules can distinguish it from explicit-default forms.
+fn scan_expr_method_call_fallback(
+    m: &syn::ExprMethodCall,
+    function: &str,
+    file_path: &str,
+    out: &mut Vec<AirItem>,
+) {
+    // FallbackCall: emit for `unwrap_or` family — methods whose
+    // first arg is a default-producing expression (literal /
+    // call). FL010 fires on these to catch the "invalid input
+    // converted to a valid default" pattern. `unwrap_or_default`
+    // takes no arg and is recorded with `Empty` shape so rules
+    // can distinguish it from explicit-default forms.
+    let method_name = m.method.to_string();
+    if !matches!(
+        method_name.as_str(),
+        "unwrap_or" | "unwrap_or_default" | "or"
+    ) {
+        return;
+    }
+    let default_shape = match m.args.first() {
+        Some(arg) => classify_body(arg),
+        None => ArmBodyShape::Empty,
+    };
+    // AIR v13: classify the Rust callee into the architectural
+    // `FallbackPattern` so non-Rust adapters can map their idioms
+    // (TS `??` / `||`, Go's two-value-fallback, Python `value or
+    // default`) to the same shape. The Rust method name stays on
+    // `callee` as evidence rules can quote.
+    let pattern = match method_name.as_str() {
+        "unwrap_or" => FallbackPattern::ValueOr,
+        "or" => FallbackPattern::Or,
+        "unwrap_or_default" => FallbackPattern::DefaultOr,
+        // Future Rust callees that fit the family: unreachable
+        // today because the outer `matches!` gate covers exactly
+        // these three.
+        _ => unreachable!("unhandled fallback callee {method_name:?}"),
+    };
+    out.push(AirItem::FallbackCall(AirFallbackCall {
+        pattern,
+        callee: method_name,
+        default_shape,
+        function: Some(function.to_string()),
+        span: span_of(file_path, m.span()),
+    }));
+}
+
+fn scan_expr_tuple(t: &syn::ExprTuple, function: &str, file_path: &str, out: &mut Vec<AirItem>) {
+    for e in &t.elems {
+        scan_expr(e, function, file_path, out);
+    }
+}
+
+fn scan_expr_loop(l: &syn::ExprLoop, function: &str, file_path: &str, out: &mut Vec<AirItem>) {
+    let propagates = block_has_propagate(&l.body);
+    let has_break = block_has_break(&l.body);
+    out.push(AirItem::RetryLoop(AirRetryLoop {
+        loop_kind: LoopKind::Loop,
+        propagates,
+        has_break,
+        function: Some(function.to_string()),
+        span: span_of(file_path, l.span()),
+    }));
+    for stmt in &l.body.stmts {
+        scan_stmt(stmt, function, file_path, out);
+    }
+}
+
+fn scan_expr_for_loop(
+    f: &syn::ExprForLoop,
+    function: &str,
+    file_path: &str,
+    out: &mut Vec<AirItem>,
+) {
+    let propagates = block_has_propagate(&f.body);
+    let has_break = block_has_break(&f.body);
+    out.push(AirItem::RetryLoop(AirRetryLoop {
+        loop_kind: LoopKind::For,
+        propagates,
+        has_break,
+        function: Some(function.to_string()),
+        span: span_of(file_path, f.span()),
+    }));
+    scan_expr(&f.expr, function, file_path, out);
+    for stmt in &f.body.stmts {
+        scan_stmt(stmt, function, file_path, out);
+    }
+}
+
+fn scan_expr_while(w: &syn::ExprWhile, function: &str, file_path: &str, out: &mut Vec<AirItem>) {
+    let propagates = block_has_propagate(&w.body);
+    let has_break = block_has_break(&w.body);
+    out.push(AirItem::RetryLoop(AirRetryLoop {
+        loop_kind: LoopKind::While,
+        propagates,
+        has_break,
+        function: Some(function.to_string()),
+        span: span_of(file_path, w.span()),
+    }));
+    scan_expr(&w.cond, function, file_path, out);
+    for stmt in &w.body.stmts {
+        scan_stmt(stmt, function, file_path, out);
     }
 }
 

@@ -651,6 +651,47 @@ fn pg_advisory_under_calibration_keeps_pg006_strict() {
     );
 }
 
+// ---- PG007 new exempt_paths struct entry missing metadata --------
+
+#[test]
+fn pg007_fires_on_new_cx_exempt_path_struct_lacking_metadata() {
+    // New struct-form entry without reason/expires/owner → PG003 + PG007.
+    let base = lockfile_with(
+        serde_json::json!({"CX": {"exempt_paths": ["*::tests::*"]}}),
+        vec![],
+    );
+    let cur = lockfile_with(
+        serde_json::json!({"CX": {"exempt_paths": [
+            "*::tests::*",
+            {"pattern": "locus_air::*"}  // struct form, no metadata
+        ]}}),
+        vec![],
+    );
+    let diags = check_policy_mutation(&cur, Some(&base), CheckMode::AgentStrict, false, false);
+
+    // PG003 fires on any new addition.
+    assert!(
+        diags.iter().any(|d| d.rule_id == "PG003"),
+        "PG003 must fire on new exempt path; got {diags:#?}"
+    );
+    // PG007 fires because the struct entry lacks metadata.
+    let pg007: Vec<_> = diags.iter().filter(|d| d.rule_id == "PG007").collect();
+    assert_eq!(pg007.len(), 1, "expected exactly one PG007; got {diags:#?}");
+    let m = pg007[0].message.as_str();
+    assert!(
+        m.contains("locus_air::*"),
+        "message should name the pattern: {m}"
+    );
+    assert!(m.contains("reason"), "should list missing 'reason': {m}");
+    assert!(m.contains("expires"), "should list missing 'expires': {m}");
+    assert!(m.contains("owner"), "should list missing 'owner': {m}");
+    assert_eq!(
+        pg007[0].severity,
+        Severity::Fatal,
+        "PG007 must be Fatal under strict"
+    );
+}
+
 // ---- PG008 new OT.converter_paths entry --------------------------
 
 fn ot_lockfile(converter_paths: &[&str]) -> Lockfile {
@@ -743,6 +784,79 @@ fn pg008_fires_warning_under_default_mode() {
 }
 
 #[test]
+fn pg007_quiet_when_new_struct_entry_has_complete_metadata() {
+    // New struct-form entry WITH complete metadata → PG003 only, no PG007.
+    let base = lockfile_with(
+        serde_json::json!({"CX": {"exempt_paths": ["*::tests::*"]}}),
+        vec![],
+    );
+    let cur = lockfile_with(
+        serde_json::json!({"CX": {"exempt_paths": [
+            "*::tests::*",
+            {
+                "pattern": "locus_air::*",
+                "reason": "canonical data crate — all public types are the AIR contract",
+                "expires": "2027-05-09",
+                "owner": "@core"
+            }
+        ]}}),
+        vec![],
+    );
+    let diags = check_policy_mutation(&cur, Some(&base), CheckMode::AgentStrict, false, false);
+
+    assert!(
+        diags.iter().any(|d| d.rule_id == "PG003"),
+        "PG003 still fires on the addition; got {diags:#?}"
+    );
+    assert!(
+        diags.iter().all(|d| d.rule_id != "PG007"),
+        "complete metadata — PG007 must stay quiet; got {diags:#?}"
+    );
+}
+
+// ---- PG007 grandfather-by-pattern: new legacy strings -------------
+
+#[test]
+fn pg007_fires_on_new_legacy_string_entry_not_in_baseline() {
+    // Reviewer-identified loophole fix: a new bare-string entry that was NOT
+    // in the baseline must fire PG007. Using legacy form is no longer a
+    // PG007 bypass — only patterns that were already in the baseline are
+    // grandfathered.
+    let base = lockfile_with(
+        serde_json::json!({"CX": {"exempt_paths": ["*::tests::*", "locus_air::*"]}}),
+        vec![],
+    );
+    let cur = lockfile_with(
+        serde_json::json!({"CX": {"exempt_paths": ["*::tests::*", "locus_air::*", "new_bypass::*"]}}),
+        vec![],
+    );
+    let diags = check_policy_mutation(&cur, Some(&base), CheckMode::AgentStrict, false, false);
+
+    // PG003 fires on the new addition.
+    assert!(
+        diags.iter().any(|d| d.rule_id == "PG003"),
+        "PG003 must fire on the new legacy string entry; got {diags:#?}"
+    );
+    // PG007 also fires — the pattern is new and lacks metadata.
+    let pg007: Vec<_> = diags.iter().filter(|d| d.rule_id == "PG007").collect();
+    assert_eq!(
+        pg007.len(),
+        1,
+        "PG007 must fire on a new legacy string (no metadata); got {diags:#?}"
+    );
+    assert!(
+        pg007[0].message.contains("new_bypass::*"),
+        "PG007 message should name the pattern: {}",
+        pg007[0].message
+    );
+    assert_eq!(
+        pg007[0].severity,
+        Severity::Fatal,
+        "PG007 must be Fatal under strict"
+    );
+}
+
+#[test]
 fn pg008_not_suppressed_by_lockfile_exception() {
     // PG runs after apply_exceptions. A lockfile exception targeting
     // PG008 must NOT silence it — PG is meta-policy. This test verifies
@@ -804,5 +918,235 @@ fn pg008_span_anchors_to_lockfile() {
     assert_eq!(
         pg008.span.file, "locus.lock",
         "PG008 must anchor its span to `locus.lock`"
+    );
+}
+
+#[test]
+fn pg007_silent_for_existing_legacy_string_entry_in_baseline() {
+    // Grandfathered: if the pattern was already in the baseline (as a legacy
+    // string), PG007 must stay quiet. The entry appears in `locus debt` as
+    // "legacy-no-metadata" via a separate code path — not PG007's concern.
+    let base = lockfile_with(
+        serde_json::json!({"CX": {"exempt_paths": ["*::tests::*", "locus_air::*"]}}),
+        vec![],
+    );
+    let cur = base.clone();
+    let diags = check_policy_mutation(&cur, Some(&base), CheckMode::AgentStrict, false, false);
+
+    assert!(
+        diags.iter().all(|d| d.rule_id != "PG007"),
+        "baseline legacy strings are grandfathered — PG007 must stay quiet; got {diags:#?}"
+    );
+    // PG003 also stays quiet (no new entries).
+    assert!(
+        diags.iter().all(|d| d.rule_id != "PG003"),
+        "no new entries — PG003 must also stay quiet; got {diags:#?}"
+    );
+}
+
+#[test]
+fn pg007_silent_when_legacy_string_is_removed() {
+    // Removing an entry is never subject to PG007. Policy Guard cares about
+    // widening (new suppressions), not tightening (removed suppressions).
+    let base = lockfile_with(
+        serde_json::json!({"CX": {"exempt_paths": ["*::tests::*", "locus_air::*"]}}),
+        vec![],
+    );
+    let cur = lockfile_with(
+        serde_json::json!({"CX": {"exempt_paths": ["*::tests::*"]}}),
+        vec![],
+    );
+    let diags = check_policy_mutation(&cur, Some(&base), CheckMode::AgentStrict, false, false);
+
+    assert!(
+        diags.iter().all(|d| d.rule_id != "PG007"),
+        "removal is not widening — PG007 must stay quiet; got {diags:#?}"
+    );
+    assert!(
+        diags.iter().all(|d| d.rule_id != "PG003"),
+        "removal is not widening — PG003 must stay quiet too; got {diags:#?}"
+    );
+}
+
+#[test]
+fn pg007_silent_when_upgrading_baseline_legacy_string_to_full_struct_with_metadata() {
+    // Upgrading a baseline legacy string to a Full struct with complete
+    // metadata is exactly the desired migration path. PG007 must stay quiet
+    // because the pattern was already in the baseline (grandfathered).
+    // PG003 also stays quiet — the pattern is not new; only its form changed.
+    let base = lockfile_with(
+        serde_json::json!({"CX": {"exempt_paths": ["*::tests::*"]}}),
+        vec![],
+    );
+    let cur = lockfile_with(
+        serde_json::json!({"CX": {"exempt_paths": [
+            {
+                "pattern": "*::tests::*",
+                "reason": "test modules legitimately expose helpers",
+                "expires": "2027-01-01",
+                "owner": "@core"
+            }
+        ]}}),
+        vec![],
+    );
+    let diags = check_policy_mutation(&cur, Some(&base), CheckMode::AgentStrict, false, false);
+
+    assert!(
+        diags.iter().all(|d| d.rule_id != "PG007"),
+        "upgrading a baseline pattern to full struct with metadata — PG007 must stay quiet; got {diags:#?}"
+    );
+    // PG003 stays quiet too: the pattern was in the baseline, only the form
+    // changed. Upgrading from legacy-string to full-struct is not a new
+    // exempt_path addition.
+    assert!(
+        diags.iter().all(|d| d.rule_id != "PG003"),
+        "pattern already in baseline — PG003 must stay quiet on form-only upgrade; got {diags:#?}"
+    );
+}
+
+#[test]
+fn pg007_silent_for_preexisting_full_struct_without_metadata_grandfathered() {
+    // If the baseline already contained a Full struct entry lacking metadata,
+    // that entry is grandfathered (per-pattern keying). PG007 must not re-fire
+    // on it in current. Only NEW patterns without metadata trigger PG007.
+    let base = lockfile_with(
+        serde_json::json!({"CX": {"exempt_paths": [
+            {"pattern": "old::*"}  // Full struct, no metadata — pre-existing
+        ]}}),
+        vec![],
+    );
+    let cur = base.clone();
+    let diags = check_policy_mutation(&cur, Some(&base), CheckMode::AgentStrict, false, false);
+
+    assert!(
+        diags.iter().all(|d| d.rule_id != "PG007"),
+        "pre-existing Full struct without metadata is grandfathered — PG007 must stay quiet; got {diags:#?}"
+    );
+}
+
+#[test]
+fn pg007_fires_on_new_full_struct_lacking_metadata_not_in_baseline() {
+    // Negative case for the above: adding a NEW Full struct entry (pattern not
+    // in baseline) that is missing metadata must fire PG007.
+    let base = lockfile_with(
+        serde_json::json!({"CX": {"exempt_paths": [
+            {"pattern": "old::*"}  // pre-existing Full struct
+        ]}}),
+        vec![],
+    );
+    let cur = lockfile_with(
+        serde_json::json!({"CX": {"exempt_paths": [
+            {"pattern": "old::*"},           // grandfathered, no PG007
+            {"pattern": "brand_new::*"}      // new, no metadata — PG007 fires
+        ]}}),
+        vec![],
+    );
+    let diags = check_policy_mutation(&cur, Some(&base), CheckMode::AgentStrict, false, false);
+
+    let pg007: Vec<_> = diags.iter().filter(|d| d.rule_id == "PG007").collect();
+    assert_eq!(
+        pg007.len(),
+        1,
+        "only the new pattern should trigger PG007; got {diags:#?}"
+    );
+    assert!(
+        pg007[0].message.contains("brand_new::*"),
+        "PG007 must name the new pattern: {}",
+        pg007[0].message
+    );
+}
+
+#[test]
+fn pg007_silent_when_upgrading_baseline_legacy_to_full_struct_without_metadata() {
+    // An agent upgrading a baseline legacy string to a Full struct WITHOUT
+    // metadata is still grandfathered — the pattern itself was in the baseline.
+    // PG007 uses the pattern as the identity key, not the entry form.
+    // (The entry would surface as "legacy-no-metadata" in `locus debt` for
+    // human attention, but Policy Guard does not re-fire PG007 on it.)
+    let base = lockfile_with(
+        serde_json::json!({"CX": {"exempt_paths": ["*::tests::*"]}}),
+        vec![],
+    );
+    let cur = lockfile_with(
+        serde_json::json!({"CX": {"exempt_paths": [
+            {"pattern": "*::tests::*"}  // Full struct but no metadata — same pattern as baseline
+        ]}}),
+        vec![],
+    );
+    let diags = check_policy_mutation(&cur, Some(&base), CheckMode::AgentStrict, false, false);
+
+    assert!(
+        diags.iter().all(|d| d.rule_id != "PG007"),
+        "*::tests::* was in baseline — grandfathered regardless of form; PG007 must stay quiet; got {diags:#?}"
+    );
+}
+
+#[test]
+fn pg007_stays_fatal_under_calibration() {
+    // Calibration accepts the addition (PG003 → Advisory) but does NOT
+    // waive the metadata requirement (PG007 → still Fatal under strict).
+    let base = lockfile_with(serde_json::json!({"CX": {"exempt_paths": []}}), vec![]);
+    let cur = lockfile_with(
+        serde_json::json!({"CX": {"exempt_paths": [
+            {"pattern": "foo::*"}  // struct, no metadata
+        ]}}),
+        vec![],
+    );
+    let diags = check_policy_mutation(&cur, Some(&base), CheckMode::AgentStrict, true, false);
+
+    let pg003 = diags.iter().find(|d| d.rule_id == "PG003").unwrap();
+    assert_eq!(
+        pg003.severity,
+        Severity::Advisory,
+        "PG003 should be Advisory under calibration"
+    );
+    let pg007 = diags.iter().find(|d| d.rule_id == "PG007").unwrap();
+    assert_eq!(
+        pg007.severity,
+        Severity::Fatal,
+        "PG007 must stay Fatal under strict even with calibration"
+    );
+}
+
+#[test]
+fn pg007_lists_only_actually_missing_fields() {
+    // Only 'expires' and 'owner' missing — message must mention them
+    // but not 'reason'.
+    let base = lockfile_with(serde_json::json!({"CX": {"exempt_paths": []}}), vec![]);
+    let cur = lockfile_with(
+        serde_json::json!({"CX": {"exempt_paths": [
+            {"pattern": "bar::*", "reason": "some reason"}  // missing expires + owner
+        ]}}),
+        vec![],
+    );
+    let diags = check_policy_mutation(&cur, Some(&base), CheckMode::Human, false, false);
+    let pg007 = diags.iter().find(|d| d.rule_id == "PG007").unwrap();
+    let m = pg007.message.as_str();
+    assert!(
+        m.contains("expires"),
+        "should mention missing 'expires': {m}"
+    );
+    assert!(m.contains("owner"), "should mention missing 'owner': {m}");
+    assert!(
+        !m.contains(", reason") && !m.starts_with("(reason"),
+        "reason was supplied; should not appear in missing list: {m}"
+    );
+}
+
+#[test]
+fn pg007_quiet_for_preexisting_struct_entry_without_metadata() {
+    // If the struct entry (even without metadata) was already in baseline,
+    // PG007 must not re-fire — it only covers *new* additions.
+    let base = lockfile_with(
+        serde_json::json!({"CX": {"exempt_paths": [
+            {"pattern": "foo::*"}  // struct, no metadata — pre-existing
+        ]}}),
+        vec![],
+    );
+    let cur = base.clone();
+    let diags = check_policy_mutation(&cur, Some(&base), CheckMode::AgentStrict, false, false);
+    assert!(
+        diags.iter().all(|d| d.rule_id != "PG007"),
+        "pre-existing entry — PG007 must not fire; got {diags:#?}"
     );
 }
