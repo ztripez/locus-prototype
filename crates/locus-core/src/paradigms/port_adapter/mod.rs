@@ -30,8 +30,10 @@ pub mod rules;
 
 pub const PA_PREFIX: &str = "PA";
 
+// locus: allow MO005 — paradigm host struct intentionally lives in mod.rs by convention
 pub struct PortAdapter;
 
+// locus: allow MO005 — paradigm Paradigm impl intentionally lives in mod.rs by convention
 impl Paradigm for PortAdapter {
     fn name(&self) -> &'static str {
         "Port/Adapter Ownership"

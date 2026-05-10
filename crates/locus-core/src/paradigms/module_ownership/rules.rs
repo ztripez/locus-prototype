@@ -8,9 +8,10 @@
 //! - [`mo003`]: canonical hint co-located with a boundary hint in the same file.
 //! - [`mo004`]: canonical hint co-located with a handler-named function in the
 //!   same file.
-//! - [`mo005`]: entrypoint modules (`main.rs`, `lib.rs`, `mod.rs`) contain
-//!   type declarations, impl blocks, or substantial functions — forbidden
-//!   because entrypoint modules are composition surfaces, not ownership sites.
+//! - [`mo005`]: entrypoint modules (`main.rs`, `mod.rs`) contain type
+//!   declarations, impl blocks, or substantial functions — forbidden because
+//!   entrypoint modules are composition surfaces, not ownership sites.
+//!   `lib.rs` is out of scope in this first pass (see follow-up issue).
 
 use locus_air::{
     AirFile, AirHint, AirImport, AirItem, AirSpan, AirWorkspace, HintKind, Visibility,
@@ -414,9 +415,16 @@ pub fn mo004(air: &AirWorkspace, section: &MoSection, mode: CheckMode) -> Vec<Di
 ///
 /// A file's `module_path` last segment is compared against this set.
 /// - `main` covers `src/main.rs` and `src/bin/<name>.rs` (Rust convention).
-/// - `lib` covers `src/lib.rs` (library crate root).
 /// - `mod` covers `<dir>/mod.rs` (directory sub-module root).
-const ENTRYPOINT_SUFFIXES: &[&str] = &["main", "lib", "mod"];
+///
+/// `lib` (`src/lib.rs`) is intentionally out of scope for this first pass.
+/// lib.rs covers multiple distinct architectural shapes — thin re-export
+/// surface, canonical-data crate surface (e.g. `locus-air` where every
+/// `AirItem`/`AirType`/etc. is intentional public API), composition root,
+/// and accidental god module — that require their own design pass before
+/// MO005 can apply meaningfully. See follow-up issue for lib.rs entrypoint
+/// handling.
+const ENTRYPOINT_SUFFIXES: &[&str] = &["main", "mod"];
 
 /// Line-count budget for "thin" functions that MO005 permits in entrypoint
 /// modules. A `main`, `run`, or `init` function up to this many lines is
@@ -450,14 +458,15 @@ const ENTRYPOINT_FN_NAMES: &[&str] = &["main", "run", "init", "setup", "start"];
 ///
 /// 2. **File-path basename** — the file's OS path (when provided) is also
 ///    checked. This catches the common case in Rust where binary-crate
-///    `main.rs` and library-crate `lib.rs` produce a flat `module_path`
-///    equal to just the crate name (e.g. `locus_cli` rather than
-///    `locus_cli::main`). Likewise `mod.rs` files inside subdirectories
-///    have module paths like `pkg::commands`, not `pkg::commands::mod`.
+///    `main.rs` produces a flat `module_path` equal to just the crate name
+///    (e.g. `locus_cli` rather than `locus_cli::main`). Likewise `mod.rs`
+///    files inside subdirectories have module paths like `pkg::commands`,
+///    not `pkg::commands::mod`.
 ///
 /// Both checks use the same `ENTRYPOINT_SUFFIXES` set so the semantics
 /// are symmetric — either the logical name or the filesystem name can
-/// trigger the rule.
+/// trigger the rule. Note: `lib.rs` is excluded from `ENTRYPOINT_SUFFIXES`
+/// in this first pass; see the constant's doc comment for rationale.
 fn is_entrypoint_module_by_path(module_path: &str, file_path: &str) -> bool {
     // Check 1: last module_path segment.
     let last_segment = module_path.rsplit("::").next().unwrap_or(module_path);

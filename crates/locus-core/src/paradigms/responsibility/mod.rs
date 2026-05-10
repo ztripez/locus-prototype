@@ -29,8 +29,10 @@ pub mod rules;
 
 pub const RM_PREFIX: &str = "RM";
 
+// locus: allow MO005 — paradigm host struct intentionally lives in mod.rs by convention
 pub struct Responsibility;
 
+// locus: allow MO005 — paradigm Paradigm impl intentionally lives in mod.rs by convention
 impl Paradigm for Responsibility {
     fn name(&self) -> &'static str {
         "Responsibility Mixing"

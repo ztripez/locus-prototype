@@ -27,8 +27,10 @@ pub mod rules;
 
 pub const CR_PREFIX: &str = "CR";
 
+// locus: allow MO005 — paradigm host struct intentionally lives in mod.rs by convention
 pub struct CompositionRoot;
 
+// locus: allow MO005 — paradigm Paradigm impl intentionally lives in mod.rs by convention
 impl Paradigm for CompositionRoot {
     fn name(&self) -> &'static str {
         "Composition Root Ownership"

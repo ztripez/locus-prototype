@@ -32,8 +32,10 @@ pub mod rules;
 
 pub const ER_PREFIX: &str = "ER";
 
+// locus: allow MO005 — paradigm host struct intentionally lives in mod.rs by convention
 pub struct ErrorTaxonomy;
 
+// locus: allow MO005 — paradigm Paradigm impl intentionally lives in mod.rs by convention
 impl Paradigm for ErrorTaxonomy {
     fn name(&self) -> &'static str {
         "Error Taxonomy Ownership"

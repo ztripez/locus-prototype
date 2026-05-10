@@ -11,6 +11,9 @@ use anyhow::Result;
 
 use crate::cli::{Cli, Command};
 
+// locus: allow MO005 — this dispatch function is the composition hub for the CLI; its line count
+// exceeds the 25-line budget because it must enumerate all 20 paradigm sub-commands. The
+// body is pure dispatch (no business logic), making it canonical composition glue.
 pub fn run(cli: Cli) -> Result<()> {
     match cli.command {
         Command::EmitAir(args) => emit_air::run(args),

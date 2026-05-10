@@ -117,7 +117,7 @@ This document is the *target* spec — the full set of paradigms Locus is design
 | PA (6) | PA001, PA002, PA003, PA004 | many | port+impl colocation; concrete adapter imports; **external-IO fact in application without port**; adapter construction outside CR. |
 | CR (7) | CR001, CR002 | many | service-shaped construction outside CR; high-density wiring inside CR. |
 | RM (8) | RM001, RM002, RM003, RM004, **RM005**, **RM006** | many | action-kind density; converter side-effects; handler policy density; repository branch density; **validator IO fact**; **domain-method persistence-write fact**. |
-| MO (9) | MO001, MO002, MO003, MO004, **MO005** | many | public-type budget; responsibility entropy; canonical+boundary colocation; canonical+handler colocation; **entrypoint-module ownership (main.rs/lib.rs/mod.rs as composition surface)**. |
+| MO (9) | MO001, MO002, MO003, MO004, **MO005** | many | public-type budget; responsibility entropy; canonical+boundary colocation; canonical+handler colocation; **entrypoint-module ownership (main.rs/mod.rs as composition surface; lib.rs deferred)**. |
 | CX (10) | CX001, CX007, CX008 | several | function line budget; public-surface budget; fan-out budget. |
 | UT (11) | UT001–UT005 | many | public type in utility; forbidden import; generic-utility module; domain logic in utility; validate/normalize in utility. |
 | FL (12) | FL001–FL007, **FL010**, FL011, **FL012**, FL013 | many | Boundary error; panic-shaped; silent `.ok()`; `let _ = call`; partial `if let`; `map_err(|_|)`; catch-all `Err(_)`; **`unwrap_or(literal/call)` invalid-to-default**; bare `_` failure sink; **retry-shaped loop without policy**; lossy stringification. Residual gaps: spawned-task no-sink (needs framework loader). |
@@ -827,7 +827,7 @@ MO — Module / File Ownership
 | MO002 | File carries ≥ `entropy_threshold` (default 3) distinct architectural roles: canonical hint, boundary hint, converter hint, handler-named function, persistence import, io call-site | `AirItem::Import`, `AirItem::CallSite`, `AirHint` | Warning / Fatal |
 | MO003 | Canonical hint co-located with boundary hint in the same file — the two opposing roles blur ownership | `AirHint` | Warning / Fatal |
 | MO004 | Canonical hint co-located with a handler-named function in the same file | `AirHint`, `AirItem::Function` | Warning / Fatal |
-| MO005 | Entrypoint module (`main.rs`, `lib.rs`, `mod.rs`) contains type declarations, impl blocks, converters, or substantial non-glue functions | `AirItem::Type`, `AirItem::Impl`, `AirItem::Function`, `AirItem::Conversion` | Warning / Fatal |
+| MO005 | Entrypoint module (`main.rs`, `mod.rs`) contains type declarations, impl blocks, converters, or substantial non-glue functions. **lib.rs is out of scope in the first pass** — see follow-up issue. | `AirItem::Type`, `AirItem::Impl`, `AirItem::Function`, `AirItem::Conversion` | Warning / Fatal |
 
 #### MO005 — Entrypoint Declaration Ownership
 
@@ -837,7 +837,7 @@ modules together via `mod` declarations, imports, crate-level attrs, thin
 declare substantial types, impl blocks, converters, or command/business
 implementation functions.
 
-**Scope:** module paths ending in `::main`, `::lib`, or `::mod`.
+**Scope:** module paths ending in `::main` or `::mod`. lib.rs is **out of scope in the first pass** — see follow-up issue. Reason: lib.rs covers multiple distinct shapes (thin re-export surface, canonical-data crate surface like `locus-air` where every `AirItem`/`AirType`/etc. is intentional public API, composition root, accidental god module) that need their own design pass before MO005 can apply meaningfully.
 
 **Allowed in entrypoint modules:**
 - `mod` declarations (not captured at the AIR item level)

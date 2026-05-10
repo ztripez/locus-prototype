@@ -34,8 +34,10 @@ pub mod rules;
 
 pub const CX_PREFIX: &str = "CX";
 
+// locus: allow MO005 — paradigm host struct intentionally lives in mod.rs by convention
 pub struct ComplexityBudget;
 
+// locus: allow MO005 — paradigm Paradigm impl intentionally lives in mod.rs by convention
 impl Paradigm for ComplexityBudget {
     fn name(&self) -> &'static str {
         "Complexity Budget Ownership"

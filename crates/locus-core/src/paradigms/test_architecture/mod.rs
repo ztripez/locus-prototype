@@ -27,8 +27,10 @@ pub mod rules;
 
 pub const TA_PREFIX: &str = "TA";
 
+// locus: allow MO005 — paradigm host struct intentionally lives in mod.rs by convention
 pub struct TestArchitecture;
 
+// locus: allow MO005 — paradigm Paradigm impl intentionally lives in mod.rs by convention
 impl Paradigm for TestArchitecture {
     fn name(&self) -> &'static str {
         "Test Architecture Ownership"

@@ -28,8 +28,10 @@ pub mod rules;
 
 pub const BO_PREFIX: &str = "BO";
 
+// locus: allow MO005 — paradigm host struct intentionally lives in mod.rs by convention
 pub struct BoundaryOwnership;
 
+// locus: allow MO005 — paradigm Paradigm impl intentionally lives in mod.rs by convention
 impl Paradigm for BoundaryOwnership {
     fn name(&self) -> &'static str {
         "Boundary Ownership"

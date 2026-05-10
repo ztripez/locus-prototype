@@ -26,8 +26,10 @@ pub mod rules;
 
 pub const OB_PREFIX: &str = "OB";
 
+// locus: allow MO005 — paradigm host struct intentionally lives in mod.rs by convention
 pub struct Observability;
 
+// locus: allow MO005 — paradigm Paradigm impl intentionally lives in mod.rs by convention
 impl Paradigm for Observability {
     fn name(&self) -> &'static str {
         "Observability Ownership"

@@ -850,18 +850,24 @@ fn mo005_silent_for_imports_in_main() {
 }
 
 #[test]
-fn mo005_applies_to_lib_module() {
-    // The rule also fires for `::lib` module paths.
+fn mo005_does_not_fire_on_lib_rs_in_first_pass() {
+    // The issue (#67) allowed lib.rs/mod.rs behavior to be "covered or
+    // explicitly scoped out" in the first pass. lib.rs is scoped out
+    // because it covers several distinct shapes (thin re-export surface,
+    // canonical-data crate surface like locus-air, composition root,
+    // accidental god module) that require their own design pass before
+    // MO005 can apply meaningfully. See follow-up issue for lib.rs
+    // entrypoint handling.
     let air = AirWorkspace {
         schema_version: AIR_SCHEMA_VERSION,
         packages: vec![AirPackage {
-            name: "x".into(),
+            name: "test_pkg".into(),
             version: "0".into(),
             root_dir: "/".into(),
             files: vec![AirFile {
                 path: "src/lib.rs".into(),
-                module_path: Some("my_crate::lib".to_string()),
-                items: vec![type_item("InternalHelper", TypeKind::Struct)],
+                module_path: Some("test_pkg::lib".to_string()),
+                items: vec![type_item("Foo", TypeKind::Struct)],
                 hints: Vec::new(),
                 parse_error: None,
                 line_count: 30,
@@ -869,13 +875,13 @@ fn mo005_applies_to_lib_module() {
         }],
         facts: Vec::new(),
     };
-    let diags = mo005(&air, CheckMode::Human);
-    assert_eq!(
-        diags.len(),
-        1,
-        "expected one diag for struct in lib, got {diags:?}"
+    let diagnostics = mo005(&air, CheckMode::Human);
+    assert!(
+        diagnostics.is_empty(),
+        "MO005 must NOT fire on lib.rs in this first pass; \
+         lib.rs handling is deferred to a follow-up issue. \
+         Got: {diagnostics:?}"
     );
-    assert_eq!(diags[0].rule_id, "MO005");
 }
 
 #[test]
@@ -908,7 +914,7 @@ fn mo005_applies_to_mod_module() {
 
 #[test]
 fn mo005_does_not_apply_to_non_entrypoint_files() {
-    // `pkg::other` does not end in `main`/`lib`/`mod`, and the file is `other.rs`
+    // `pkg::other` does not end in `main`/`mod`, and the file is `other.rs`
     // — rule must not fire.
     let air = air_with_module_path_and_file(
         "pkg::other",
@@ -928,7 +934,7 @@ fn mo005_does_not_apply_to_non_entrypoint_files() {
 #[test]
 fn mo005_does_not_fire_on_module_path_containing_main_as_non_suffix() {
     // `pkg::main_loop` in `main_loop.rs` — neither the module segment nor
-    // the file stem is `main` / `lib` / `mod` — must not match.
+    // the file stem is `main` / `mod` — must not match.
     let air = air_with_module_path_and_file(
         "pkg::main_loop",
         "main_loop.rs",

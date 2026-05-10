@@ -28,8 +28,10 @@ pub mod rules;
 
 pub const DA_PREFIX: &str = "DA";
 
+// locus: allow MO005 — paradigm host struct intentionally lives in mod.rs by convention
 pub struct DemandDriven;
 
+// locus: allow MO005 — paradigm Paradigm impl intentionally lives in mod.rs by convention
 impl Paradigm for DemandDriven {
     fn name(&self) -> &'static str {
         "Demand-Driven Architecture"

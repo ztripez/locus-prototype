@@ -56,8 +56,10 @@ pub mod rules;
 
 pub const FL_PREFIX: &str = "FL";
 
+// locus: allow MO005 — paradigm host struct intentionally lives in mod.rs by convention
 pub struct FailureLineage;
 
+// locus: allow MO005 — paradigm Paradigm impl intentionally lives in mod.rs by convention
 impl Paradigm for FailureLineage {
     fn name(&self) -> &'static str {
         "Failure Lineage Ownership"

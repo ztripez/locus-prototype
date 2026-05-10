@@ -10,9 +10,10 @@
 //! - MO003: canonical type co-located with a boundary type in the same file.
 //! - MO004: canonical type co-located with a handler-named function in the
 //!   same file.
-//! - MO005: entrypoint modules (`main.rs`, `lib.rs`, `mod.rs`) must be
-//!   composition surfaces, not ownership sites — they may not declare types,
-//!   impl blocks, converters, or substantial non-glue functions.
+//! - MO005: entrypoint modules (`main.rs`, `mod.rs`) must be composition
+//!   surfaces, not ownership sites — they may not declare types, impl blocks,
+//!   converters, or substantial non-glue functions. `lib.rs` is out of scope
+//!   in this first pass (see follow-up issue for lib.rs entrypoint handling).
 //!
 //! `init` returns `Null`: there's no automatic inference for "this module
 //! is allowed to be wide" — the user has to declare the override (or the
@@ -35,8 +36,10 @@ pub mod rules;
 
 pub const MO_PREFIX: &str = "MO";
 
+// locus: allow MO005 — paradigm host struct intentionally lives in mod.rs by convention
 pub struct ModuleOwnership;
 
+// locus: allow MO005 — paradigm Paradigm impl intentionally lives in mod.rs by convention
 impl Paradigm for ModuleOwnership {
     fn name(&self) -> &'static str {
         "Module / File Ownership"
