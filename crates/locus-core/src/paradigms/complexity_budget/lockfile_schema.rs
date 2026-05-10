@@ -69,8 +69,14 @@ pub struct CxSection {
     /// `max_public_items`. Defaults to [`default_exempt_paths`] (test
     /// modules) so re-exporting modules and prelude files don't trip the
     /// rule out of the gate.
-    #[serde(default = "default_exempt_paths")]
-    pub exempt_paths: Vec<String>,
+    ///
+    /// Entries may be plain strings (legacy form) or `CxExemptPathEntry`
+    /// structs carrying debt metadata (`expires`, `reason`, `owner`,
+    /// `debt_id`, `introduced_by`). Legacy strings are accepted via the
+    /// `#[serde(untagged)]` enum; after deserialization all entries are
+    /// resolved to [`CxExemptPath`] via [`CxSection::resolved_exempt_paths`].
+    #[serde(default = "default_exempt_path_entries")]
+    pub exempt_paths: Vec<CxExemptPathEntry>,
     /// CX008 — cap on the number of call sites a single function may
     /// issue. Defaults to [`default_max_fan_out`].
     #[serde(default = "default_max_fan_out")]
@@ -91,7 +97,7 @@ impl Default for CxSection {
             default_max_module_lines: None,
             module_overrides: Vec::new(),
             max_public_items: default_max_public_items(),
-            exempt_paths: default_exempt_paths(),
+            exempt_paths: default_exempt_path_entries(),
             max_fan_out: default_max_fan_out(),
             orchestration_paths: Vec::new(),
         }
@@ -108,8 +114,21 @@ pub fn default_max_public_items() -> u32 {
 /// Default exempt paths for CX007. Test modules legitimately surface a lot
 /// of `pub` helpers (test fixtures, mock builders) and the CX surface-area
 /// signal is meaningless there.
+///
+/// Kept for use in tests and doc-level explanations. The lockfile's default
+/// serializer function is [`default_exempt_path_entries`].
 pub fn default_exempt_paths() -> Vec<String> {
     vec!["*::tests::*".to_string(), "*::test::*".to_string()]
+}
+
+/// Default serde constructor for `CxSection::exempt_paths` (Vec of
+/// `CxExemptPathEntry`). Wraps each default string pattern as a
+/// `CxExemptPathEntry::Legacy` so the default section round-trips cleanly.
+pub fn default_exempt_path_entries() -> Vec<CxExemptPathEntry> {
+    default_exempt_paths()
+        .into_iter()
+        .map(CxExemptPathEntry::Legacy)
+        .collect()
 }
 
 /// Default cap for CX008. Twenty-five call sites is "this function has
@@ -147,6 +166,88 @@ impl CxSection {
         self.module_overrides
             .iter()
             .find(|o| matches_pattern(&o.module, module_path))
+    }
+
+    /// Resolve all `exempt_paths` entries to [`CxExemptPath`] structs.
+    /// Legacy `String` entries are promoted to pattern-only structs with
+    /// all metadata fields set to `None`. This is the canonical accessor
+    /// for rules and policy-guard code — they should never read
+    /// `self.exempt_paths` directly.
+    pub fn resolved_exempt_paths(&self) -> Vec<CxExemptPath> {
+        self.exempt_paths
+            .iter()
+            .map(|entry| entry.clone().into())
+            .collect()
+    }
+}
+
+/// A single entry in `CxSection::exempt_paths` that carries optional debt
+/// metadata mirroring the shape of [`CxOverride`] and [`MoOverride`].
+///
+/// Adding a new override always fires `PG003` (exempt-path addition). Absence
+/// of `reason` / `expires` / `owner` additionally triggers `PG007`. PG003 can
+/// be downgraded via `--allow-policy-calibration`; PG007 stays Fatal under
+/// `--agent-strict` because metadata is non-negotiable.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct CxExemptPath {
+    /// The glob pattern to match against module paths. Same segment-aligned
+    /// wildcard syntax as `CxOverride::module` (`foo::*`, `*::tests::*`, `*`).
+    pub pattern: String,
+    /// Debt metadata — `YYYY-MM-DD` expiry date. Required by `PG007` on
+    /// new exempt-path entries added after the schema upgrade.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expires: Option<String>,
+    /// Debt metadata — human-readable explanation of why this exemption
+    /// exists. Required by `PG007` on new entries.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    /// Debt metadata — owner team / individual / role. Required by
+    /// `PG007` on new entries.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub owner: Option<String>,
+    /// Optional stable cross-reference identifier for the debt record.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub debt_id: Option<String>,
+    /// Optional PR / issue reference describing the exemption's origin.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub introduced_by: Option<String>,
+}
+
+/// Serde-transparent enum that accepts both the legacy plain-string form
+/// (`"*::tests::*"`) and the new struct form (`{"pattern": …, "reason": …}`)
+/// for entries in `CxSection::exempt_paths`.
+///
+/// Use `CxSection::resolved_exempt_paths` to get a `Vec<CxExemptPath>` where
+/// every `Legacy` entry has been promoted to a pattern-only struct.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(untagged)]
+pub enum CxExemptPathEntry {
+    /// Legacy form: a bare glob string. Deserializes from `"*::tests::*"`.
+    Legacy(String),
+    /// New form: a struct with `pattern` plus optional debt metadata.
+    Full(CxExemptPath),
+}
+
+impl From<CxExemptPathEntry> for CxExemptPath {
+    fn from(entry: CxExemptPathEntry) -> Self {
+        match entry {
+            CxExemptPathEntry::Legacy(pattern) => CxExemptPath {
+                pattern,
+                ..Default::default()
+            },
+            CxExemptPathEntry::Full(ep) => ep,
+        }
+    }
+}
+
+impl CxExemptPathEntry {
+    /// Borrow the glob pattern regardless of which variant this entry is.
+    pub fn pattern(&self) -> &str {
+        match self {
+            CxExemptPathEntry::Legacy(s) => s.as_str(),
+            CxExemptPathEntry::Full(ep) => ep.pattern.as_str(),
+        }
     }
 }
 
@@ -259,7 +360,7 @@ mod tests {
         assert!(s.overrides.is_empty());
         // CX007/CX008 fields populated by their helper defaults.
         assert_eq!(s.max_public_items, default_max_public_items());
-        assert_eq!(s.exempt_paths, default_exempt_paths());
+        assert_eq!(s.exempt_paths, default_exempt_path_entries());
         assert_eq!(s.max_fan_out, default_max_fan_out());
         assert!(s.orchestration_paths.is_empty());
     }
@@ -312,5 +413,133 @@ mod tests {
         assert!(matches_pattern("foo::*", "foo::bar::baz"));
         assert!(!matches_pattern("foo::*", "foobar"));
         assert!(matches_pattern("*", "anything"));
+    }
+
+    // ---- CxExemptPath / CxExemptPathEntry tests ----------------------
+
+    #[test]
+    fn legacy_string_parses_as_cx_exempt_path_entry() {
+        let json = r#""*::tests::*""#;
+        let entry: CxExemptPathEntry = serde_json::from_str(json).unwrap();
+        match &entry {
+            CxExemptPathEntry::Legacy(s) => assert_eq!(s, "*::tests::*"),
+            CxExemptPathEntry::Full(_) => panic!("expected Legacy variant"),
+        }
+        let resolved: CxExemptPath = entry.into();
+        assert_eq!(resolved.pattern, "*::tests::*");
+        assert!(resolved.reason.is_none());
+        assert!(resolved.expires.is_none());
+        assert!(resolved.owner.is_none());
+        assert!(resolved.debt_id.is_none());
+        assert!(resolved.introduced_by.is_none());
+    }
+
+    #[test]
+    fn struct_form_parses_as_cx_exempt_path_entry() {
+        let json = r#"{"pattern": "locus_air::*", "reason": "canonical data crate", "expires": "2027-05-09", "owner": "@core"}"#;
+        let entry: CxExemptPathEntry = serde_json::from_str(json).unwrap();
+        match &entry {
+            CxExemptPathEntry::Full(ep) => {
+                assert_eq!(ep.pattern, "locus_air::*");
+                assert_eq!(ep.reason.as_deref(), Some("canonical data crate"));
+                assert_eq!(ep.expires.as_deref(), Some("2027-05-09"));
+                assert_eq!(ep.owner.as_deref(), Some("@core"));
+            }
+            CxExemptPathEntry::Legacy(_) => panic!("expected Full variant"),
+        }
+    }
+
+    #[test]
+    fn mixed_legacy_and_struct_forms_parse_in_cx_section() {
+        let json = r#"{
+            "exempt_paths": [
+                "*::tests::*",
+                {"pattern": "locus_air::*", "reason": "ok", "expires": "2027-01-01", "owner": "@core"}
+            ]
+        }"#;
+        let section: CxSection = serde_json::from_str(json).unwrap();
+        assert_eq!(section.exempt_paths.len(), 2);
+        assert_eq!(section.exempt_paths[0].pattern(), "*::tests::*");
+        assert_eq!(section.exempt_paths[1].pattern(), "locus_air::*");
+
+        let resolved = section.resolved_exempt_paths();
+        assert_eq!(resolved[0].pattern, "*::tests::*");
+        assert!(resolved[0].reason.is_none(), "legacy entry has no reason");
+        assert_eq!(resolved[1].pattern, "locus_air::*");
+        assert_eq!(resolved[1].reason.as_deref(), Some("ok"));
+    }
+
+    #[test]
+    fn cx_section_with_legacy_strings_round_trips_as_structs() {
+        // The current locus.lock format: Vec<String> entries.
+        let json = r#"{"exempt_paths": ["*::tests::*", "locus_air::*"]}"#;
+        let section: CxSection = serde_json::from_str(json).unwrap();
+        assert_eq!(section.exempt_paths.len(), 2);
+        // Both are Legacy variants.
+        assert!(matches!(
+            &section.exempt_paths[0],
+            CxExemptPathEntry::Legacy(s) if s == "*::tests::*"
+        ));
+        assert!(matches!(
+            &section.exempt_paths[1],
+            CxExemptPathEntry::Legacy(s) if s == "locus_air::*"
+        ));
+    }
+
+    #[test]
+    fn cx_section_full_struct_round_trips() {
+        let original = CxSection {
+            exempt_paths: vec![
+                CxExemptPathEntry::Legacy("*::tests::*".to_string()),
+                CxExemptPathEntry::Full(CxExemptPath {
+                    pattern: "locus_air::*".to_string(),
+                    reason: Some("canonical data crate".to_string()),
+                    expires: Some("2027-05-09".to_string()),
+                    owner: Some("@core".to_string()),
+                    debt_id: Some("CX-locus-air-exempt".to_string()),
+                    introduced_by: Some("PR #48".to_string()),
+                }),
+            ],
+            ..CxSection::default()
+        };
+        let json = serde_json::to_value(&original).unwrap();
+        let back: CxSection = serde_json::from_value(json).unwrap();
+        assert_eq!(original, back);
+    }
+
+    #[test]
+    fn legacy_entry_pattern_accessor() {
+        let entry = CxExemptPathEntry::Legacy("foo::*".to_string());
+        assert_eq!(entry.pattern(), "foo::*");
+    }
+
+    #[test]
+    fn full_entry_pattern_accessor() {
+        let entry = CxExemptPathEntry::Full(CxExemptPath {
+            pattern: "bar::*".to_string(),
+            ..Default::default()
+        });
+        assert_eq!(entry.pattern(), "bar::*");
+    }
+
+    #[test]
+    fn resolved_exempt_paths_returns_all_entries_as_cx_exempt_path() {
+        let section = CxSection {
+            exempt_paths: vec![
+                CxExemptPathEntry::Legacy("*::tests::*".to_string()),
+                CxExemptPathEntry::Full(CxExemptPath {
+                    pattern: "locus_air::*".to_string(),
+                    reason: Some("data crate".to_string()),
+                    ..Default::default()
+                }),
+            ],
+            ..CxSection::default()
+        };
+        let resolved = section.resolved_exempt_paths();
+        assert_eq!(resolved.len(), 2);
+        assert_eq!(resolved[0].pattern, "*::tests::*");
+        assert!(resolved[0].reason.is_none());
+        assert_eq!(resolved[1].pattern, "locus_air::*");
+        assert_eq!(resolved[1].reason.as_deref(), Some("data crate"));
     }
 }

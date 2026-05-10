@@ -650,3 +650,169 @@ fn pg_advisory_under_calibration_keeps_pg006_strict() {
         "PG006 must stay Fatal under strict even with calibration"
     );
 }
+
+// ---- PG007 new exempt_paths struct entry missing metadata --------
+
+#[test]
+fn pg007_fires_on_new_cx_exempt_path_struct_lacking_metadata() {
+    // New struct-form entry without reason/expires/owner → PG003 + PG007.
+    let base = lockfile_with(
+        serde_json::json!({"CX": {"exempt_paths": ["*::tests::*"]}}),
+        vec![],
+    );
+    let cur = lockfile_with(
+        serde_json::json!({"CX": {"exempt_paths": [
+            "*::tests::*",
+            {"pattern": "locus_air::*"}  // struct form, no metadata
+        ]}}),
+        vec![],
+    );
+    let diags = check_policy_mutation(&cur, Some(&base), CheckMode::AgentStrict, false, false);
+
+    // PG003 fires on any new addition.
+    assert!(
+        diags.iter().any(|d| d.rule_id == "PG003"),
+        "PG003 must fire on new exempt path; got {diags:#?}"
+    );
+    // PG007 fires because the struct entry lacks metadata.
+    let pg007: Vec<_> = diags.iter().filter(|d| d.rule_id == "PG007").collect();
+    assert_eq!(pg007.len(), 1, "expected exactly one PG007; got {diags:#?}");
+    let m = pg007[0].message.as_str();
+    assert!(
+        m.contains("locus_air::*"),
+        "message should name the pattern: {m}"
+    );
+    assert!(m.contains("reason"), "should list missing 'reason': {m}");
+    assert!(m.contains("expires"), "should list missing 'expires': {m}");
+    assert!(m.contains("owner"), "should list missing 'owner': {m}");
+    assert_eq!(
+        pg007[0].severity,
+        Severity::Fatal,
+        "PG007 must be Fatal under strict"
+    );
+}
+
+#[test]
+fn pg007_quiet_when_new_struct_entry_has_complete_metadata() {
+    // New struct-form entry WITH complete metadata → PG003 only, no PG007.
+    let base = lockfile_with(
+        serde_json::json!({"CX": {"exempt_paths": ["*::tests::*"]}}),
+        vec![],
+    );
+    let cur = lockfile_with(
+        serde_json::json!({"CX": {"exempt_paths": [
+            "*::tests::*",
+            {
+                "pattern": "locus_air::*",
+                "reason": "canonical data crate — all public types are the AIR contract",
+                "expires": "2027-05-09",
+                "owner": "@core"
+            }
+        ]}}),
+        vec![],
+    );
+    let diags = check_policy_mutation(&cur, Some(&base), CheckMode::AgentStrict, false, false);
+
+    assert!(
+        diags.iter().any(|d| d.rule_id == "PG003"),
+        "PG003 still fires on the addition; got {diags:#?}"
+    );
+    assert!(
+        diags.iter().all(|d| d.rule_id != "PG007"),
+        "complete metadata — PG007 must stay quiet; got {diags:#?}"
+    );
+}
+
+#[test]
+fn pg007_does_not_fire_for_legacy_string_entries() {
+    // A new plain-string entry triggers PG003 but NOT PG007 — legacy strings
+    // pre-date the metadata schema and are handled by `locus debt` instead.
+    let base = lockfile_with(
+        serde_json::json!({"CX": {"exempt_paths": ["*::tests::*"]}}),
+        vec![],
+    );
+    let cur = lockfile_with(
+        serde_json::json!({"CX": {"exempt_paths": ["*::tests::*", "locus_air::*"]}}),
+        vec![],
+    );
+    let diags = check_policy_mutation(&cur, Some(&base), CheckMode::AgentStrict, false, false);
+
+    assert!(
+        diags.iter().any(|d| d.rule_id == "PG003"),
+        "PG003 fires on plain-string addition; got {diags:#?}"
+    );
+    assert!(
+        diags.iter().all(|d| d.rule_id != "PG007"),
+        "legacy string entries must NOT trigger PG007; got {diags:#?}"
+    );
+}
+
+#[test]
+fn pg007_stays_fatal_under_calibration() {
+    // Calibration accepts the addition (PG003 → Advisory) but does NOT
+    // waive the metadata requirement (PG007 → still Fatal under strict).
+    let base = lockfile_with(serde_json::json!({"CX": {"exempt_paths": []}}), vec![]);
+    let cur = lockfile_with(
+        serde_json::json!({"CX": {"exempt_paths": [
+            {"pattern": "foo::*"}  // struct, no metadata
+        ]}}),
+        vec![],
+    );
+    let diags = check_policy_mutation(&cur, Some(&base), CheckMode::AgentStrict, true, false);
+
+    let pg003 = diags.iter().find(|d| d.rule_id == "PG003").unwrap();
+    assert_eq!(
+        pg003.severity,
+        Severity::Advisory,
+        "PG003 should be Advisory under calibration"
+    );
+    let pg007 = diags.iter().find(|d| d.rule_id == "PG007").unwrap();
+    assert_eq!(
+        pg007.severity,
+        Severity::Fatal,
+        "PG007 must stay Fatal under strict even with calibration"
+    );
+}
+
+#[test]
+fn pg007_lists_only_actually_missing_fields() {
+    // Only 'expires' and 'owner' missing — message must mention them
+    // but not 'reason'.
+    let base = lockfile_with(serde_json::json!({"CX": {"exempt_paths": []}}), vec![]);
+    let cur = lockfile_with(
+        serde_json::json!({"CX": {"exempt_paths": [
+            {"pattern": "bar::*", "reason": "some reason"}  // missing expires + owner
+        ]}}),
+        vec![],
+    );
+    let diags = check_policy_mutation(&cur, Some(&base), CheckMode::Human, false, false);
+    let pg007 = diags.iter().find(|d| d.rule_id == "PG007").unwrap();
+    let m = pg007.message.as_str();
+    assert!(
+        m.contains("expires"),
+        "should mention missing 'expires': {m}"
+    );
+    assert!(m.contains("owner"), "should mention missing 'owner': {m}");
+    assert!(
+        !m.contains(", reason") && !m.starts_with("(reason"),
+        "reason was supplied; should not appear in missing list: {m}"
+    );
+}
+
+#[test]
+fn pg007_quiet_for_preexisting_struct_entry_without_metadata() {
+    // If the struct entry (even without metadata) was already in baseline,
+    // PG007 must not re-fire — it only covers *new* additions.
+    let base = lockfile_with(
+        serde_json::json!({"CX": {"exempt_paths": [
+            {"pattern": "foo::*"}  // struct, no metadata — pre-existing
+        ]}}),
+        vec![],
+    );
+    let cur = base.clone();
+    let diags = check_policy_mutation(&cur, Some(&base), CheckMode::AgentStrict, false, false);
+    assert!(
+        diags.iter().all(|d| d.rule_id != "PG007"),
+        "pre-existing entry — PG007 must not fire; got {diags:#?}"
+    );
+}

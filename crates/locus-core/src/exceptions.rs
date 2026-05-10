@@ -148,6 +148,11 @@ pub struct ExceptionEntry {
 pub enum ExceptionSource {
     Hint,
     Lockfile,
+    /// An entry in `paradigms.CX.exempt_paths`. Legacy string entries appear
+    /// here with `status = LegacyNoMetadata`; struct entries with all debt
+    /// fields filled appear as `Active`; struct entries with missing metadata
+    /// appear as `LegacyNoMetadata` (they need upgrading).
+    CxExemptPath,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -157,6 +162,11 @@ pub enum ExceptionStatus {
     /// `// locus: allow` source hint without an `expires=` clause. The hint
     /// suppresses forever; surfaced separately so the user notices.
     Unbounded,
+    /// A `CX.exempt_paths` entry that pre-dates the debt-metadata schema
+    /// (legacy `String` form) OR a struct-form entry that is missing one or
+    /// more required metadata fields (`reason`, `expires`, `owner`). Surfaces
+    /// in `locus debt` so the user can migrate or annotate the entry.
+    LegacyNoMetadata,
 }
 
 /// Walk every `// locus: allow` hint in `air` and every `Lockfile.exceptions`
@@ -164,6 +174,12 @@ pub enum ExceptionStatus {
 /// by `locus debt`. `today` follows the same convention as
 /// [`apply_exceptions`]: `Some("YYYY-MM-DD")` for deterministic runs,
 /// `None` to skip expiry checks.
+///
+/// Also enumerates `paradigms.CX.exempt_paths` entries. Legacy `String`
+/// entries surface as [`ExceptionStatus::LegacyNoMetadata`]; struct entries
+/// with complete metadata surface as [`ExceptionStatus::Active`] or
+/// [`ExceptionStatus::Expired`]; struct entries with missing metadata also
+/// surface as [`ExceptionStatus::LegacyNoMetadata`].
 pub fn collect_exceptions(
     air: &AirWorkspace,
     lockfile: &Lockfile,
@@ -222,6 +238,9 @@ pub fn collect_exceptions(
             status,
         });
     }
+    // Enumerate CX.exempt_paths entries.
+    collect_cx_exempt_paths(lockfile, today, &mut out);
+
     out.sort_by(|a, b| {
         (status_order(a.status), &a.rule, &a.target).cmp(&(
             status_order(b.status),
@@ -232,11 +251,73 @@ pub fn collect_exceptions(
     out
 }
 
+/// Append one [`ExceptionEntry`] per `CX.exempt_paths` entry to `out`.
+///
+/// Classification:
+/// - Legacy `String` entry → `LegacyNoMetadata` (pre-dates the schema).
+/// - Struct entry with any of `reason`/`expires`/`owner` missing → `LegacyNoMetadata`.
+/// - Struct entry with all three fields populated:
+///   - Expired (`expires` < `today`) → `Expired`.
+///   - Otherwise → `Active`.
+fn collect_cx_exempt_paths(
+    lockfile: &Lockfile,
+    today: Option<&str>,
+    out: &mut Vec<ExceptionEntry>,
+) {
+    use crate::paradigms::complexity_budget::lockfile_schema::{CxExemptPathEntry, CxSection};
+
+    // Only enumerate if CX is explicitly present in the lockfile. Calling
+    // `paradigm_section` on a missing key returns `Ok(CxSection::default())`
+    // which has 2 default exempt_paths — we'd surface phantom debt entries
+    // for every un-onboarded workspace. Return early when no CX section exists.
+    if !lockfile.paradigms.contains_key("CX") {
+        return;
+    }
+    let cx: CxSection = match lockfile.paradigm_section("CX") {
+        Ok(s) => s,
+        Err(_) => return,
+    };
+
+    for entry in &cx.exempt_paths {
+        let (pattern, reason, expires, owner) = match entry {
+            CxExemptPathEntry::Legacy(s) => (s.as_str(), None, None, None),
+            CxExemptPathEntry::Full(ep) => (
+                ep.pattern.as_str(),
+                ep.reason.as_deref(),
+                ep.expires.as_deref(),
+                ep.owner.as_deref(),
+            ),
+        };
+
+        let has_metadata = reason.is_some_and(|r| !r.is_empty())
+            && expires.is_some_and(|e| !e.is_empty())
+            && owner.is_some_and(|o| !o.is_empty());
+
+        let status = if !has_metadata {
+            ExceptionStatus::LegacyNoMetadata
+        } else if is_expired(expires, today) {
+            ExceptionStatus::Expired
+        } else {
+            ExceptionStatus::Active
+        };
+
+        out.push(ExceptionEntry {
+            source: ExceptionSource::CxExemptPath,
+            rule: "CX007".to_string(),
+            target: format!("paradigms.CX.exempt_paths:{pattern}"),
+            reason: reason.map(str::to_string),
+            expires: expires.map(str::to_string),
+            status,
+        });
+    }
+}
+
 fn status_order(s: ExceptionStatus) -> u8 {
     match s {
         ExceptionStatus::Expired => 0,
-        ExceptionStatus::Unbounded => 1,
-        ExceptionStatus::Active => 2,
+        ExceptionStatus::LegacyNoMetadata => 1,
+        ExceptionStatus::Unbounded => 2,
+        ExceptionStatus::Active => 3,
     }
 }
 
@@ -559,6 +640,7 @@ mod tests {
                 ExceptionStatus::Active => counts.0 += 1,
                 ExceptionStatus::Expired => counts.1 += 1,
                 ExceptionStatus::Unbounded => counts.2 += 1,
+                ExceptionStatus::LegacyNoMetadata => {} // none expected here
             }
         }
         assert_eq!(counts, (2, 2, 1));
@@ -575,5 +657,128 @@ mod tests {
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].target, "t.rs:42");
         assert_eq!(entries[0].source, ExceptionSource::Hint);
+    }
+
+    // ---- CX exempt_paths debt enumeration ---------------------------
+
+    fn lockfile_with_cx_exempt_paths(exempt_paths: serde_json::Value) -> Lockfile {
+        let mut lf = Lockfile::empty();
+        lf.paradigms.insert(
+            "CX".to_string(),
+            serde_json::json!({"exempt_paths": exempt_paths}),
+        );
+        lf
+    }
+
+    #[test]
+    fn collect_exceptions_surfaces_legacy_string_exempt_paths_as_legacy_no_metadata() {
+        let lf = lockfile_with_cx_exempt_paths(serde_json::json!(["*::tests::*", "locus_air::*"]));
+        let air = workspace_with_hints("t.rs", vec![]);
+        let entries = collect_exceptions(&air, &lf, Some("2026-05-07"));
+        // Two legacy entries; both should be LegacyNoMetadata.
+        let cx_entries: Vec<_> = entries
+            .iter()
+            .filter(|e| e.source == ExceptionSource::CxExemptPath)
+            .collect();
+        assert_eq!(
+            cx_entries.len(),
+            2,
+            "two exempt_paths → two entries; got {cx_entries:#?}"
+        );
+        for e in &cx_entries {
+            assert_eq!(
+                e.status,
+                ExceptionStatus::LegacyNoMetadata,
+                "legacy string → LegacyNoMetadata; got {:?}",
+                e.status
+            );
+            assert_eq!(e.rule, "CX007");
+        }
+        assert!(
+            cx_entries.iter().any(|e| e.target.contains("*::tests::*")),
+            "target should contain the pattern; got {:?}",
+            cx_entries.iter().map(|e| &e.target).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn collect_exceptions_struct_entry_with_full_metadata_is_active() {
+        let lf = lockfile_with_cx_exempt_paths(serde_json::json!([
+            {"pattern": "locus_air::*", "reason": "canonical", "expires": "2030-01-01", "owner": "@core"}
+        ]));
+        let air = workspace_with_hints("t.rs", vec![]);
+        let entries = collect_exceptions(&air, &lf, Some("2026-05-07"));
+        let cx_entries: Vec<_> = entries
+            .iter()
+            .filter(|e| e.source == ExceptionSource::CxExemptPath)
+            .collect();
+        assert_eq!(cx_entries.len(), 1);
+        assert_eq!(cx_entries[0].status, ExceptionStatus::Active);
+        assert_eq!(cx_entries[0].reason.as_deref(), Some("canonical"));
+    }
+
+    #[test]
+    fn collect_exceptions_struct_entry_with_expired_date_is_expired() {
+        let lf = lockfile_with_cx_exempt_paths(serde_json::json!([
+            {"pattern": "foo::*", "reason": "old", "expires": "2020-01-01", "owner": "@core"}
+        ]));
+        let air = workspace_with_hints("t.rs", vec![]);
+        let entries = collect_exceptions(&air, &lf, Some("2026-05-07"));
+        let cx_entries: Vec<_> = entries
+            .iter()
+            .filter(|e| e.source == ExceptionSource::CxExemptPath)
+            .collect();
+        assert_eq!(cx_entries.len(), 1);
+        assert_eq!(cx_entries[0].status, ExceptionStatus::Expired);
+    }
+
+    #[test]
+    fn collect_exceptions_struct_entry_missing_metadata_is_legacy_no_metadata() {
+        let lf = lockfile_with_cx_exempt_paths(serde_json::json!([
+            {"pattern": "bar::*"}  // struct form but no reason/expires/owner
+        ]));
+        let air = workspace_with_hints("t.rs", vec![]);
+        let entries = collect_exceptions(&air, &lf, Some("2026-05-07"));
+        let cx_entries: Vec<_> = entries
+            .iter()
+            .filter(|e| e.source == ExceptionSource::CxExemptPath)
+            .collect();
+        assert_eq!(cx_entries.len(), 1);
+        assert_eq!(
+            cx_entries[0].status,
+            ExceptionStatus::LegacyNoMetadata,
+            "struct form with missing fields → LegacyNoMetadata"
+        );
+    }
+
+    #[test]
+    fn collect_exceptions_no_cx_section_does_not_produce_phantom_entries() {
+        // An empty lockfile (no CX key) must not produce any CxExemptPath
+        // entries — the default CxSection's exempt_paths should not surface.
+        let air = workspace_with_hints("t.rs", vec![]);
+        let entries = collect_exceptions(&air, &Lockfile::empty(), Some("2026-05-07"));
+        assert!(
+            entries
+                .iter()
+                .all(|e| e.source != ExceptionSource::CxExemptPath),
+            "no CX section → no CxExemptPath entries; got {entries:#?}"
+        );
+    }
+
+    #[test]
+    fn collect_exceptions_legacy_no_metadata_sorts_before_unbounded() {
+        // Ordering: Expired → LegacyNoMetadata → Unbounded → Active.
+        let lf = lockfile_with_cx_exempt_paths(serde_json::json!(["*::tests::*"]));
+        let air = workspace_with_hints(
+            "t.rs",
+            vec![allow_hint("OT002", None, 10)], // Unbounded
+        );
+        let entries = collect_exceptions(&air, &lf, Some("2026-05-07"));
+        // Should be 2 entries: one Unbounded hint, one LegacyNoMetadata cx exempt.
+        let statuses: Vec<_> = entries.iter().map(|e| e.status).collect();
+        assert_eq!(statuses.len(), 2);
+        // LegacyNoMetadata sorts before Unbounded.
+        assert_eq!(statuses[0], ExceptionStatus::LegacyNoMetadata);
+        assert_eq!(statuses[1], ExceptionStatus::Unbounded);
     }
 }
