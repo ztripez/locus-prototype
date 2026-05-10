@@ -1376,4 +1376,4 @@ fn loop_kind_label(kind: LoopKind) -> &'static str {
 
 #[cfg(test)]
 #[path = "rules_tests.rs"]
-mod tests;
+mod rules_tests;

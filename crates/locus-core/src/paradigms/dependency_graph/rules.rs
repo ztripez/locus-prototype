@@ -458,4 +458,4 @@ fn cycle_diagnostic(
 
 #[cfg(test)]
 #[path = "rules_tests.rs"]
-mod tests;
+mod rules_tests;

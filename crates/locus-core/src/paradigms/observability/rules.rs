@@ -392,4 +392,4 @@ fn diagnostic_for_macro_emission(
 
 #[cfg(test)]
 #[path = "rules_tests.rs"]
-mod tests;
+mod rules_tests;

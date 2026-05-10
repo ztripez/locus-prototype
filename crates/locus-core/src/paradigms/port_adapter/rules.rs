@@ -419,4 +419,4 @@ pub fn pa004(air: &AirWorkspace, section: &PaSection, mode: CheckMode) -> Vec<Di
 
 #[cfg(test)]
 #[path = "rules_tests.rs"]
-mod tests;
+mod rules_tests;

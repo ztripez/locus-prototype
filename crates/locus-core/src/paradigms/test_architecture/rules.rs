@@ -441,4 +441,4 @@ fn best_jaccard_match<'a>(
 
 #[cfg(test)]
 #[path = "rules_tests.rs"]
-mod tests;
+mod rules_tests;

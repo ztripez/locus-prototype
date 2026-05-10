@@ -1262,4 +1262,4 @@ fn join_sorted(set: &BTreeSet<String>) -> String {
 
 #[cfg(test)]
 #[path = "rules_tests.rs"]
-mod tests;
+mod rules_tests;

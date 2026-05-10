@@ -352,4 +352,4 @@ pub fn da007(air: &AirWorkspace, section: &DaSection, mode: CheckMode) -> Vec<Di
 
 #[cfg(test)]
 #[path = "rules_tests.rs"]
-mod tests;
+mod rules_tests;

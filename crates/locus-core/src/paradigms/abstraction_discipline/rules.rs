@@ -306,4 +306,4 @@ pub fn ab002(air: &AirWorkspace, section: &AbSection, mode: CheckMode) -> Vec<Di
 
 #[cfg(test)]
 #[path = "rules_tests.rs"]
-mod tests;
+mod rules_tests;

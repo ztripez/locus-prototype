@@ -378,4 +378,4 @@ fn strip_string_quotes(value: &str) -> &str {
 
 #[cfg(test)]
 #[path = "rules_tests.rs"]
-mod tests;
+mod rules_tests;

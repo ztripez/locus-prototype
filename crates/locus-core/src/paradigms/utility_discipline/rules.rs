@@ -439,4 +439,4 @@ pub fn ut005(air: &AirWorkspace, section: &UtSection, mode: CheckMode) -> Vec<Di
 
 #[cfg(test)]
 #[path = "rules_tests.rs"]
-mod tests;
+mod rules_tests;

@@ -699,4 +699,4 @@ fn has_error_suffix(name: &str) -> bool {
 
 #[cfg(test)]
 #[path = "rules_tests.rs"]
-mod tests;
+mod rules_tests;

@@ -229,4 +229,4 @@ fn matches_pattern(pattern: &str, path: &str) -> bool {
 
 #[cfg(test)]
 #[path = "rules_tests.rs"]
-mod tests;
+mod rules_tests;

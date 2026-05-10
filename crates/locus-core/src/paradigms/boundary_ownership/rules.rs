@@ -442,4 +442,4 @@ fn lookup_function<'a>(air: &'a AirWorkspace, symbol: &str) -> Option<(&'a str, 
 
 #[cfg(test)]
 #[path = "rules_tests.rs"]
-mod tests;
+mod rules_tests;

@@ -393,4 +393,4 @@ pub fn cx008(air: &AirWorkspace, section: &CxSection, mode: CheckMode) -> Vec<Di
 
 #[cfg(test)]
 #[path = "rules_tests.rs"]
-mod tests;
+mod rules_tests;

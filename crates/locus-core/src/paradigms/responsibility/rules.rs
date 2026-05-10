@@ -783,4 +783,4 @@ fn rm006_diagnostic(
 
 #[cfg(test)]
 #[path = "rules_tests.rs"]
-mod tests;
+mod rules_tests;
