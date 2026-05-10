@@ -456,6 +456,8 @@
       "converter_paths": [
         "locus_rust::*",
         "*::tests::*",
+        "*::rules_tests",
+        "*::rules_tests::*",
         "*::layer_detection_tests::*"
       ]
     },
