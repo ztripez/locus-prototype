@@ -1781,8 +1781,14 @@ fn populate_lockfile_sections(
     }
     if let Some(raw) = acknowledge_empty {
         for prefix in parse_prefix_list(raw) {
-            if !lockfile.acknowledged_empty.iter().any(|p| p == &prefix) {
-                lockfile.acknowledged_empty.push(prefix);
+            if !lockfile
+                .acknowledged_empty
+                .iter()
+                .any(|e| e.prefix() == prefix.as_str())
+            {
+                lockfile
+                    .acknowledged_empty
+                    .push(locus_core::AcknowledgedEmptyEntry::Legacy(prefix));
             }
         }
     }
@@ -1942,6 +1948,7 @@ fn print_debt_json(
                 ExceptionSource::Hint => "hint",
                 ExceptionSource::Lockfile => "lockfile",
                 ExceptionSource::CxExemptPath => "cx_exempt_path",
+                ExceptionSource::AcknowledgedEmpty => "acknowledged_empty",
             },
             "rule": e.rule,
             "target": e.target,
@@ -2068,6 +2075,7 @@ fn format_debt_entry(e: &locus_core::exceptions::ExceptionEntry) -> String {
         ExceptionSource::Hint => "hint",
         ExceptionSource::Lockfile => "lock",
         ExceptionSource::CxExemptPath => "cx-exempt",
+        ExceptionSource::AcknowledgedEmpty => "ack-empty",
     };
     let expires = e.expires.as_deref().unwrap_or("—");
     let reason = e.reason.as_deref().unwrap_or("");
@@ -2367,7 +2375,15 @@ mod init_acknowledge_empty_tests {
 
         let lockfile_bytes = std::fs::read(dir.join(LOCKFILE_NAME)).unwrap();
         let lf: Lockfile = serde_json::from_slice(&lockfile_bytes).unwrap();
-        assert_eq!(lf.acknowledged_empty, seed_prefixes);
+        // acknowledged_empty now stores AcknowledgedEmptyEntry items; the
+        // init path writes them as Legacy (bare-string) entries. Verify the
+        // prefix set matches the expected seeds.
+        let actual_prefixes: Vec<String> = lf
+            .acknowledged_empty
+            .iter()
+            .map(|e| e.prefix().to_string())
+            .collect();
+        assert_eq!(actual_prefixes, seed_prefixes);
     }
 }
 

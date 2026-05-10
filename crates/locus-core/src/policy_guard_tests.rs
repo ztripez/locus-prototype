@@ -4,9 +4,9 @@
 //! at the bottom of `policy_guard.rs`.
 
 use super::*;
-use crate::lockfile::Lockfile;
+use crate::lockfile::{AcknowledgedEmpty, AcknowledgedEmptyEntry, Lockfile};
 
-fn lockfile_with(paradigms: serde_json::Value, ack: Vec<String>) -> Lockfile {
+fn lockfile_with(paradigms: serde_json::Value, ack: Vec<AcknowledgedEmptyEntry>) -> Lockfile {
     let mut lf = Lockfile::empty();
     if let Some(obj) = paradigms.as_object() {
         for (k, v) in obj {
@@ -15,6 +15,34 @@ fn lockfile_with(paradigms: serde_json::Value, ack: Vec<String>) -> Lockfile {
     }
     lf.acknowledged_empty = ack;
     lf
+}
+
+/// Helper: build a `Vec<AcknowledgedEmptyEntry>` of legacy strings.
+fn ack_legacy(prefixes: &[&str]) -> Vec<AcknowledgedEmptyEntry> {
+    prefixes
+        .iter()
+        .map(|s| AcknowledgedEmptyEntry::Legacy(s.to_string()))
+        .collect()
+}
+
+/// Helper: build a single Full entry with all metadata.
+fn ack_full(prefix: &str) -> AcknowledgedEmptyEntry {
+    AcknowledgedEmptyEntry::Full(AcknowledgedEmpty {
+        prefix: prefix.to_string(),
+        expires: Some("2027-05-09".to_string()),
+        reason: Some("test reason".to_string()),
+        owner: Some("@test".to_string()),
+        debt_id: Some(format!("ack-empty-{prefix}")),
+        introduced_by: Some("PR #49".to_string()),
+    })
+}
+
+/// Helper: build a Full entry without any metadata.
+fn ack_full_no_metadata(prefix: &str) -> AcknowledgedEmptyEntry {
+    AcknowledgedEmptyEntry::Full(AcknowledgedEmpty {
+        prefix: prefix.to_string(),
+        ..Default::default()
+    })
 }
 
 // ---- PG000 baseline missing --------------------------------------
@@ -60,7 +88,7 @@ fn pg000_is_fatal_under_agent_strict_regardless_of_calibration() {
 fn identical_lockfiles_yield_no_diagnostics() {
     let lf = lockfile_with(
         serde_json::json!({"CX": {"default_max_function_lines": 200}}),
-        vec!["BO".into()],
+        ack_legacy(&["BO"]),
     );
     let diags = check_policy_mutation(&lf, Some(&lf), CheckMode::AgentStrict, false, false);
     assert!(
@@ -466,7 +494,7 @@ fn pg003_covers_dc_exempt_paths() {
 #[test]
 fn pg004_fires_on_new_acknowledged_empty_entry() {
     let base = lockfile_with(serde_json::json!({}), vec![]);
-    let cur = lockfile_with(serde_json::json!({}), vec!["BO".into(), "PA".into()]);
+    let cur = lockfile_with(serde_json::json!({}), ack_legacy(&["BO", "PA"]));
     let diags = check_policy_mutation(&cur, Some(&base), CheckMode::Human, false, false);
     let pg004: Vec<_> = diags.iter().filter(|d| d.rule_id == "PG004").collect();
     assert_eq!(
@@ -481,8 +509,8 @@ fn pg004_fires_on_new_acknowledged_empty_entry() {
 
 #[test]
 fn pg004_quiet_for_pre_existing_acknowledged_entry() {
-    let base = lockfile_with(serde_json::json!({}), vec!["BO".into()]);
-    let cur = lockfile_with(serde_json::json!({}), vec!["BO".into()]);
+    let base = lockfile_with(serde_json::json!({}), ack_legacy(&["BO"]));
+    let cur = lockfile_with(serde_json::json!({}), ack_legacy(&["BO"]));
     let diags = check_policy_mutation(&cur, Some(&base), CheckMode::Human, false, false);
     assert!(diags.iter().all(|d| d.rule_id != "PG004"));
 }
@@ -599,7 +627,7 @@ fn all_pg_diagnostics_anchor_to_lockfile_span() {
                 "exempt_paths": ["nope::*"],                  // PG003
             }
         }),
-        vec!["BO".into()], // PG004
+        ack_legacy(&["BO"]), // PG004 + PG009 (no metadata on new entry)
     );
     let diags = check_policy_mutation(&cur, Some(&base), CheckMode::AgentStrict, false, false);
     let pg_diags: Vec<_> = diags
@@ -1148,5 +1176,200 @@ fn pg007_quiet_for_preexisting_struct_entry_without_metadata() {
     assert!(
         diags.iter().all(|d| d.rule_id != "PG007"),
         "pre-existing entry — PG007 must not fire; got {diags:#?}"
+    );
+}
+
+// ---- PG009 acknowledged_empty new entry lacking metadata ----------
+
+#[test]
+fn pg009_fires_on_new_legacy_string_prefix() {
+    // baseline has "BO"; current adds "CR" as a bare string → PG004 + PG009.
+    let base = lockfile_with(serde_json::json!({}), ack_legacy(&["BO"]));
+    let cur = lockfile_with(serde_json::json!({}), ack_legacy(&["BO", "CR"]));
+    let diags = check_policy_mutation(&cur, Some(&base), CheckMode::AgentStrict, false, false);
+
+    // PG004 fires on the new addition.
+    assert!(
+        diags.iter().any(|d| d.rule_id == "PG004"),
+        "PG004 must fire on new prefix; got {diags:#?}"
+    );
+    // PG009 also fires — new legacy string has no metadata.
+    let pg009: Vec<_> = diags.iter().filter(|d| d.rule_id == "PG009").collect();
+    assert_eq!(pg009.len(), 1, "expected one PG009; got {diags:#?}");
+    let m = pg009[0].message.as_str();
+    assert!(
+        m.contains("CR"),
+        "PG009 message should name the prefix: {m}"
+    );
+    assert!(m.contains("reason"), "should list missing 'reason': {m}");
+    assert!(m.contains("expires"), "should list missing 'expires': {m}");
+    assert!(m.contains("owner"), "should list missing 'owner': {m}");
+    assert_eq!(
+        pg009[0].severity,
+        Severity::Fatal,
+        "PG009 must be Fatal under strict"
+    );
+}
+
+#[test]
+fn pg009_silent_on_grandfathered_legacy_string() {
+    // baseline has "BO"; current still has just "BO" → silent.
+    let base = lockfile_with(serde_json::json!({}), ack_legacy(&["BO"]));
+    let cur = lockfile_with(serde_json::json!({}), ack_legacy(&["BO"]));
+    let diags = check_policy_mutation(&cur, Some(&base), CheckMode::AgentStrict, false, false);
+    assert!(
+        diags.iter().all(|d| d.rule_id != "PG009"),
+        "grandfathered entry — PG009 must stay quiet; got {diags:#?}"
+    );
+}
+
+#[test]
+fn pg009_fires_on_new_full_entry_lacking_metadata() {
+    // baseline is empty; current adds a Full struct with no metadata → PG004 + PG009.
+    let base = lockfile_with(serde_json::json!({}), vec![]);
+    let cur = lockfile_with(serde_json::json!({}), vec![ack_full_no_metadata("DA")]);
+    let diags = check_policy_mutation(&cur, Some(&base), CheckMode::AgentStrict, false, false);
+
+    assert!(
+        diags.iter().any(|d| d.rule_id == "PG004"),
+        "PG004 must fire on new entry; got {diags:#?}"
+    );
+    let pg009: Vec<_> = diags.iter().filter(|d| d.rule_id == "PG009").collect();
+    assert_eq!(pg009.len(), 1, "expected one PG009; got {diags:#?}");
+    let m = pg009[0].message.as_str();
+    assert!(
+        m.contains("DA"),
+        "PG009 message should name the prefix: {m}"
+    );
+    assert_eq!(
+        pg009[0].severity,
+        Severity::Fatal,
+        "PG009 must be Fatal under strict"
+    );
+}
+
+#[test]
+fn pg009_silent_on_new_full_entry_with_complete_metadata() {
+    // baseline is empty; current adds a Full struct with all metadata → PG004 only, no PG009.
+    let base = lockfile_with(serde_json::json!({}), vec![]);
+    let cur = lockfile_with(serde_json::json!({}), vec![ack_full("DA")]);
+    let diags = check_policy_mutation(&cur, Some(&base), CheckMode::AgentStrict, false, false);
+
+    assert!(
+        diags.iter().any(|d| d.rule_id == "PG004"),
+        "PG004 still fires on the addition; got {diags:#?}"
+    );
+    assert!(
+        diags.iter().all(|d| d.rule_id != "PG009"),
+        "complete metadata — PG009 must stay quiet; got {diags:#?}"
+    );
+}
+
+#[test]
+fn pg009_silent_on_form_only_upgrade_same_prefix() {
+    // baseline has legacy "BO"; current upgrades it to Full struct without
+    // metadata. The prefix is grandfathered — PG009 stays silent.
+    let base = lockfile_with(serde_json::json!({}), ack_legacy(&["BO"]));
+    let cur = lockfile_with(serde_json::json!({}), vec![ack_full_no_metadata("BO")]);
+    let diags = check_policy_mutation(&cur, Some(&base), CheckMode::AgentStrict, false, false);
+    assert!(
+        diags.iter().all(|d| d.rule_id != "PG009"),
+        "prefix already in baseline — grandfathered; PG009 must stay quiet; got {diags:#?}"
+    );
+    // PG004 also stays quiet — the prefix was already in baseline.
+    assert!(
+        diags.iter().all(|d| d.rule_id != "PG004"),
+        "prefix already in baseline — PG004 must stay quiet too; got {diags:#?}"
+    );
+}
+
+#[test]
+fn pg009_fires_under_strict_silent_with_calibration_downgrade() {
+    // Calibration downgrades PG004 to Advisory but does NOT waive PG009.
+    let base = lockfile_with(serde_json::json!({}), vec![]);
+    let cur = lockfile_with(serde_json::json!({}), ack_legacy(&["ER"]));
+    // Without calibration: PG004 = Fatal, PG009 = Fatal.
+    let diags_strict =
+        check_policy_mutation(&cur, Some(&base), CheckMode::AgentStrict, false, false);
+    let pg004_strict = diags_strict.iter().find(|d| d.rule_id == "PG004").unwrap();
+    let pg009_strict = diags_strict.iter().find(|d| d.rule_id == "PG009").unwrap();
+    assert_eq!(pg004_strict.severity, Severity::Fatal);
+    assert_eq!(pg009_strict.severity, Severity::Fatal);
+
+    // With calibration: PG004 → Advisory; PG009 stays Fatal.
+    let diags_cal = check_policy_mutation(&cur, Some(&base), CheckMode::AgentStrict, true, false);
+    let pg004_cal = diags_cal.iter().find(|d| d.rule_id == "PG004").unwrap();
+    let pg009_cal = diags_cal.iter().find(|d| d.rule_id == "PG009").unwrap();
+    assert_eq!(
+        pg004_cal.severity,
+        Severity::Advisory,
+        "PG004 should be Advisory under calibration"
+    );
+    assert_eq!(
+        pg009_cal.severity,
+        Severity::Fatal,
+        "PG009 must stay Fatal under strict even with calibration"
+    );
+}
+
+#[test]
+fn pg009_not_suppressed_by_lockfile_exception_or_allow_hint() {
+    // PG runs after apply_exceptions. A lockfile exception targeting
+    // PG009 must NOT silence it — PG is meta-policy.
+    let base = lockfile_with(serde_json::json!({}), vec![]);
+    let mut cur = lockfile_with(serde_json::json!({}), ack_legacy(&["FL"]));
+    cur.exceptions.push(crate::lockfile::Exception {
+        rule: "PG009".to_string(),
+        target: "*".to_string(),
+        reason: "test suppression attempt".to_string(),
+        expires: "9999-12-31".to_string(),
+    });
+    // check_policy_mutation is called after apply_exceptions in the CLI
+    // pipeline, so the exceptions entry has no effect on PG.
+    let diags = check_policy_mutation(&cur, Some(&base), CheckMode::AgentStrict, false, false);
+    assert!(
+        diags.iter().any(|d| d.rule_id == "PG009"),
+        "PG009 must fire even when a lockfile exception targets it; got {diags:#?}"
+    );
+}
+
+#[test]
+fn pg009_lists_only_actually_missing_fields() {
+    // Only 'expires' and 'owner' missing — message should mention them
+    // but not 'reason'.
+    let base = lockfile_with(serde_json::json!({}), vec![]);
+    let cur = lockfile_with(
+        serde_json::json!({}),
+        vec![AcknowledgedEmptyEntry::Full(AcknowledgedEmpty {
+            prefix: "TA".to_string(),
+            reason: Some("some reason".to_string()),
+            expires: None,
+            owner: None,
+            ..Default::default()
+        })],
+    );
+    let diags = check_policy_mutation(&cur, Some(&base), CheckMode::Human, false, false);
+    let pg009 = diags.iter().find(|d| d.rule_id == "PG009").unwrap();
+    let m = pg009.message.as_str();
+    assert!(
+        m.contains("expires"),
+        "should mention missing 'expires': {m}"
+    );
+    assert!(m.contains("owner"), "should mention missing 'owner': {m}");
+    assert!(
+        !m.contains(", reason") && !m.starts_with("(reason"),
+        "reason was supplied; should not appear in missing list: {m}"
+    );
+}
+
+#[test]
+fn pg009_silent_when_full_entry_with_complete_metadata_already_in_baseline() {
+    // Full entry with complete metadata in baseline — still grandfathered.
+    let base = lockfile_with(serde_json::json!({}), vec![ack_full("RM")]);
+    let cur = lockfile_with(serde_json::json!({}), vec![ack_full("RM")]);
+    let diags = check_policy_mutation(&cur, Some(&base), CheckMode::AgentStrict, false, false);
+    assert!(
+        diags.iter().all(|d| d.rule_id != "PG009"),
+        "pre-existing full entry — PG009 must stay quiet; got {diags:#?}"
     );
 }

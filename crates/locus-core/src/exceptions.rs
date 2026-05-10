@@ -153,6 +153,11 @@ pub enum ExceptionSource {
     /// fields filled appear as `Active`; struct entries with missing metadata
     /// appear as `LegacyNoMetadata` (they need upgrading).
     CxExemptPath,
+    /// An entry in `Lockfile.acknowledged_empty`. Legacy string entries appear
+    /// here with `status = LegacyNoMetadata`; struct entries with all debt
+    /// fields filled appear as `Active` or `Expired`; struct entries with
+    /// missing metadata appear as `LegacyNoMetadata`.
+    AcknowledgedEmpty,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -175,9 +180,10 @@ pub enum ExceptionStatus {
 /// [`apply_exceptions`]: `Some("YYYY-MM-DD")` for deterministic runs,
 /// `None` to skip expiry checks.
 ///
-/// Also enumerates `paradigms.CX.exempt_paths` entries. Legacy `String`
-/// entries surface as [`ExceptionStatus::LegacyNoMetadata`]; struct entries
-/// with complete metadata surface as [`ExceptionStatus::Active`] or
+/// Also enumerates `paradigms.CX.exempt_paths` entries and
+/// `Lockfile.acknowledged_empty` entries. Legacy `String` entries surface as
+/// [`ExceptionStatus::LegacyNoMetadata`]; struct entries with complete
+/// metadata surface as [`ExceptionStatus::Active`] or
 /// [`ExceptionStatus::Expired`]; struct entries with missing metadata also
 /// surface as [`ExceptionStatus::LegacyNoMetadata`].
 pub fn collect_exceptions(
@@ -240,6 +246,9 @@ pub fn collect_exceptions(
     }
     // Enumerate CX.exempt_paths entries.
     collect_cx_exempt_paths(lockfile, today, &mut out);
+
+    // Enumerate acknowledged_empty entries.
+    collect_acknowledged_empty_entries(lockfile, today, &mut out);
 
     out.sort_by(|a, b| {
         (status_order(a.status), &a.rule, &a.target).cmp(&(
@@ -305,6 +314,56 @@ fn collect_cx_exempt_paths(
             source: ExceptionSource::CxExemptPath,
             rule: "CX007".to_string(),
             target: format!("paradigms.CX.exempt_paths:{pattern}"),
+            reason: reason.map(str::to_string),
+            expires: expires.map(str::to_string),
+            status,
+        });
+    }
+}
+
+/// Append one [`ExceptionEntry`] per `Lockfile.acknowledged_empty` entry to
+/// `out`.
+///
+/// Classification:
+/// - Legacy `String` entry → `LegacyNoMetadata` (pre-dates the schema).
+/// - Struct entry with any of `reason`/`expires`/`owner` missing → `LegacyNoMetadata`.
+/// - Struct entry with all three fields populated:
+///   - Expired (`expires` < `today`) → `Expired`.
+///   - Otherwise → `Active`.
+fn collect_acknowledged_empty_entries(
+    lockfile: &Lockfile,
+    today: Option<&str>,
+    out: &mut Vec<ExceptionEntry>,
+) {
+    use crate::lockfile::AcknowledgedEmptyEntry;
+
+    for entry in &lockfile.acknowledged_empty {
+        let (prefix, reason, expires, owner) = match entry {
+            AcknowledgedEmptyEntry::Legacy(s) => (s.as_str(), None, None, None),
+            AcknowledgedEmptyEntry::Full(meta) => (
+                meta.prefix.as_str(),
+                meta.reason.as_deref(),
+                meta.expires.as_deref(),
+                meta.owner.as_deref(),
+            ),
+        };
+
+        let has_metadata = reason.is_some_and(|r| !r.is_empty())
+            && expires.is_some_and(|e| !e.is_empty())
+            && owner.is_some_and(|o| !o.is_empty());
+
+        let status = if !has_metadata {
+            ExceptionStatus::LegacyNoMetadata
+        } else if is_expired(expires, today) {
+            ExceptionStatus::Expired
+        } else {
+            ExceptionStatus::Active
+        };
+
+        out.push(ExceptionEntry {
+            source: ExceptionSource::AcknowledgedEmpty,
+            rule: "LOCUS002".to_string(),
+            target: format!("acknowledged_empty:{prefix}"),
             reason: reason.map(str::to_string),
             expires: expires.map(str::to_string),
             status,
@@ -780,5 +839,103 @@ mod tests {
         // LegacyNoMetadata sorts before Unbounded.
         assert_eq!(statuses[0], ExceptionStatus::LegacyNoMetadata);
         assert_eq!(statuses[1], ExceptionStatus::Unbounded);
+    }
+
+    // ---- acknowledged_empty debt enumeration -------------------------
+
+    fn lockfile_with_ack_empty(entries: Vec<crate::lockfile::AcknowledgedEmptyEntry>) -> Lockfile {
+        let mut lf = Lockfile::empty();
+        lf.acknowledged_empty = entries;
+        lf
+    }
+
+    #[test]
+    fn collect_exceptions_surfaces_legacy_ack_empty_as_legacy_no_metadata() {
+        use crate::lockfile::AcknowledgedEmptyEntry;
+        let lf = lockfile_with_ack_empty(vec![
+            AcknowledgedEmptyEntry::Legacy("BO".to_string()),
+            AcknowledgedEmptyEntry::Legacy("PA".to_string()),
+        ]);
+        let air = workspace_with_hints("t.rs", vec![]);
+        let entries = collect_exceptions(&air, &lf, Some("2026-05-07"));
+        let ack: Vec<_> = entries
+            .iter()
+            .filter(|e| e.source == ExceptionSource::AcknowledgedEmpty)
+            .collect();
+        assert_eq!(ack.len(), 2, "two legacy entries → two rows; got {ack:#?}");
+        for e in &ack {
+            assert_eq!(e.status, ExceptionStatus::LegacyNoMetadata);
+            assert_eq!(e.rule, "LOCUS002");
+        }
+        assert!(
+            ack.iter().any(|e| e.target.contains("BO")),
+            "target should name the prefix; got {:?}",
+            ack.iter().map(|e| &e.target).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn collect_exceptions_ack_empty_struct_with_full_metadata_is_active() {
+        use crate::lockfile::{AcknowledgedEmpty, AcknowledgedEmptyEntry};
+        let lf = lockfile_with_ack_empty(vec![AcknowledgedEmptyEntry::Full(AcknowledgedEmpty {
+            prefix: "RW".to_string(),
+            expires: Some("2030-01-01".to_string()),
+            reason: Some("no runtime owners yet".to_string()),
+            owner: Some("@core".to_string()),
+            debt_id: None,
+            introduced_by: None,
+        })]);
+        let air = workspace_with_hints("t.rs", vec![]);
+        let entries = collect_exceptions(&air, &lf, Some("2026-05-07"));
+        let ack: Vec<_> = entries
+            .iter()
+            .filter(|e| e.source == ExceptionSource::AcknowledgedEmpty)
+            .collect();
+        assert_eq!(ack.len(), 1);
+        assert_eq!(ack[0].status, ExceptionStatus::Active);
+        assert_eq!(ack[0].reason.as_deref(), Some("no runtime owners yet"));
+    }
+
+    #[test]
+    fn collect_exceptions_ack_empty_struct_with_expired_date_is_expired() {
+        use crate::lockfile::{AcknowledgedEmpty, AcknowledgedEmptyEntry};
+        let lf = lockfile_with_ack_empty(vec![AcknowledgedEmptyEntry::Full(AcknowledgedEmpty {
+            prefix: "DA".to_string(),
+            expires: Some("2020-01-01".to_string()),
+            reason: Some("old".to_string()),
+            owner: Some("@core".to_string()),
+            debt_id: None,
+            introduced_by: None,
+        })]);
+        let air = workspace_with_hints("t.rs", vec![]);
+        let entries = collect_exceptions(&air, &lf, Some("2026-05-07"));
+        let ack: Vec<_> = entries
+            .iter()
+            .filter(|e| e.source == ExceptionSource::AcknowledgedEmpty)
+            .collect();
+        assert_eq!(ack.len(), 1);
+        assert_eq!(ack[0].status, ExceptionStatus::Expired);
+    }
+
+    #[test]
+    fn collect_exceptions_ack_empty_struct_missing_metadata_is_legacy_no_metadata() {
+        use crate::lockfile::{AcknowledgedEmpty, AcknowledgedEmptyEntry};
+        // struct form but no reason/expires/owner
+        let lf = lockfile_with_ack_empty(vec![AcknowledgedEmptyEntry::Full(AcknowledgedEmpty {
+            prefix: "CF".to_string(),
+            ..Default::default()
+        })]);
+        let air = workspace_with_hints("t.rs", vec![]);
+        let entries = collect_exceptions(&air, &lf, Some("2026-05-07"));
+        let ack: Vec<_> = entries
+            .iter()
+            .filter(|e| e.source == ExceptionSource::AcknowledgedEmpty)
+            .collect();
+        assert_eq!(ack.len(), 1);
+        assert_eq!(
+            ack[0].status,
+            ExceptionStatus::LegacyNoMetadata,
+            "struct form with missing fields → LegacyNoMetadata"
+        );
     }
 }
