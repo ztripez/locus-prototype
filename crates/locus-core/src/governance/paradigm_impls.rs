@@ -42,7 +42,22 @@ impl ParadigmDefinition for OtParadigmDef {
         &RULES
     }
 }
-paradigm_def!(DgParadigmDef, "DG", "Dependency Graph");
+// DG breaks out of the macro — third paradigm with a migrated rule
+// (DG001 in P2 #71), so `rules()` returns a non-empty slice.
+pub struct DgParadigmDef;
+impl ParadigmDefinition for DgParadigmDef {
+    fn id(&self) -> ParadigmId {
+        ParadigmId::new("DG")
+    }
+    fn title(&self) -> &'static str {
+        "Dependency Graph"
+    }
+    fn rules(&self) -> &'static [&'static dyn RuleDefinition] {
+        static RULES: [&dyn RuleDefinition; 1] =
+            [&crate::paradigms::dependency_graph::rules::dg001::DG001_RULE];
+        &RULES
+    }
+}
 paradigm_def!(AbParadigmDef, "AB", "Abstraction Discipline");
 paradigm_def!(BoParadigmDef, "BO", "Boundary Ownership");
 paradigm_def!(CfParadigmDef, "CF", "Config Data");

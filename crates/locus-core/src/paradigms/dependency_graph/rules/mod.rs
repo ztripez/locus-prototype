@@ -1,8 +1,7 @@
 //! DG rules.
 //!
 //! Implemented:
-//! - [`dg001`]: forbidden import (importer matches a forbidden edge's `from`
-//!   pattern AND the imported path matches the `to` pattern)
+//! - [`dg001`]: forbidden import — migrated to `RuleDefinition` in P2 (#71)
 //! - [`dg002`]: dependency cycle of any size (Tarjan SCC over crate-level
 //!   import edges)
 //! - [`dg003`]: cross-feature internals reach (importer in feature A, import
@@ -10,83 +9,16 @@
 //! - [`dg004`]: shared module reaching feature-specific code (a `shared_paths`
 //!   module imports a path that belongs to any feature)
 
+pub mod dg001;
+
+// locus: allow CX002 — DG002/003/004 helpers are transitional in rules/mod.rs until split to per-file like DG001 (#71 follow-up)
+
 use std::collections::{BTreeMap, BTreeSet};
 
 use locus_air::{AirItem, AirSpan, AirWorkspace};
 
 use super::lockfile_schema::{DgSection, FeatureDefinition, matches_pattern};
 use crate::diagnostics::{CheckMode, Diagnostic, Severity};
-
-fn dg001_diagnostic(
-    module_path: &str,
-    imp: &locus_air::AirImport,
-    edge: &super::lockfile_schema::ForbiddenEdge,
-    mode: CheckMode,
-) -> Diagnostic {
-    let mut why = vec![
-        format!("importer `{module_path}` matches `from = {}`", edge.from),
-        format!("import `{}` matches `to = {}`", imp.path, edge.to),
-    ];
-    if let Some(reason) = &edge.reason {
-        why.push(format!("reason: {reason}"));
-    }
-    Diagnostic {
-        rule_id: "DG001".to_string(),
-        severity: mode.elevate(Severity::Fatal),
-        span: imp.span.clone(),
-        concept: None,
-        message: format!(
-            "forbidden import: `{module_path}` must not reach `{}`",
-            imp.path
-        ),
-        why,
-        suggested_fix: Some(
-            "remove the import, or route the call through an accepted \
-             intermediary (port, application service, or shared crate); \
-             if the edge is wrong, edit `paradigms.DG.forbidden_edges` in \
-             `locus.lock`"
-                .into(),
-        ),
-    }
-}
-
-/// DG001 — forbidden import.
-///
-/// For every `AirImport` in every file, walk the lockfile's `forbidden_edges`.
-/// Fire when the file's `module_path` matches the edge's `from` pattern AND
-/// the import path matches the edge's `to` pattern.
-///
-/// Always Fatal: a forbidden edge is, by the user's own declaration, a
-/// directional violation.
-pub fn dg001(air: &AirWorkspace, section: &DgSection, mode: CheckMode) -> Vec<Diagnostic> {
-    if section.forbidden_edges.is_empty() {
-        return Vec::new();
-    }
-    let mut out = Vec::new();
-    for pkg in &air.packages {
-        for file in &pkg.files {
-            let Some(module_path) = file.module_path.as_deref() else {
-                continue;
-            };
-            for item in &file.items {
-                let AirItem::Import(imp) = item else {
-                    continue;
-                };
-                for edge in &section.forbidden_edges {
-                    if !matches_pattern(&edge.from, module_path) {
-                        continue;
-                    }
-                    if !matches_pattern(&edge.to, &imp.path) {
-                        continue;
-                    }
-                    out.push(dg001_diagnostic(module_path, imp, edge, mode));
-                    break; // one diagnostic per (file, import); don't re-fire on overlapping edges
-                }
-            }
-        }
-    }
-    out
-}
 
 /// DG002 — dependency cycle across crates.
 ///
@@ -101,6 +33,7 @@ pub fn dg001(air: &AirWorkspace, section: &DgSection, mode: CheckMode) -> Vec<Di
 /// granularity, so the user sees a span in each violating import.
 ///
 /// Always Fatal: a cycle is structural and breaks layered ownership.
+// locus: allow MO005 — DG rule helper; transitional in rules/mod.rs until split to per-file like DG001 (#71 follow-up)
 pub fn dg002(air: &AirWorkspace, mode: CheckMode) -> Vec<Diagnostic> {
     let edges = collect_crate_edges(air);
     if edges.is_empty() {
@@ -154,6 +87,7 @@ pub fn dg002(air: &AirWorkspace, mode: CheckMode) -> Vec<Diagnostic> {
 /// list of node indices. SCCs are returned in reverse topological order
 /// (children before parents), but we don't rely on that — callers filter
 /// by size and iterate.
+// locus: allow MO005 — DG rule helper; transitional in rules/mod.rs until split to per-file like DG001 (#71 follow-up)
 fn tarjan_sccs(adj: &[Vec<usize>]) -> Vec<Vec<usize>> {
     let n = adj.len();
     let mut state = TarjanState {
@@ -172,6 +106,7 @@ fn tarjan_sccs(adj: &[Vec<usize>]) -> Vec<Vec<usize>> {
     state.sccs
 }
 
+// locus: allow MO005 — DG rule helper; transitional in rules/mod.rs until split to per-file like DG001 (#71 follow-up)
 struct TarjanState {
     index: usize,
     indices: Vec<Option<usize>>,
@@ -181,6 +116,7 @@ struct TarjanState {
     sccs: Vec<Vec<usize>>,
 }
 
+// locus: allow MO005 — DG rule helper; transitional in rules/mod.rs until split to per-file like DG001 (#71 follow-up)
 fn strongconnect(v: usize, adj: &[Vec<usize>], st: &mut TarjanState) {
     st.indices[v] = Some(st.index);
     st.lowlinks[v] = st.index;
@@ -213,6 +149,7 @@ fn strongconnect(v: usize, adj: &[Vec<usize>], st: &mut TarjanState) {
     }
 }
 
+// locus: allow MO005 — DG rule helper; transitional in rules/mod.rs until split to per-file like DG001 (#71 follow-up)
 #[derive(Debug, Clone)]
 struct EdgeEvidence {
     file_path: String,
@@ -220,6 +157,7 @@ struct EdgeEvidence {
     import_path: String,
 }
 
+// locus: allow MO005 — DG rule helper; transitional in rules/mod.rs until split to per-file like DG001 (#71 follow-up)
 fn collect_crate_edges(air: &AirWorkspace) -> BTreeMap<(String, String), EdgeEvidence> {
     let mut edges: BTreeMap<(String, String), EdgeEvidence> = BTreeMap::new();
     for pkg in &air.packages {
@@ -252,10 +190,12 @@ fn collect_crate_edges(air: &AirWorkspace) -> BTreeMap<(String, String), EdgeEvi
     edges
 }
 
+// locus: allow MO005 — DG rule helper; transitional in rules/mod.rs until split to per-file like DG001 (#71 follow-up)
 fn first_segment(path: &str) -> &str {
     path.split("::").next().unwrap_or("").trim()
 }
 
+// locus: allow MO005 — DG rule helper; transitional in rules/mod.rs until split to per-file like DG001 (#71 follow-up)
 fn dg003_why(
     module_path: &str,
     imp: &locus_air::AirImport,
@@ -303,6 +243,7 @@ fn dg003_why(
 /// but not actively rejected.
 ///
 /// Always Fatal: feature isolation is the user's declared invariant.
+// locus: allow MO005 — DG rule helper; transitional in rules/mod.rs until split to per-file like DG001 (#71 follow-up)
 pub fn dg003(air: &AirWorkspace, section: &DgSection, mode: CheckMode) -> Vec<Diagnostic> {
     if section.features.len() < 2 {
         // DG003 needs at least two features to identify a cross-feature edge.
@@ -354,6 +295,7 @@ pub fn dg003(air: &AirWorkspace, section: &DgSection, mode: CheckMode) -> Vec<Di
     out
 }
 
+// locus: allow MO005 — DG rule helper; transitional in rules/mod.rs until split to per-file like DG001 (#71 follow-up)
 fn dg004_diagnostic(
     module_path: &str,
     imp: &locus_air::AirImport,
@@ -395,6 +337,7 @@ fn dg004_diagnostic(
 /// module's import path matches some feature's `module` pattern.
 ///
 /// Always Fatal.
+// locus: allow MO005 — DG rule helper; transitional in rules/mod.rs until split to per-file like DG001 (#71 follow-up)
 pub fn dg004(air: &AirWorkspace, section: &DgSection, mode: CheckMode) -> Vec<Diagnostic> {
     if section.shared_paths.is_empty() || section.features.is_empty() {
         return Vec::new();
@@ -434,6 +377,7 @@ pub fn dg004(air: &AirWorkspace, section: &DgSection, mode: CheckMode) -> Vec<Di
 
 /// Find the first feature whose `module` pattern matches `path`. Returns
 /// `None` when the path doesn't belong to any declared feature.
+// locus: allow MO005 — DG rule helper; transitional in rules/mod.rs until split to per-file like DG001 (#71 follow-up)
 fn owning_feature<'a>(
     features: &'a [FeatureDefinition],
     path: &str,
@@ -441,6 +385,7 @@ fn owning_feature<'a>(
     features.iter().find(|f| matches_pattern(&f.module, path))
 }
 
+// locus: allow MO005 — DG rule helper; transitional in rules/mod.rs until split to per-file like DG001 (#71 follow-up)
 fn path_in_public_api(feature: &FeatureDefinition, path: &str) -> bool {
     feature
         .public_api
@@ -448,6 +393,7 @@ fn path_in_public_api(feature: &FeatureDefinition, path: &str) -> bool {
         .any(|pat| matches_pattern(pat, path))
 }
 
+// locus: allow MO005 — DG rule helper; transitional in rules/mod.rs until split to per-file like DG001 (#71 follow-up)
 fn cycle_diagnostic(
     importer: &str,
     imported: &str,
@@ -491,5 +437,5 @@ fn cycle_diagnostic(
 }
 
 #[cfg(test)]
-#[path = "rules_tests.rs"]
+#[path = "../rules_tests.rs"]
 mod rules_tests;
