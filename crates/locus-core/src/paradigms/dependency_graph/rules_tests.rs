@@ -2,6 +2,12 @@ use super::super::lockfile_schema::ForbiddenEdge;
 use super::*;
 use locus_air::{AIR_SCHEMA_VERSION, AirFile, AirImport, AirPackage, AirSpan, Visibility};
 
+use crate::governance::finding::RuleFinding;
+use crate::governance::ids::{FindingIdMinter, RuleId};
+use crate::governance::registry::{ParadigmRegistry, RuleRegistry};
+use crate::governance::rule::{RuleContext, RuleDefinition};
+use crate::lockfile::Lockfile;
+
 fn import(path: &str) -> AirItem {
     AirItem::Import(AirImport {
         path: path.into(),
@@ -39,6 +45,28 @@ fn forbid(from: &str, to: &str) -> ForbiddenEdge {
     }
 }
 
+fn observe_dg001(
+    air: &AirWorkspace,
+    section: &DgSection,
+    mode: CheckMode,
+) -> Vec<RuleFinding> {
+    let mut lf = Lockfile::default();
+    lf.paradigms
+        .insert("DG".to_string(), serde_json::to_value(section).unwrap());
+    let rules = RuleRegistry::standard();
+    let paradigms = ParadigmRegistry::empty();
+    let minter = FindingIdMinter::new();
+    let ctx = RuleContext {
+        air,
+        lockfile: &lf,
+        mode,
+        rule_registry: &rules,
+        paradigm_registry: &paradigms,
+        finding_ids: &minter,
+    };
+    dg001::Dg001Rule.observe(&ctx)
+}
+
 #[test]
 fn dg001_fires_when_module_imports_forbidden_path() {
     let air = air_with_module("lore::domain::user", vec![import("lore::api::v1::UserDto")]);
@@ -46,12 +74,12 @@ fn dg001_fires_when_module_imports_forbidden_path() {
         forbidden_edges: vec![forbid("lore::domain::*", "lore::api::*")],
         ..DgSection::default()
     };
-    let diags = dg001(&air, &section, CheckMode::Human);
-    assert_eq!(diags.len(), 1);
-    assert_eq!(diags[0].rule_id, "DG001");
-    assert_eq!(diags[0].severity, Severity::Fatal);
-    assert!(diags[0].message.contains("lore::api::v1::UserDto"));
-    assert!(diags[0].message.contains("lore::domain::user"));
+    let findings = observe_dg001(&air, &section, CheckMode::Human);
+    assert_eq!(findings.len(), 1);
+    assert_eq!(findings[0].rule_id, Some(RuleId::new("DG001")));
+    assert_eq!(findings[0].default_severity, Severity::Fatal);
+    assert!(findings[0].message.contains("lore::api::v1::UserDto"));
+    assert!(findings[0].message.contains("lore::domain::user"));
 }
 
 #[test]
@@ -61,14 +89,14 @@ fn dg001_quiet_when_no_edges_match() {
         forbidden_edges: vec![forbid("lore::domain::*", "lore::api::*")],
         ..DgSection::default()
     };
-    assert!(dg001(&air, &section, CheckMode::Human).is_empty());
+    assert!(observe_dg001(&air, &section, CheckMode::Human).is_empty());
 }
 
 #[test]
 fn dg001_silent_with_empty_lockfile() {
     let air = air_with_module("lore::domain::user", vec![import("lore::api::v1::UserDto")]);
     let section = DgSection::default();
-    assert!(dg001(&air, &section, CheckMode::Human).is_empty());
+    assert!(observe_dg001(&air, &section, CheckMode::Human).is_empty());
 }
 
 #[test]
@@ -79,7 +107,7 @@ fn dg001_skips_non_matching_module_even_if_import_matches() {
         forbidden_edges: vec![forbid("lore::domain::*", "lore::api::*")],
         ..DgSection::default()
     };
-    assert!(dg001(&air, &section, CheckMode::Human).is_empty());
+    assert!(observe_dg001(&air, &section, CheckMode::Human).is_empty());
 }
 
 #[test]
@@ -92,11 +120,11 @@ fn dg001_one_diagnostic_per_file_per_import_when_multiple_edges_match() {
         ],
         ..DgSection::default()
     };
-    let diags = dg001(&air, &section, CheckMode::Human);
+    let findings = observe_dg001(&air, &section, CheckMode::Human);
     assert_eq!(
-        diags.len(),
+        findings.len(),
         1,
-        "overlapping forbidden edges should not double-report; got {diags:?}"
+        "overlapping forbidden edges should not double-report; got {findings:?}"
     );
 }
 
@@ -438,13 +466,13 @@ fn dg001_carries_reason_into_why() {
         }],
         ..DgSection::default()
     };
-    let diags = dg001(&air, &section, CheckMode::Human);
+    let findings = observe_dg001(&air, &section, CheckMode::Human);
     assert!(
-        diags[0]
+        findings[0]
             .why
             .iter()
             .any(|w| w.contains("domain must not depend on transport")),
         "expected reason in `why`; got {:?}",
-        diags[0].why
+        findings[0].why
     );
 }

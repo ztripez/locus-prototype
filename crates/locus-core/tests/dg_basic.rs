@@ -2,6 +2,7 @@
 //! registry, and DG001 fires on the fixture when a forbidden edge covers a
 //! real import.
 
+use locus_core::governance;
 use locus_core::paradigms::dependency_graph::DG_PREFIX;
 use locus_core::{CheckMode, Lockfile, Severity, registry};
 
@@ -27,13 +28,11 @@ fn dg_silent_with_empty_section() {
     // fixture has imports that *could* be forbidden if declared.
     let air = locus_rust::scan(&fixture_path()).expect("scan succeeds");
     let lockfile = Lockfile::empty();
-    let mut diags = Vec::new();
-    for paradigm in registry() {
-        diags.extend(paradigm.check(&air, &lockfile, CheckMode::Human));
-    }
+    let out = governance::run(&air, &lockfile, CheckMode::Human);
     assert!(
-        diags.iter().all(|d| d.rule_id != "DG001"),
-        "DG001 must not fire without forbidden_edges; got {diags:?}"
+        out.diagnostics.iter().all(|d| d.rule_id != "DG001"),
+        "DG001 must not fire without forbidden_edges; got {:?}",
+        out.diagnostics
     );
 }
 
@@ -55,14 +54,16 @@ fn dg001_fires_when_handler_imports_dto() {
     });
     lockfile.paradigms.insert(DG_PREFIX.to_string(), dg);
 
-    let mut diags = Vec::new();
-    for paradigm in registry() {
-        diags.extend(paradigm.check(&air, &lockfile, CheckMode::Human));
-    }
-    let dg001: Vec<_> = diags.iter().filter(|d| d.rule_id == "DG001").collect();
+    let out = governance::run(&air, &lockfile, CheckMode::Human);
+    let dg001: Vec<_> = out
+        .diagnostics
+        .iter()
+        .filter(|d| d.rule_id == "DG001")
+        .collect();
     assert!(
         !dg001.is_empty(),
-        "expected DG001 to fire on handler.rs's UserDto import; got nothing in {diags:?}"
+        "expected DG001 to fire on handler.rs's UserDto import; got nothing in {:?}",
+        out.diagnostics
     );
     let target = dg001
         .iter()
@@ -125,11 +126,12 @@ fn dg003_allows_public_api_blocks_internals_reach() {
         }),
     );
 
-    let mut diags = Vec::new();
-    for paradigm in registry() {
-        diags.extend(paradigm.check(&air, &lockfile, CheckMode::Human));
-    }
-    let dg003: Vec<_> = diags.iter().filter(|d| d.rule_id == "DG003").collect();
+    let out = governance::run(&air, &lockfile, CheckMode::Human);
+    let dg003: Vec<_> = out
+        .diagnostics
+        .iter()
+        .filter(|d| d.rule_id == "DG003")
+        .collect();
 
     assert_eq!(
         dg003.len(),
@@ -156,9 +158,8 @@ fn ot_and_dg_diagnostics_coexist() {
     // The fixture's handler.rs trips OT003 + OT004 (after OT init) AND DG001
     // (with our forbidden edge). One paradigm shouldn't suppress the other.
     let air = locus_rust::scan(&fixture_path()).expect("scan succeeds");
-    let registry = registry();
     let mut lockfile = Lockfile::empty();
-    for p in &registry {
+    for p in registry() {
         let section = p.init(&air);
         if !section.is_null() {
             lockfile
@@ -176,11 +177,8 @@ fn ot_and_dg_diagnostics_coexist() {
         }),
     );
 
-    let mut diags = Vec::new();
-    for p in &registry {
-        diags.extend(p.check(&air, &lockfile, CheckMode::Human));
-    }
-    let rule_ids: Vec<&str> = diags.iter().map(|d| d.rule_id.as_str()).collect();
+    let out = governance::run(&air, &lockfile, CheckMode::Human);
+    let rule_ids: Vec<&str> = out.diagnostics.iter().map(|d| d.rule_id.as_str()).collect();
     assert!(
         rule_ids.contains(&"OT003"),
         "expected OT003 in {rule_ids:?}"

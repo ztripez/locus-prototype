@@ -68,7 +68,6 @@ impl Paradigm for DependencyGraph {
             ));
             return out;
         }
-        out.extend(rules::dg001(air, &section, mode));
         out.extend(rules::dg003(air, &section, mode));
         out.extend(rules::dg004(air, &section, mode));
         out
