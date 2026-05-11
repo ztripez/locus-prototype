@@ -21,139 +21,9 @@ use super::lockfile_schema::{CxSection, matches_pattern};
 use crate::diagnostics::{CheckMode, Diagnostic, Severity};
 use locus_air::AirSpan;
 
-fn cx001_why(
-    func_symbol: &str,
-    func_line_count: u32,
-    budget: u32,
-    default_budget: u32,
-    matched_override: Option<&super::lockfile_schema::CxOverride>,
-    section: &CxSection,
-) -> Vec<String> {
-    let mut why = vec![
-        format!("function `{func_symbol}` spans {func_line_count} line(s)"),
-        if let Some(o) = matched_override {
-            format!("budget {budget} from override `module = {}`", o.module)
-        } else {
-            format!("budget {budget} (workspace default)")
-        },
-    ];
-    if matched_override.is_none() && section.default_max_function_lines.is_none() {
-        why.push(format!(
-            "no `default_max_function_lines` configured; using built-in fallback {}",
-            default_budget
-        ));
-    }
-    why
-}
+pub mod cx001;
 
-/// CX001 — function exceeds its line budget.
-///
-/// For each `AirFile` with a `module_path`, walk every `AirItem::Function`
-/// and compare its `line_count` against the file's effective budget:
-/// - if the file's `module_path` matches an override's `module` pattern,
-///   the override's `max_function_lines` wins (first match);
-/// - otherwise the section's `default_max_function_lines` (or the constant
-///   fallback) is used.
-///
-/// One diagnostic per function that overshoots its budget.
-///
-/// Severity: Warning by default. `--agent-strict` elevates to Fatal via
-/// [`CheckMode::elevate`].
-///
-/// Fires by default — the section's built-in fallback budget
-/// ([`super::lockfile_schema::DEFAULT_MAX_FUNCTION_LINES`]) is treated as
-/// real configuration. Configuration narrows: users raise the budget on
-/// dense modules via `paradigms.CX.overrides`, or replace the workspace
-/// default via `default_max_function_lines`. Add the prefix to
-/// `acknowledged_empty` to silence the paradigm entirely.
-/// Check a single file's functions against the CX001 budget.
-fn cx001_check_file(
-    file: &locus_air::AirFile,
-    module_path: &str,
-    section: &CxSection,
-    default_budget: u32,
-    mode: CheckMode,
-    out: &mut Vec<Diagnostic>,
-) {
-    let matched_override = section.matching_override(module_path);
-    let budget = matched_override
-        .map(|o| o.max_function_lines)
-        .unwrap_or(default_budget);
-    let narrowed = matched_override.is_some() || section.default_max_function_lines.is_some();
-    for item in &file.items {
-        let AirItem::Function(func) = item else {
-            continue;
-        };
-        if func.line_count <= budget {
-            continue;
-        }
-        let why = cx001_why(
-            &func.symbol,
-            func.line_count,
-            budget,
-            default_budget,
-            matched_override,
-            section,
-        );
-        out.push(cx001_diagnostic(
-            func,
-            budget,
-            matched_override,
-            narrowed,
-            why,
-            mode,
-        ));
-    }
-}
-
-pub fn cx001(air: &AirWorkspace, section: &CxSection, mode: CheckMode) -> Vec<Diagnostic> {
-    let default_budget = section.effective_default();
-    let mut out = Vec::new();
-    for pkg in &air.packages {
-        for file in &pkg.files {
-            let Some(module_path) = file.module_path.as_deref() else {
-                continue;
-            };
-            cx001_check_file(file, module_path, section, default_budget, mode, &mut out);
-        }
-    }
-    out
-}
-
-fn cx001_diagnostic(
-    func: &locus_air::AirFunction,
-    budget: u32,
-    matched_override: Option<&super::lockfile_schema::CxOverride>,
-    narrowed: bool,
-    why: Vec<String>,
-    mode: CheckMode,
-) -> Diagnostic {
-    Diagnostic {
-        rule_id: "CX001".to_string(),
-        severity: mode.elevate_when_actionable(Severity::Warning, narrowed),
-        span: func.span.clone(),
-        concept: None,
-        message: format!(
-            "function `{}` is {} lines, budget {} ({})",
-            func.symbol,
-            func.line_count,
-            budget,
-            match matched_override {
-                Some(o) => format!("override `{}`", o.module),
-                None => "workspace default".to_string(),
-            }
-        ),
-        why,
-        suggested_fix: Some(
-            "split the function into smaller steps each owning one decision, \
-             or — if this length is intended (e.g. a parser arm or state \
-             machine) — raise the budget by adding an override to \
-             `paradigms.CX.overrides` in `locus.lock`"
-                .into(),
-        ),
-    }
-}
-
+// locus: allow MO005 — CX rule helper; transitional in rules/mod.rs until split to per-file like CX001 (#71 follow-up)
 fn cx002_why(
     file_path: &str,
     file_line_count: u32,
@@ -202,6 +72,7 @@ fn cx002_why(
 /// `paradigms.CX.default_max_module_lines`.
 /// Check a single file against the CX002 module-line budget.
 /// Returns `Some(Diagnostic)` when the file exceeds its budget.
+// locus: allow MO005 — CX rule helper; transitional in rules/mod.rs until split to per-file like CX001 (#71 follow-up)
 fn cx002_check_file(
     file: &locus_air::AirFile,
     module_path: &str,
@@ -237,6 +108,7 @@ fn cx002_check_file(
     ))
 }
 
+// locus: allow MO005 — CX rule helper; transitional in rules/mod.rs until split to per-file like CX001 (#71 follow-up)
 pub fn cx002(air: &AirWorkspace, section: &CxSection, mode: CheckMode) -> Vec<Diagnostic> {
     let default_budget = section.effective_default_module();
     let mut out = Vec::new();
@@ -254,6 +126,7 @@ pub fn cx002(air: &AirWorkspace, section: &CxSection, mode: CheckMode) -> Vec<Di
 }
 
 #[allow(clippy::too_many_arguments)]
+// locus: allow MO005 — CX rule helper; transitional in rules/mod.rs until split to per-file like CX001 (#71 follow-up)
 fn cx002_diagnostic(
     file: &locus_air::AirFile,
     module_path: &str,
@@ -289,6 +162,7 @@ fn cx002_diagnostic(
 }
 
 /// Count public API items (Type or Function with Public visibility) in a file.
+// locus: allow MO005 — CX rule helper; transitional in rules/mod.rs until split to per-file like CX001 (#71 follow-up)
 fn count_public_items(file: &locus_air::AirFile) -> u32 {
     file.items
         .iter()
@@ -301,6 +175,7 @@ fn count_public_items(file: &locus_air::AirFile) -> u32 {
 }
 
 /// Anchor a CX007 diagnostic at the first public item span in a file.
+// locus: allow MO005 — CX rule helper; transitional in rules/mod.rs until split to per-file like CX001 (#71 follow-up)
 fn cx007_anchor_span(file: &locus_air::AirFile) -> AirSpan {
     file.items
         .iter()
@@ -328,6 +203,7 @@ fn cx007_anchor_span(file: &locus_air::AirFile) -> AirSpan {
 /// paths covering test modules, so the rule is useful out of the box.
 /// Files without a `module_path` are skipped — we can't apply
 /// `exempt_paths` without one.
+// locus: allow MO005 — CX rule helper; transitional in rules/mod.rs until split to per-file like CX001 (#71 follow-up)
 fn cx007_diagnostic(
     module_path: &str,
     file_path: &str,
@@ -361,6 +237,7 @@ fn cx007_diagnostic(
     }
 }
 
+// locus: allow MO005 — CX rule helper; transitional in rules/mod.rs until split to per-file like CX001 (#71 follow-up)
 pub fn cx007(air: &AirWorkspace, section: &CxSection, mode: CheckMode) -> Vec<Diagnostic> {
     let mut out = Vec::new();
     for pkg in &air.packages {
@@ -394,6 +271,7 @@ pub fn cx007(air: &AirWorkspace, section: &CxSection, mode: CheckMode) -> Vec<Di
 }
 
 /// Build a call-site count index: symbol → count.
+// locus: allow MO005 — CX rule helper; transitional in rules/mod.rs until split to per-file like CX001 (#71 follow-up)
 fn build_fan_out_index(air: &AirWorkspace) -> HashMap<String, u32> {
     let mut fan_out: HashMap<String, u32> = HashMap::new();
     for pkg in &air.packages {
@@ -427,6 +305,7 @@ fn build_fan_out_index(air: &AirWorkspace) -> HashMap<String, u32> {
 /// either accepted or noise, so we don't fire pre-onboarding. Mirrors the
 /// DG/MO un-onboarded UX.
 /// Check one file's functions against CX008 and append any diagnostics.
+// locus: allow MO005 — CX rule helper; transitional in rules/mod.rs until split to per-file like CX001 (#71 follow-up)
 fn cx008_check_file(
     file: &locus_air::AirFile,
     fan_out: &HashMap<String, u32>,
@@ -466,6 +345,7 @@ fn cx008_check_file(
     }
 }
 
+// locus: allow MO005 — CX rule helper; transitional in rules/mod.rs until split to per-file like CX001 (#71 follow-up)
 pub fn cx008(air: &AirWorkspace, section: &CxSection, mode: CheckMode) -> Vec<Diagnostic> {
     if section.orchestration_paths.is_empty() {
         return Vec::new();
@@ -480,6 +360,7 @@ pub fn cx008(air: &AirWorkspace, section: &CxSection, mode: CheckMode) -> Vec<Di
     out
 }
 
+// locus: allow MO005 — CX rule helper; transitional in rules/mod.rs until split to per-file like CX001 (#71 follow-up)
 fn cx008_diagnostic(
     func: &locus_air::AirFunction,
     count: u32,
@@ -516,5 +397,5 @@ fn cx008_diagnostic(
 }
 
 #[cfg(test)]
-#[path = "rules_tests.rs"]
+#[path = "../rules_tests.rs"]
 mod rules_tests;

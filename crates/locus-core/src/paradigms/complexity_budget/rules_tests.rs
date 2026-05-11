@@ -5,6 +5,41 @@ use locus_air::{
     TypeKind, Visibility,
 };
 
+// CX001 migrated to RuleDefinition (#71 P2). Tests call this helper
+// instead of the legacy `cx001()` function; helper constructs the
+// RuleContext + lockfile shape that `Cx001Rule::observe` expects.
+use crate::governance::evidence::Evidence;
+use crate::governance::finding::RuleFinding;
+use crate::governance::ids::{FindingIdMinter, RuleId};
+use crate::governance::registry::{ParadigmRegistry, RuleRegistry};
+use crate::governance::rule::{RuleContext, RuleDefinition};
+use crate::lockfile::Lockfile;
+use crate::paradigms::complexity_budget::rules::cx001::Cx001Rule;
+
+fn observe_cx001(
+    air: &locus_air::AirWorkspace,
+    section: &CxSection,
+    mode: CheckMode,
+) -> Vec<RuleFinding> {
+    let mut lf = Lockfile::default();
+    lf.paradigms.insert(
+        "CX".to_string(),
+        serde_json::to_value(section).expect("CxSection must serialize"),
+    );
+    let rules = RuleRegistry::standard();
+    let paradigms = ParadigmRegistry::empty();
+    let minter = FindingIdMinter::new();
+    let ctx = RuleContext {
+        air,
+        lockfile: &lf,
+        mode,
+        rule_registry: &rules,
+        paradigm_registry: &paradigms,
+        finding_ids: &minter,
+    };
+    Cx001Rule.observe(&ctx)
+}
+
 fn func(name: &str, line_count: u32) -> AirItem {
     AirItem::Function(AirFunction {
         name: name.into(),
@@ -56,21 +91,36 @@ fn cx001_fires_with_built_in_fallback_on_default_section() {
     // "noisy-by-default, configuration narrows" convention.
     let air = air_with(Some("foo::bar"), vec![func("big", 500)]);
     let section = CxSection::default();
-    let diags = cx001(&air, &section, CheckMode::Human);
-    assert_eq!(diags.len(), 1, "expected one diag, got {diags:?}");
+    let findings = observe_cx001(&air, &section, CheckMode::Human);
+    assert_eq!(findings.len(), 1, "expected one finding, got {findings:?}");
     assert!(
-        diags[0].why.iter().any(|w| w.contains("built-in fallback")),
+        findings[0]
+            .why
+            .iter()
+            .any(|w| w.contains("built-in fallback")),
         "expected built-in fallback explanation in why; got {:?}",
-        diags[0].why,
+        findings[0].why,
     );
+    match &findings[0].evidence[0] {
+        Evidence::ComplexityBudget {
+            lines,
+            budget,
+            override_match,
+        } => {
+            assert_eq!(*lines, 500);
+            assert_eq!(*budget, 50);
+            assert_eq!(*override_match, None);
+        }
+        other => panic!("expected ComplexityBudget evidence, got {other:?}"),
+    }
 }
 
 #[test]
 fn cx001_quiet_when_function_within_built_in_fallback() {
-    // 30-line function under the 50-line built-in fallback → no diag.
+    // 30-line function under the 50-line built-in fallback → no finding.
     let air = air_with(Some("foo::bar"), vec![func("small", 30)]);
     let section = CxSection::default();
-    assert!(cx001(&air, &section, CheckMode::Human).is_empty());
+    assert!(observe_cx001(&air, &section, CheckMode::Human).is_empty());
 }
 
 #[test]
@@ -78,13 +128,25 @@ fn cx001_fires_when_line_count_exceeds_default_budget() {
     // 60 lines under default budget of 50 → fires.
     let air = air_with(Some("foo::bar"), vec![func("big", 60)]);
     let section = configured(50);
-    let diags = cx001(&air, &section, CheckMode::Human);
-    assert_eq!(diags.len(), 1, "expected one diag, got {diags:?}");
-    assert_eq!(diags[0].rule_id, "CX001");
-    assert_eq!(diags[0].severity, Severity::Warning);
-    assert!(diags[0].message.contains("x::big"));
-    assert!(diags[0].message.contains("60"));
-    assert!(diags[0].message.contains("budget 50"));
+    let findings = observe_cx001(&air, &section, CheckMode::Human);
+    assert_eq!(findings.len(), 1, "expected one finding, got {findings:?}");
+    assert_eq!(findings[0].rule_id, Some(RuleId::new("CX001")));
+    assert_eq!(findings[0].default_severity, Severity::Warning);
+    assert!(findings[0].message.contains("x::big"));
+    assert!(findings[0].message.contains("60"));
+    assert!(findings[0].message.contains("budget 50"));
+    match &findings[0].evidence[0] {
+        Evidence::ComplexityBudget {
+            lines,
+            budget,
+            override_match,
+        } => {
+            assert_eq!(*lines, 60);
+            assert_eq!(*budget, 50);
+            assert_eq!(*override_match, None);
+        }
+        other => panic!("expected ComplexityBudget evidence, got {other:?}"),
+    }
 }
 
 #[test]
@@ -92,10 +154,10 @@ fn cx001_quiet_when_line_count_at_or_below_budget() {
     let section = configured(50);
     // exactly at budget
     let air = air_with(Some("foo::bar"), vec![func("ok", 50)]);
-    assert!(cx001(&air, &section, CheckMode::Human).is_empty());
+    assert!(observe_cx001(&air, &section, CheckMode::Human).is_empty());
     // under budget
     let air = air_with(Some("foo::bar"), vec![func("tiny", 10)]);
-    assert!(cx001(&air, &section, CheckMode::Human).is_empty());
+    assert!(observe_cx001(&air, &section, CheckMode::Human).is_empty());
 }
 
 #[test]
@@ -112,7 +174,7 @@ fn cx001_override_raises_budget_effectively() {
         ..CxSection::default()
     };
     assert!(
-        cx001(&air, &section, CheckMode::Human).is_empty(),
+        observe_cx001(&air, &section, CheckMode::Human).is_empty(),
         "override should raise budget above the function's line count"
     );
 }
@@ -131,31 +193,59 @@ fn cx001_override_lowers_budget_effectively() {
         }],
         ..CxSection::default()
     };
-    let diags = cx001(&air, &section, CheckMode::Human);
-    assert_eq!(diags.len(), 1, "override should lower budget below count");
-    assert_eq!(diags[0].rule_id, "CX001");
-    assert!(diags[0].message.contains("budget 20"));
+    let findings = observe_cx001(&air, &section, CheckMode::Human);
+    assert_eq!(
+        findings.len(),
+        1,
+        "override should lower budget below count"
+    );
+    assert_eq!(findings[0].rule_id, Some(RuleId::new("CX001")));
+    assert!(findings[0].message.contains("budget 20"));
     assert!(
-        diags[0]
+        findings[0]
             .why
             .iter()
             .any(|w| w.contains("override") && w.contains("lore::convert::*")),
         "expected override mention in `why`; got {:?}",
-        diags[0].why
+        findings[0].why
     );
+    match &findings[0].evidence[0] {
+        Evidence::ComplexityBudget {
+            lines,
+            budget,
+            override_match,
+        } => {
+            assert_eq!(*lines, 40);
+            assert_eq!(*budget, 20);
+            assert_eq!(*override_match, Some("lore::convert::*".to_string()));
+        }
+        other => panic!("expected ComplexityBudget evidence, got {other:?}"),
+    }
 }
 
 #[test]
 fn cx001_agent_strict_elevates_to_fatal() {
     let air = air_with(Some("foo::bar"), vec![func("big", 60)]);
     let section = configured(50);
-    let diags = cx001(&air, &section, CheckMode::AgentStrict);
-    assert_eq!(diags.len(), 1);
+    let findings = observe_cx001(&air, &section, CheckMode::AgentStrict);
+    assert_eq!(findings.len(), 1);
     assert_eq!(
-        diags[0].severity,
+        findings[0].default_severity,
         Severity::Fatal,
         "agent-strict should elevate Warning to Fatal"
     );
+    match &findings[0].evidence[0] {
+        Evidence::ComplexityBudget {
+            lines,
+            budget,
+            override_match,
+        } => {
+            assert_eq!(*lines, 60);
+            assert_eq!(*budget, 50);
+            assert_eq!(*override_match, None);
+        }
+        other => panic!("expected ComplexityBudget evidence, got {other:?}"),
+    }
 }
 
 /// Advisory-tier elevation: under `--agent-strict` the rule stays
@@ -167,14 +257,26 @@ fn cx001_agent_strict_elevates_to_fatal() {
 fn cx001_agent_strict_stays_warning_when_using_built_in_fallback() {
     let air = air_with(Some("foo::bar"), vec![func("big", 500)]);
     let section = CxSection::default();
-    let diags = cx001(&air, &section, CheckMode::AgentStrict);
-    assert_eq!(diags.len(), 1);
+    let findings = observe_cx001(&air, &section, CheckMode::AgentStrict);
+    assert_eq!(findings.len(), 1);
     assert_eq!(
-        diags[0].severity,
+        findings[0].default_severity,
         Severity::Warning,
         "un-narrowed advisory rule stays Warning under agent-strict; \
          user must declare a budget before this becomes a CI blocker",
     );
+    match &findings[0].evidence[0] {
+        Evidence::ComplexityBudget {
+            lines,
+            budget,
+            override_match,
+        } => {
+            assert_eq!(*lines, 500);
+            assert_eq!(*budget, 50);
+            assert_eq!(*override_match, None);
+        }
+        other => panic!("expected ComplexityBudget evidence, got {other:?}"),
+    }
 }
 
 /// Once the user has set a workspace default, the rule is "narrowed" —
@@ -187,9 +289,21 @@ fn cx001_agent_strict_elevates_when_workspace_default_set() {
         default_max_function_lines: Some(50),
         ..CxSection::default()
     };
-    let diags = cx001(&air, &section, CheckMode::AgentStrict);
-    assert_eq!(diags.len(), 1);
-    assert_eq!(diags[0].severity, Severity::Fatal);
+    let findings = observe_cx001(&air, &section, CheckMode::AgentStrict);
+    assert_eq!(findings.len(), 1);
+    assert_eq!(findings[0].default_severity, Severity::Fatal);
+    match &findings[0].evidence[0] {
+        Evidence::ComplexityBudget {
+            lines,
+            budget,
+            override_match,
+        } => {
+            assert_eq!(*lines, 60);
+            assert_eq!(*budget, 50);
+            assert_eq!(*override_match, None);
+        }
+        other => panic!("expected ComplexityBudget evidence, got {other:?}"),
+    }
 }
 
 /// Per-module override is also a "narrowed" signal — the user has
@@ -209,9 +323,21 @@ fn cx001_agent_strict_elevates_when_module_override_matches() {
         }],
         ..CxSection::default()
     };
-    let diags = cx001(&air, &section, CheckMode::AgentStrict);
-    assert_eq!(diags.len(), 1);
-    assert_eq!(diags[0].severity, Severity::Fatal);
+    let findings = observe_cx001(&air, &section, CheckMode::AgentStrict);
+    assert_eq!(findings.len(), 1);
+    assert_eq!(findings[0].default_severity, Severity::Fatal);
+    match &findings[0].evidence[0] {
+        Evidence::ComplexityBudget {
+            lines,
+            budget,
+            override_match,
+        } => {
+            assert_eq!(*lines, 200);
+            assert_eq!(*budget, 100);
+            assert_eq!(*override_match, Some("foo::*".to_string()));
+        }
+        other => panic!("expected ComplexityBudget evidence, got {other:?}"),
+    }
 }
 
 fn air_with_lines(module: Option<&str>, line_count: u32) -> AirWorkspace {
@@ -293,7 +419,7 @@ fn cx001_skips_files_without_module_path() {
     // No module_path → can't apply overrides → skip entirely.
     let air = air_with(None, vec![func("big", 500)]);
     let section = configured(50);
-    assert!(cx001(&air, &section, CheckMode::Human).is_empty());
+    assert!(observe_cx001(&air, &section, CheckMode::Human).is_empty());
 }
 
 // --- CX007 fixtures + tests ----------------------------------------

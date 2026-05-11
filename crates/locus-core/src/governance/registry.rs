@@ -26,9 +26,25 @@ pub struct RuleRegistry {
 }
 
 impl RuleRegistry {
-    /// Empty registry. P1 wires no migrated rules.
+    /// Migrated rules. Grows as rules move from legacy `Paradigm::check`
+    /// to `RuleDefinition` impls. CX001 lands in P2 (#71); others follow
+    /// in subsequent PRs.
+    ///
+    /// Construction-time invariants (uniqueness, prefix consistency) are
+    /// asserted under `debug_assert!`. The spec mandates a recoverable
+    /// error path at runtime; this is the MVP form until a fallible
+    /// constructor lands (see spec §"Registries → Construction-time
+    /// validation").
     pub fn standard() -> Self {
-        Self { rules: Vec::new() }
+        let reg = Self {
+            rules: vec![&crate::paradigms::complexity_budget::rules::cx001::CX001_RULE],
+        };
+        debug_assert!(
+            reg.validate().is_ok(),
+            "RuleRegistry::standard() violates a construction invariant: {:?}",
+            reg.validate()
+        );
+        reg
     }
 
     /// Test-only constructor.
@@ -322,6 +338,41 @@ mod tests {
             "default-pass-through",
             "DefaultPassThroughPolicy MUST be the last entry in PolicyRegistry::standard()"
         );
+    }
+
+    #[test]
+    fn rule_registry_standard_satisfies_construction_invariants() {
+        // P2 lands the first real registered rule. From now on, the
+        // standard registry must validate clean: no duplicate IDs, every
+        // rule's id starts with its paradigm prefix. Future migrations
+        // (OT002, DG001, …) must keep this passing.
+        let reg = RuleRegistry::standard();
+        reg.validate().expect("RuleRegistry::standard() must validate");
+    }
+
+    #[test]
+    fn rule_registry_contains_cx001_after_p2_migration() {
+        let reg = RuleRegistry::standard();
+        assert!(
+            reg.contains_code("CX001"),
+            "CX001 must be in RuleRegistry::standard() after P2"
+        );
+        let rule = reg.find(&RuleId::new("CX001")).expect("CX001 missing");
+        assert_eq!(rule.paradigm().as_str(), "CX");
+        assert_eq!(
+            rule.default_severity(),
+            crate::diagnostics::Severity::Warning
+        );
+    }
+
+    #[test]
+    fn cx_paradigm_def_lists_cx001_rule() {
+        let reg = ParadigmRegistry::standard();
+        let cx = reg
+            .find(&ParadigmId::new("CX"))
+            .expect("CX ParadigmDefinition missing");
+        let rule_ids: Vec<&str> = cx.rules().iter().map(|r| r.id().as_str()).collect();
+        assert_eq!(rule_ids, vec!["CX001"]);
     }
 
     #[test]
