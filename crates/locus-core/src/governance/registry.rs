@@ -39,6 +39,7 @@ impl RuleRegistry {
         let reg = Self {
             rules: vec![
                 &crate::paradigms::complexity_budget::rules::cx001::CX001_RULE,
+                &crate::paradigms::dependency_graph::rules::dg001::DG001_RULE,
                 &crate::paradigms::one_truth::rules::ot002::OT002_RULE,
             ],
         };
@@ -402,6 +403,33 @@ mod tests {
             .expect("OT ParadigmDefinition missing");
         let rule_ids: Vec<&str> = ot.rules().iter().map(|r| r.id().as_str()).collect();
         assert_eq!(rule_ids, vec!["OT002"]);
+    }
+
+    #[test]
+    fn rule_registry_contains_dg001_after_p2_migration() {
+        let reg = RuleRegistry::standard();
+        assert!(
+            reg.contains_code("DG001"),
+            "DG001 must be in RuleRegistry::standard() after P2-DG001"
+        );
+        let rule = reg.find(&RuleId::new("DG001")).expect("DG001 missing");
+        assert_eq!(rule.paradigm().as_str(), "DG");
+        // DG001 is always Fatal — forbidden edge is the user's own
+        // declaration, not an inferred budget.
+        assert_eq!(
+            rule.default_severity(),
+            crate::diagnostics::Severity::Fatal
+        );
+    }
+
+    #[test]
+    fn dg_paradigm_def_lists_dg001_rule() {
+        let reg = ParadigmRegistry::standard();
+        let dg = reg
+            .find(&ParadigmId::new("DG"))
+            .expect("DG ParadigmDefinition missing");
+        let rule_ids: Vec<&str> = dg.rules().iter().map(|r| r.id().as_str()).collect();
+        assert_eq!(rule_ids, vec!["DG001"]);
     }
 
     #[test]
