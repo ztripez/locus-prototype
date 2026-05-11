@@ -10,6 +10,12 @@
 
 use super::super::infer::{ConceptCluster, FIELD_OVERLAP_THRESHOLD, InferredRole};
 use crate::diagnostics::{CheckMode, Diagnostic, Severity};
+#[allow(unused_imports)]
+use crate::governance::evidence::{Confidence, Evidence};
+#[allow(unused_imports)]
+use crate::governance::finding::{FindingSource, RuleFinding};
+use crate::governance::ids::{ParadigmId, RuleId};
+use crate::governance::rule::{RuleContext, RuleDefinition};
 
 pub fn ot002(clusters: &[ConceptCluster], mode: CheckMode) -> Vec<Diagnostic> {
     let mut out = Vec::new();
@@ -66,5 +72,168 @@ fn ot002_diagnostic(
              or remove and use `{}` directly",
             cluster.concept_id, member.name, canonical.symbol
         )),
+    }
+}
+
+pub struct Ot002Rule;
+
+pub static OT002_RULE: Ot002Rule = Ot002Rule;
+
+const OT002_ID: RuleId = RuleId::new("OT002");
+const OT_PARADIGM: ParadigmId = ParadigmId::new("OT");
+
+impl RuleDefinition for Ot002Rule {
+    fn id(&self) -> RuleId {
+        OT002_ID
+    }
+    fn paradigm(&self) -> ParadigmId {
+        OT_PARADIGM
+    }
+    fn title(&self) -> &'static str {
+        "undeclared concept-shaped type"
+    }
+    fn default_severity(&self) -> Severity {
+        Severity::Warning
+    }
+    fn observe(&self, _ctx: &RuleContext<'_>) -> Vec<RuleFinding> {
+        // Implemented in Task 3.
+        Vec::new()
+    }
+}
+
+#[cfg(test)]
+mod ot002_rule_tests {
+    use super::*;
+    use crate::diagnostics::CheckMode;
+    use crate::governance::ids::FindingIdMinter;
+    use crate::governance::registry::{ParadigmRegistry, RuleRegistry};
+    use crate::lockfile::Lockfile;
+    use locus_air::{
+        AirField, AirFile, AirHint, AirItem, AirPackage, AirSpan, AirType, AirWorkspace, HintKind,
+        TypeKind, Visibility,
+    };
+
+    /// Build a workspace with two types sharing stem `User` and overlapping
+    /// fields: one is `// locus: ot canonical`-annotated, the other has
+    /// no hint. The migrated rule should emit one OT002 finding on the
+    /// undeclared sibling.
+    #[test]
+    fn fires_on_concept_shaped_sibling_without_annotation() {
+        let air = workspace_with_canonical_and_sibling();
+        let lf = Lockfile::default();
+        let rules = RuleRegistry::standard();
+        let paradigms = ParadigmRegistry::empty();
+        let minter = FindingIdMinter::new();
+        let ctx = RuleContext {
+            air: &air,
+            lockfile: &lf,
+            mode: CheckMode::Human,
+            rule_registry: &rules,
+            paradigm_registry: &paradigms,
+            finding_ids: &minter,
+        };
+
+        let findings = Ot002Rule.observe(&ctx);
+        assert_eq!(
+            findings.len(),
+            1,
+            "expected exactly one OT002 finding, got {findings:?}"
+        );
+        let f = &findings[0];
+        assert_eq!(f.source, FindingSource::RegisteredRule(OT002_ID));
+        assert_eq!(f.rule_id, Some(OT002_ID));
+        assert_eq!(f.paradigm_id, Some(OT_PARADIGM));
+        assert_eq!(f.default_severity, Severity::Warning);
+        assert!(
+            f.message.contains("concept-shaped but not accepted"),
+            "expected legacy-compatible message, got `{}`",
+            f.message
+        );
+
+        // Typed evidence.
+        assert_eq!(f.evidence.len(), 1);
+        match &f.evidence[0] {
+            Evidence::InferenceConfidence { score, signals } => {
+                // Two fields overlap fully (id, name) → field_overlap is
+                // 1.0 → Confidence::High.
+                assert_eq!(*score, Confidence::High);
+                assert!(
+                    signals.iter().any(|s| s.contains("overlaps")),
+                    "expected overlap signal in {signals:?}"
+                );
+            }
+            other => panic!("expected InferenceConfidence evidence, got {other:?}"),
+        }
+    }
+
+    fn workspace_with_canonical_and_sibling() -> AirWorkspace {
+        let canonical = AirType {
+            kind: TypeKind::Struct,
+            name: "User".into(),
+            symbol: "demo::user::User".into(),
+            symbol_segments: Vec::new(),
+            visibility: Visibility::Public,
+            fields: vec![
+                AirField {
+                    name: "id".into(),
+                    type_text: "u32".into(),
+                    visibility: Visibility::Public,
+                },
+                AirField {
+                    name: "name".into(),
+                    type_text: "String".into(),
+                    visibility: Visibility::Public,
+                },
+            ],
+            variants: Vec::new(),
+            decorators: Vec::new(),
+            span: AirSpan::new("src/user.rs", 5, 8),
+            doc: None,
+        };
+        let sibling = AirType {
+            kind: TypeKind::Struct,
+            name: "UserResponse".into(),
+            symbol: "demo::user::UserResponse".into(),
+            symbol_segments: Vec::new(),
+            visibility: Visibility::Public,
+            fields: vec![
+                AirField {
+                    name: "id".into(),
+                    type_text: "u32".into(),
+                    visibility: Visibility::Public,
+                },
+                AirField {
+                    name: "name".into(),
+                    type_text: "String".into(),
+                    visibility: Visibility::Public,
+                },
+            ],
+            variants: Vec::new(),
+            decorators: Vec::new(),
+            span: AirSpan::new("src/user.rs", 12, 15),
+            doc: None,
+        };
+        // The canonical hint sits one line above the canonical type's
+        // span (line 4 hints, line 5 type) — target_span points at line 5
+        // so the inference matches the hint to the User struct.
+        let hint = AirHint {
+            kind: HintKind::Canonical,
+            raw: "// locus: ot canonical".into(),
+            span: AirSpan::new("src/user.rs", 4, 4),
+            target_span: Some(AirSpan::new("src/user.rs", 5, 5)),
+        };
+        AirWorkspace::new(vec![AirPackage {
+            name: "demo".into(),
+            version: "0.0.1".into(),
+            root_dir: "/tmp/demo".into(),
+            files: vec![AirFile {
+                path: "src/user.rs".into(),
+                module_path: Some("demo::user".into()),
+                items: vec![AirItem::Type(canonical), AirItem::Type(sibling)],
+                hints: vec![hint],
+                parse_error: None,
+                line_count: 20,
+            }],
+        }])
     }
 }
