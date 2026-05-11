@@ -26,7 +26,22 @@ macro_rules! paradigm_def {
     };
 }
 
-paradigm_def!(OtParadigmDef, "OT", "Canonical Domain Ownership");
+// OT breaks out of the macro — second paradigm with a migrated rule
+// (OT002 in P2 #71), so `rules()` returns a non-empty slice.
+pub struct OtParadigmDef;
+impl ParadigmDefinition for OtParadigmDef {
+    fn id(&self) -> ParadigmId {
+        ParadigmId::new("OT")
+    }
+    fn title(&self) -> &'static str {
+        "Canonical Domain Ownership"
+    }
+    fn rules(&self) -> &'static [&'static dyn RuleDefinition] {
+        static RULES: [&dyn RuleDefinition; 1] =
+            [&crate::paradigms::one_truth::rules::ot002::OT002_RULE];
+        &RULES
+    }
+}
 paradigm_def!(DgParadigmDef, "DG", "Dependency Graph");
 paradigm_def!(AbParadigmDef, "AB", "Abstraction Discipline");
 paradigm_def!(BoParadigmDef, "BO", "Boundary Ownership");
