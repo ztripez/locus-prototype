@@ -16,6 +16,7 @@ pub mod decision;
 pub mod finding;
 pub mod ids;
 pub mod paradigm;
+pub mod policy;
 pub mod registry;
 pub mod rule;
 
@@ -25,4 +26,5 @@ pub use finding::{
 };
 pub use ids::{FindingId, FindingIdMinter, ParadigmId, PolicyId, RuleId};
 pub use paradigm::ParadigmDefinition;
+pub use policy::{PolicyContext, PolicyDefinition, PolicyOutput};
 pub use rule::{RuleContext, RuleDefinition};
