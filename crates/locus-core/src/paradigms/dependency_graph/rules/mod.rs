@@ -1,8 +1,7 @@
 //! DG rules.
 //!
 //! Implemented:
-//! - [`dg001`]: forbidden import (importer matches a forbidden edge's `from`
-//!   pattern AND the imported path matches the `to` pattern)
+//! - [`dg001`]: forbidden import — migrated to `RuleDefinition` in P2 (#71)
 //! - [`dg002`]: dependency cycle of any size (Tarjan SCC over crate-level
 //!   import edges)
 //! - [`dg003`]: cross-feature internals reach (importer in feature A, import
@@ -18,77 +17,6 @@ use locus_air::{AirItem, AirSpan, AirWorkspace};
 
 use super::lockfile_schema::{DgSection, FeatureDefinition, matches_pattern};
 use crate::diagnostics::{CheckMode, Diagnostic, Severity};
-
-fn dg001_diagnostic(
-    module_path: &str,
-    imp: &locus_air::AirImport,
-    edge: &super::lockfile_schema::ForbiddenEdge,
-    mode: CheckMode,
-) -> Diagnostic {
-    let mut why = vec![
-        format!("importer `{module_path}` matches `from = {}`", edge.from),
-        format!("import `{}` matches `to = {}`", imp.path, edge.to),
-    ];
-    if let Some(reason) = &edge.reason {
-        why.push(format!("reason: {reason}"));
-    }
-    Diagnostic {
-        rule_id: "DG001".to_string(),
-        severity: mode.elevate(Severity::Fatal),
-        span: imp.span.clone(),
-        concept: None,
-        message: format!(
-            "forbidden import: `{module_path}` must not reach `{}`",
-            imp.path
-        ),
-        why,
-        suggested_fix: Some(
-            "remove the import, or route the call through an accepted \
-             intermediary (port, application service, or shared crate); \
-             if the edge is wrong, edit `paradigms.DG.forbidden_edges` in \
-             `locus.lock`"
-                .into(),
-        ),
-    }
-}
-
-/// DG001 — forbidden import.
-///
-/// For every `AirImport` in every file, walk the lockfile's `forbidden_edges`.
-/// Fire when the file's `module_path` matches the edge's `from` pattern AND
-/// the import path matches the edge's `to` pattern.
-///
-/// Always Fatal: a forbidden edge is, by the user's own declaration, a
-/// directional violation.
-pub fn dg001(air: &AirWorkspace, section: &DgSection, mode: CheckMode) -> Vec<Diagnostic> {
-    if section.forbidden_edges.is_empty() {
-        return Vec::new();
-    }
-    let mut out = Vec::new();
-    for pkg in &air.packages {
-        for file in &pkg.files {
-            let Some(module_path) = file.module_path.as_deref() else {
-                continue;
-            };
-            for item in &file.items {
-                let AirItem::Import(imp) = item else {
-                    continue;
-                };
-                for edge in &section.forbidden_edges {
-                    if !matches_pattern(&edge.from, module_path) {
-                        continue;
-                    }
-                    if !matches_pattern(&edge.to, &imp.path) {
-                        continue;
-                    }
-                    out.push(dg001_diagnostic(module_path, imp, edge, mode));
-                    break; // one diagnostic per (file, import); don't re-fire on overlapping edges
-                }
-            }
-        }
-    }
-    out
-}
 
 /// DG002 — dependency cycle across crates.
 ///
