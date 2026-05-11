@@ -67,11 +67,11 @@ Generated from [`2026-05-09-dogfood-audit.json`](2026-05-09-dogfood-audit.json).
 |---|---:|---:|---:|---:|---|---|
 | CX001 | 106 | 0 | 64 | -49 | `suppressed_by_severity_tier` | not_remediated_remaining_warning_debt |
 | CX002 | 27 | 0 | 39 | +9 | `suppressed_by_severity_tier` | not_remediated_remaining_warning_debt |
-| CX007 | 1 | 0 | 0 | `suppressed_by_exempt_paths` | suppressed_no_debt_metadata |
-| ER007 | 11 | 0 | 0 | `accepted_by_exception` | accepted_with_expires_and_reason |
-| DC002 | 3 | 0 | 0 | `accepted_by_exception` | accepted_with_expires_and_reason |
-| MO001 | 2 | 0 | 0 | `suppressed_by_override` | suppressed_with_full_debt_metadata |
-| LOCUS002 | 13 | 0 | 0 | `suppressed_by_acknowledged_empty` | suppressed_no_debt_metadata |
+| CX007 | 1 | 0 | 0 | 0 | `suppressed_by_exempt_paths` | suppressed_no_debt_metadata |
+| ER007 | 11 | 0 | 0 | 0 | `accepted_by_exception` | accepted_with_expires_and_reason |
+| DC002 | 3 | 0 | 0 | 0 | `accepted_by_exception` | accepted_with_expires_and_reason |
+| MO001 | 2 | 0 | 0 | 0 | `suppressed_by_override` | suppressed_with_full_debt_metadata |
+| LOCUS002 | 13 | 0 | 0 | 0 | `suppressed_by_acknowledged_empty` | suppressed_no_debt_metadata |
 | OT009 | 0 | 0 | 0 | `—` | pre_emptive_exception |
 | OT_CANONICALS | 0 | 0 | 0 | `—` | resolved_by_code_source_hints_predated_audit_window |
 

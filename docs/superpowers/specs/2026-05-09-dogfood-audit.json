@@ -36,8 +36,10 @@
     "remaining_warning_debt_definition": "current after_warning total post-refactor sweep (64 CX001 + 39 CX002); down from 143 at audit time (113 CX001 + 30 CX002); equals sum of per-rule after_warning fields",
     "post_baseline_drift": 10,
     "post_baseline_drift_definition": "warnings appearing at audit target that did not exist at pre_36 baseline (+7 CX001, +3 CX002 from source code added on main after PR #39 merge); this is the audit-time fact, preserved unchanged",
-    "post_audit_refactor_delta": -30,
-    "post_audit_refactor_delta_definition": "net change in warnings vs pre_36 baseline after umbrella #51 refactor sweep: CX001 -42 (from 106 pre_36 to 64 current) + CX002 +12 (from 27 pre_36 to 39 current) = -30; no module_overrides, no budget raises, no source hints introduced"
+    "post_audit_refactor_delta": -40,
+    "post_audit_refactor_delta_definition": "change in total warnings between audit time (143: 113 CX001 + 30 CX002) and post-refactor (103: 64 CX001 + 39 CX002) = -40; matches the per-rule post_audit_refactor_delta sum (CX001 -49 + CX002 +9); no module_overrides, no budget raises, no source hints introduced",
+    "net_delta_vs_pre_36": -30,
+    "net_delta_vs_pre_36_definition": "current warnings (103) vs pre_36 baseline (133: 106 CX001 + 27 CX002) = -30; reverses the +10 post_baseline_drift accumulated by source growth between PR #39 and the audit target ref"
   },
   "rules": [
     {
