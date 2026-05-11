@@ -160,25 +160,37 @@ mod ot002_rule_tests {
     fn fires_on_concept_shaped_sibling_without_annotation() {
         let air = workspace_with_canonical_and_sibling();
         let lf = Lockfile::default();
+        let findings = run_observe(&air, &lf, CheckMode::Human);
+
+        assert_eq!(
+            findings.len(),
+            1,
+            "expected one OT002 finding, got {findings:?}"
+        );
+        assert_finding_shape(&findings[0]);
+        assert_high_confidence_overlap(&findings[0]);
+    }
+
+    /// Build a stand-alone `RuleContext` for `Ot002Rule::observe` and return
+    /// the findings. Tests use this instead of inlining the context dance.
+    fn run_observe(air: &AirWorkspace, lf: &Lockfile, mode: CheckMode) -> Vec<RuleFinding> {
         let rules = RuleRegistry::standard();
         let paradigms = ParadigmRegistry::empty();
         let minter = FindingIdMinter::new();
         let ctx = RuleContext {
-            air: &air,
-            lockfile: &lf,
-            mode: CheckMode::Human,
+            air,
+            lockfile: lf,
+            mode,
             rule_registry: &rules,
             paradigm_registry: &paradigms,
             finding_ids: &minter,
         };
+        Ot002Rule.observe(&ctx)
+    }
 
-        let findings = Ot002Rule.observe(&ctx);
-        assert_eq!(
-            findings.len(),
-            1,
-            "expected exactly one OT002 finding, got {findings:?}"
-        );
-        let f = &findings[0];
+    /// Assert the finding has the registered-rule shape (source, ids,
+    /// severity, message stem).
+    fn assert_finding_shape(f: &RuleFinding) {
         assert_eq!(f.source, FindingSource::RegisteredRule(OT002_ID));
         assert_eq!(f.rule_id, Some(OT002_ID));
         assert_eq!(f.paradigm_id, Some(OT_PARADIGM));
@@ -188,13 +200,14 @@ mod ot002_rule_tests {
             "expected legacy-compatible message, got `{}`",
             f.message
         );
+    }
 
-        // Typed evidence.
+    /// Assert the typed evidence is `InferenceConfidence::High` with an
+    /// "overlaps" signal (1.0 field overlap → High tier).
+    fn assert_high_confidence_overlap(f: &RuleFinding) {
         assert_eq!(f.evidence.len(), 1);
         match &f.evidence[0] {
             Evidence::InferenceConfidence { score, signals } => {
-                // Two fields overlap fully (id, name) → field_overlap is
-                // 1.0 → Confidence::High.
                 assert_eq!(*score, Confidence::High);
                 assert!(
                     signals.iter().any(|s| s.contains("overlaps")),
@@ -216,65 +229,12 @@ mod ot002_rule_tests {
         assert_eq!(confidence_from_overlap(0.50), Confidence::Low);
     }
 
+    /// Workspace with a canonical-annotated `User` type and an unannotated
+    /// `UserResponse` sibling sharing 100% of fields and the `User` stem.
+    /// Drives the OT002 cluster builder + rule end-to-end.
     fn workspace_with_canonical_and_sibling() -> AirWorkspace {
-        // locus: allow OT004 — test fixture; constructs AIR canonicals to feed the rule under test
-        let canonical = AirType {
-            kind: TypeKind::Struct,
-            name: "User".into(),
-            symbol: "demo::user::User".into(),
-            symbol_segments: Vec::new(),
-            visibility: Visibility::Public,
-            fields: vec![
-                AirField {
-                    name: "id".into(),
-                    type_text: "u32".into(),
-                    visibility: Visibility::Public,
-                },
-                AirField {
-                    name: "name".into(),
-                    type_text: "String".into(),
-                    visibility: Visibility::Public,
-                },
-            ],
-            variants: Vec::new(),
-            decorators: Vec::new(),
-            span: AirSpan::new("src/user.rs", 5, 8),
-            doc: None,
-        };
-        // locus: allow OT004 — test fixture; constructs AIR canonicals to feed the rule under test
-        let sibling = AirType {
-            kind: TypeKind::Struct,
-            name: "UserResponse".into(),
-            symbol: "demo::user::UserResponse".into(),
-            symbol_segments: Vec::new(),
-            visibility: Visibility::Public,
-            fields: vec![
-                AirField {
-                    name: "id".into(),
-                    type_text: "u32".into(),
-                    visibility: Visibility::Public,
-                },
-                AirField {
-                    name: "name".into(),
-                    type_text: "String".into(),
-                    visibility: Visibility::Public,
-                },
-            ],
-            variants: Vec::new(),
-            decorators: Vec::new(),
-            span: AirSpan::new("src/user.rs", 12, 15),
-            doc: None,
-        };
-        // The canonical hint sits one line above the canonical type's
-        // span (line 4 hints, line 5 type) — target_span points at line 5
-        // so the inference matches the hint to the User struct.
-        // locus: allow OT004 — test fixture; constructs AIR canonicals to feed the rule under test
-        let hint = AirHint {
-            kind: HintKind::Canonical,
-            raw: "// locus: ot canonical".into(),
-            span: AirSpan::new("src/user.rs", 4, 4),
-            target_span: Some(AirSpan::new("src/user.rs", 5, 5)),
-        };
+        let canonical = user_type("User", "demo::user::User", 5);
+        let sibling = user_type("UserResponse", "demo::user::UserResponse", 12);
         AirWorkspace::new(vec![AirPackage {
             name: "demo".into(),
             version: "0.0.1".into(),
@@ -283,10 +243,51 @@ mod ot002_rule_tests {
                 path: "src/user.rs".into(),
                 module_path: Some("demo::user".into()),
                 items: vec![AirItem::Type(canonical), AirItem::Type(sibling)],
-                hints: vec![hint],
+                hints: vec![canonical_hint_at_line(5)],
                 parse_error: None,
                 line_count: 20,
             }],
         }])
+    }
+
+    /// Build a `User`-shaped struct (fields `id`, `name`) with the given
+    /// name/symbol/span. Used to construct both the canonical and the
+    /// shadow sibling — they share field shape so `field_overlap` is 1.0.
+    fn user_type(name: &str, symbol: &str, start_line: u32) -> AirType {
+        // locus: allow OT004 — test fixture; constructs AIR canonical for the rule under test
+        AirType {
+            kind: TypeKind::Struct,
+            name: name.into(),
+            symbol: symbol.into(),
+            symbol_segments: Vec::new(),
+            visibility: Visibility::Public,
+            fields: vec![user_field("id", "u32"), user_field("name", "String")],
+            variants: Vec::new(),
+            decorators: Vec::new(),
+            span: AirSpan::new("src/user.rs", start_line, start_line + 3),
+            doc: None,
+        }
+    }
+
+    fn user_field(name: &str, ty: &str) -> AirField {
+        // locus: allow OT004 — test fixture; constructs AIR canonical for the rule under test
+        AirField {
+            name: name.into(),
+            type_text: ty.into(),
+            visibility: Visibility::Public,
+        }
+    }
+
+    /// Build a `// locus: ot canonical` hint whose `target_span` matches the
+    /// canonical type's first line, so the inference associates the hint
+    /// with the right item.
+    fn canonical_hint_at_line(target_line: u32) -> AirHint {
+        // locus: allow OT004 — test fixture; constructs AIR canonical hint for the rule under test
+        AirHint {
+            kind: HintKind::Canonical,
+            raw: "// locus: ot canonical".into(),
+            span: AirSpan::new("src/user.rs", target_line - 1, target_line - 1),
+            target_span: Some(AirSpan::new("src/user.rs", target_line, target_line)),
+        }
     }
 }
