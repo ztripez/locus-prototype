@@ -13,6 +13,7 @@
 // locus: ot canonical
 
 pub mod decision;
+pub mod evidence;
 pub mod finding;
 pub mod ids;
 pub mod legacy;
@@ -25,7 +26,8 @@ pub mod registry;
 pub mod rule;
 
 pub use decision::{Decision, DecisionStatus, SeverityChange};
-pub use finding::{Confidence, Evidence, FindingSource, FindingStore, LegacyEvidence, RuleFinding};
+pub use evidence::{Confidence, Evidence, LegacyEvidence};
+pub use finding::{FindingSource, FindingStore, RuleFinding};
 pub use ids::{FindingId, FindingIdMinter, ParadigmId, PolicyId, RuleId};
 pub use legacy::LegacyParadigmRuleAdapter;
 pub use paradigm::ParadigmDefinition;

@@ -32,49 +32,29 @@ pub fn run(air: &AirWorkspace, lockfile: &Lockfile, mode: CheckMode) -> Governan
     let minter = FindingIdMinter::new();
     let mut store = FindingStore::new();
 
-    // Phase A — migrated rules observe.
-    let rule_ctx = RuleContext {
+    observe_rules(
+        &rules,
+        &paradigms_reg,
         air,
         lockfile,
         mode,
-        rule_registry: &rules,
-        paradigm_registry: &paradigms_reg,
-        finding_ids: &minter,
-    };
-    for rule in rules.iter() {
-        for f in rule.observe(&rule_ctx) {
-            store.insert(f);
-        }
-    }
-
-    // Phase B — legacy adapter (per-diagnostic-code filter).
-    let legacy = paradigms::registry();
-    LegacyParadigmRuleAdapter::run(&legacy, air, lockfile, mode, &rules, &minter, &mut store);
-
-    // Phase C — policies in registry order. Single pass.
-    let mut decisions: Vec<Decision> = Vec::new();
-    for policy in policies.iter() {
-        let pctx = PolicyContext {
-            air,
-            lockfile,
-            mode,
-            rule_registry: &rules,
-            paradigm_registry: &paradigms_reg,
-            policy_registry: &policies,
-            findings: &store,
-            prior_decisions: &decisions,
-            finding_ids: &minter,
-        };
-        let out = policy.decide(&pctx);
-        for f in out.new_findings {
-            store.insert(f);
-        }
-        decisions.extend(out.decisions);
-    }
+        &minter,
+        &mut store,
+    );
+    run_legacy_adapter(air, lockfile, mode, &rules, &minter, &mut store);
+    let decisions = run_policies(
+        &policies,
+        &rules,
+        &paradigms_reg,
+        air,
+        lockfile,
+        mode,
+        &minter,
+        &mut store,
+    );
 
     validate_decisions(&decisions, &store).expect("policy chain produced invalid decisions");
 
-    // Phase D — materialize.
     let diagnostics: Vec<Diagnostic> = decisions
         .iter()
         .filter_map(|d| materialize(d, &store, &governance_codes))
@@ -85,6 +65,78 @@ pub fn run(air: &AirWorkspace, lockfile: &Lockfile, mode: CheckMode) -> Governan
         decisions,
         findings: store,
     }
+}
+
+/// Phase A — migrated rules observe.
+fn observe_rules(
+    rules: &RuleRegistry,
+    paradigms_reg: &ParadigmRegistry,
+    air: &AirWorkspace,
+    lockfile: &Lockfile,
+    mode: CheckMode,
+    minter: &FindingIdMinter,
+    store: &mut FindingStore,
+) {
+    let rule_ctx = RuleContext {
+        air,
+        lockfile,
+        mode,
+        rule_registry: rules,
+        paradigm_registry: paradigms_reg,
+        finding_ids: minter,
+    };
+    for rule in rules.iter() {
+        for f in rule.observe(&rule_ctx) {
+            store.insert(f);
+        }
+    }
+}
+
+/// Phase B — legacy adapter (per-diagnostic-code filter).
+fn run_legacy_adapter(
+    air: &AirWorkspace,
+    lockfile: &Lockfile,
+    mode: CheckMode,
+    rules: &RuleRegistry,
+    minter: &FindingIdMinter,
+    store: &mut FindingStore,
+) {
+    let legacy = paradigms::registry();
+    LegacyParadigmRuleAdapter::run(&legacy, air, lockfile, mode, rules, minter, store);
+}
+
+/// Phase C — policies in registry order. Single pass.
+#[allow(clippy::too_many_arguments)]
+fn run_policies(
+    policies: &PolicyRegistry,
+    rules: &RuleRegistry,
+    paradigms_reg: &ParadigmRegistry,
+    air: &AirWorkspace,
+    lockfile: &Lockfile,
+    mode: CheckMode,
+    minter: &FindingIdMinter,
+    store: &mut FindingStore,
+) -> Vec<Decision> {
+    let mut decisions: Vec<Decision> = Vec::new();
+    for policy in policies.iter() {
+        let pctx = PolicyContext {
+            air,
+            lockfile,
+            mode,
+            rule_registry: rules,
+            paradigm_registry: paradigms_reg,
+            policy_registry: policies,
+            findings: store,
+            prior_decisions: &decisions,
+            finding_ids: minter,
+        };
+        let out = policy.decide(&pctx);
+        for f in out.new_findings {
+            store.insert(f);
+        }
+        decisions.extend(out.decisions);
+    }
+    decisions
 }
 
 fn materialize(

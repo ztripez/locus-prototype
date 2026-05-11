@@ -1,6 +1,30 @@
 {
   "version": 1,
   "paradigms": {
+    "AB": {
+      "accepted_abstraction_names": [],
+      "accepted_single_impl_traits": [
+        "locus_core::governance::paradigm::ParadigmDefinition",
+        "locus_core::governance::policy::PolicyDefinition"
+      ],
+      "suspect_abstraction_patterns": [
+        "*Manager",
+        "*Service",
+        "*Processor",
+        "*Coordinator",
+        "*Orchestrator",
+        "*Engine",
+        "*Handler",
+        "*Helper",
+        "*Util"
+      ]
+    },
+    "CX": {
+      "exempt_paths": [
+        "*::tests::*",
+        "locus_air::*"
+      ]
+    },
     "DG": {
       "features": [
         {
@@ -41,7 +65,8 @@
             "locus_core::paradigms::*",
             "locus_core::lockfile::*",
             "locus_core::exceptions::*",
-            "locus_core::init::*"
+            "locus_core::init::*",
+            "locus_core::governance::*"
           ]
         },
         {
@@ -75,6 +100,28 @@
       ],
       "forbidden_edges": [],
       "shared_paths": []
+    },
+    "MO": {
+      "overrides": [
+        {
+          "debt_id": "MO001-locus-air-canonical-data-crate",
+          "expires": "2027-05-09",
+          "introduced_by": "PR #39 (self-onboarding completion)",
+          "max_public_types": 50,
+          "module": "locus_air",
+          "owner": "@core",
+          "reason": "data crate; every public type IS the canonical AIR contract by design (see #30 ADR)"
+        },
+        {
+          "debt_id": "MO001-ot-lockfile-schema-grouped-shape",
+          "expires": "2027-05-09",
+          "introduced_by": "PR #39 (self-onboarding completion)",
+          "max_public_types": 10,
+          "module": "locus_core::paradigms::one_truth::lockfile_schema",
+          "owner": "@core",
+          "reason": "OT lockfile schema groups concept/canonical/boundary/converter shapes by intent; splitting per-type would scatter the OT contract surface"
+        }
+      ]
     },
     "OT": {
       "concepts": {
@@ -463,33 +510,18 @@
         "*::layer_detection_tests::*"
       ]
     },
-    "MO": {
-      "overrides": [
-        {
-          "module": "locus_air",
-          "max_public_types": 50,
-          "reason": "data crate; every public type IS the canonical AIR contract by design (see #30 ADR)",
-          "expires": "2027-05-09",
-          "owner": "@core",
-          "debt_id": "MO001-locus-air-canonical-data-crate",
-          "introduced_by": "PR #39 (self-onboarding completion)"
-        },
-        {
-          "module": "locus_core::paradigms::one_truth::lockfile_schema",
-          "max_public_types": 10,
-          "reason": "OT lockfile schema groups concept/canonical/boundary/converter shapes by intent; splitting per-type would scatter the OT contract surface",
-          "expires": "2027-05-09",
-          "owner": "@core",
-          "debt_id": "MO001-ot-lockfile-schema-grouped-shape",
-          "introduced_by": "PR #39 (self-onboarding completion)"
-        }
-      ]
-    },
-    "CX": {
-      "exempt_paths": [
-        "*::tests::*",
-        "locus_air::*"
-      ]
+    "PA": {
+      "accepted_colocated_traits": [
+        "locus_core::governance::paradigm::ParadigmDefinition"
+      ],
+      "accepted_construction_paths": [
+        "*::main",
+        "*::bootstrap::*",
+        "*::composition::*"
+      ],
+      "adapter_type_patterns": [],
+      "application_paths": [],
+      "concrete_adapter_patterns": []
     }
   },
   "exceptions": [

@@ -12,9 +12,8 @@
 // locus: ot canonical
 
 use crate::diagnostics::{CheckMode, Diagnostic};
-use crate::governance::finding::{
-    Evidence, FindingSource, FindingStore, LegacyEvidence, RuleFinding,
-};
+use crate::governance::evidence::{Evidence, LegacyEvidence};
+use crate::governance::finding::{FindingSource, FindingStore, RuleFinding};
 use crate::governance::ids::{FindingIdMinter, ParadigmId};
 use crate::governance::registry::RuleRegistry;
 use crate::lockfile::Lockfile;

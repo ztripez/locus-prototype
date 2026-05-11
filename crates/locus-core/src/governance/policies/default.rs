@@ -86,20 +86,31 @@ mod tests {
         }
     }
 
-    #[test]
-    fn decides_every_undecided_finding() {
+    fn build_fixture() -> (
+        AirWorkspace,
+        Lockfile,
+        RuleRegistry,
+        ParadigmRegistry,
+        PolicyRegistry,
+        FindingIdMinter,
+        FindingStore,
+    ) {
         let air = AirWorkspace::new(Vec::new());
         let lf = Lockfile::empty();
         let rules = RuleRegistry::standard();
         let paradigms = ParadigmRegistry::empty();
         let policies = PolicyRegistry::with_policies(Vec::new());
         let minter = FindingIdMinter::new();
-
         let mut store = FindingStore::new();
         store.insert(make_finding(0, Severity::Warning));
         store.insert(make_finding(1, Severity::Advisory));
         store.insert(make_finding(2, Severity::Fatal));
+        (air, lf, rules, paradigms, policies, minter, store)
+    }
 
+    #[test]
+    fn decides_every_undecided_finding() {
+        let (air, lf, rules, paradigms, policies, minter, store) = build_fixture();
         let ctx = PolicyContext {
             air: &air,
             lockfile: &lf,
@@ -118,7 +129,6 @@ mod tests {
 
         let by_id: std::collections::HashMap<_, _> =
             out.decisions.iter().map(|d| (d.finding_id, d)).collect();
-
         assert_eq!(
             by_id[&FindingId::from_raw_for_test(0)].status,
             DecisionStatus::Active
