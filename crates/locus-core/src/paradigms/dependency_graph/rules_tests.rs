@@ -45,11 +45,7 @@ fn forbid(from: &str, to: &str) -> ForbiddenEdge {
     }
 }
 
-fn observe_dg001(
-    air: &AirWorkspace,
-    section: &DgSection,
-    mode: CheckMode,
-) -> Vec<RuleFinding> {
+fn observe_dg001(air: &AirWorkspace, section: &DgSection, mode: CheckMode) -> Vec<RuleFinding> {
     let mut lf = Lockfile::default();
     lf.paradigms
         .insert("DG".to_string(), serde_json::to_value(section).unwrap());

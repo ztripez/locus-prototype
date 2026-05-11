@@ -416,10 +416,7 @@ mod tests {
         assert_eq!(rule.paradigm().as_str(), "DG");
         // DG001 is always Fatal — forbidden edge is the user's own
         // declaration, not an inferred budget.
-        assert_eq!(
-            rule.default_severity(),
-            crate::diagnostics::Severity::Fatal
-        );
+        assert_eq!(rule.default_severity(), crate::diagnostics::Severity::Fatal);
     }
 
     #[test]
