@@ -30,9 +30,17 @@ impl PolicyDefinition for RegistryIntegrityPolicy {
     fn decide(&self, ctx: &PolicyContext<'_>) -> PolicyOutput {
         // Check 6: migration debt — one LOCUS003 advisory per unique legacy
         // rule code observed this run. Dedup by code; count all instances.
+        // Skip governance diagnostic codes (LOCUS001/LOCUS002/LOCUS003): those
+        // are policy/infrastructure codes, not rules awaiting RuleDefinition
+        // migration.
+        let governance_codes =
+            crate::governance::registry::GovernanceDiagnosticRegistry::standard();
         let mut code_counts: BTreeMap<String, usize> = BTreeMap::new();
         for f in ctx.findings.iter() {
             if let FindingSource::LegacyDiagnostic { rule_code, .. } = &f.source {
+                if governance_codes.contains(rule_code) {
+                    continue;
+                }
                 *code_counts.entry(rule_code.clone()).or_insert(0) += 1;
             }
         }
@@ -162,6 +170,52 @@ mod tests {
         assert!(
             out.new_findings.is_empty(),
             "registered rules must not trigger LOCUS003; got {:?}",
+            out.new_findings
+        );
+    }
+
+    #[test]
+    fn silent_for_governance_diagnostic_codes() {
+        let mut store = FindingStore::new();
+        // LOCUS002 is a governance code, not a RuleDefinition migration target
+        store.insert(RuleFinding {
+            id: FindingId::from_raw_for_test(10),
+            source: FindingSource::LegacyDiagnostic {
+                rule_code: "LOCUS002".into(),
+                paradigm: None,
+            },
+            rule_id: None,
+            paradigm_id: None,
+            default_severity: Severity::Advisory,
+            span: None,
+            concept: None,
+            message: "vacancy nudge".into(),
+            evidence: Vec::new(),
+            why: Vec::new(),
+            suggested_fix: None,
+            diagnostic_code: None,
+        });
+        store.insert(RuleFinding {
+            id: FindingId::from_raw_for_test(11),
+            source: FindingSource::LegacyDiagnostic {
+                rule_code: "LOCUS001".into(),
+                paradigm: None,
+            },
+            rule_id: None,
+            paradigm_id: None,
+            default_severity: Severity::Advisory,
+            span: None,
+            concept: None,
+            message: "expired exception".into(),
+            evidence: Vec::new(),
+            why: Vec::new(),
+            suggested_fix: None,
+            diagnostic_code: None,
+        });
+        let out = run_policy(store);
+        assert!(
+            out.new_findings.is_empty(),
+            "governance codes LOCUS001/LOCUS002 must not trigger LOCUS003; got {:?}",
             out.new_findings
         );
     }

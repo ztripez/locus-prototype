@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "paradigms": {
+    "DG": {
+      "features": [
+        {
+          "name": "feature_one",
+          "module": "dg_public_api::feature_one::*",
+          "public_api": ["dg_public_api::feature_one::api::*"]
+        },
+        {
+          "name": "feature_two",
+          "module": "dg_public_api::feature_two::*",
+          "public_api": ["dg_public_api::feature_two::*"]
+        }
+      ]
+    }
+  }
+}
