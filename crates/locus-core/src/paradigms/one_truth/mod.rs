@@ -49,7 +49,9 @@ impl Paradigm for OneTruth {
             .unwrap_or_else(|_| lockfile_schema::OtSection::default());
         let clusters = infer::cluster_concepts_with_lockfile(air, &section);
         let mut out = rules::ot001(&clusters, mode);
-        out.extend(rules::ot002(&clusters, mode));
+        // OT002 migrated to RuleDefinition (#71 P2). Runs via the
+        // governance pipeline; the legacy adapter's per-rule-code filter
+        // drops any OT002 diagnostic emitted here.
         out.extend(rules::ot003(air, &section, mode));
         out.extend(rules::ot004(air, &section, mode));
         out.extend(rules::ot005(air, &section, mode));

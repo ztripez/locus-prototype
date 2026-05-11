@@ -3,7 +3,7 @@
 
 use locus_core::paradigms::one_truth::OT_PREFIX;
 use locus_core::paradigms::one_truth::lockfile_schema::OtSection;
-use locus_core::{CheckMode, Lockfile, Severity, registry};
+use locus_core::{CheckMode, Lockfile, Severity, governance, registry};
 
 fn fixture_path() -> std::path::PathBuf {
     let manifest = std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR");
@@ -17,10 +17,10 @@ fn fixture_path() -> std::path::PathBuf {
 fn ot002_fires_on_user_model_only() {
     let air = locus_rust::scan(&fixture_path()).expect("scan succeeds");
     let lockfile = Lockfile::empty();
-    let mut diags = Vec::new();
-    for paradigm in registry() {
-        diags.extend(paradigm.check(&air, &lockfile, CheckMode::Human));
-    }
+    // OT002 migrated to RuleDefinition (#71 P2) — go through the
+    // governance pipeline, not the deprecated `Paradigm::check`.
+    let out = governance::run(&air, &lockfile, CheckMode::Human);
+    let diags = out.diagnostics;
 
     let ot002: Vec<_> = diags.iter().filter(|d| d.rule_id == "OT002").collect();
     assert_eq!(
@@ -57,11 +57,8 @@ fn ot002_fires_on_user_model_only() {
 fn agent_strict_makes_ot002_fatal() {
     let air = locus_rust::scan(&fixture_path()).expect("scan succeeds");
     let lockfile = Lockfile::empty();
-    let mut diags = Vec::new();
-    for paradigm in registry() {
-        diags.extend(paradigm.check(&air, &lockfile, CheckMode::AgentStrict));
-    }
-    let ot002: Vec<_> = diags.iter().filter(|d| d.rule_id == "OT002").collect();
+    let out = governance::run(&air, &lockfile, CheckMode::AgentStrict);
+    let ot002: Vec<_> = out.diagnostics.iter().filter(|d| d.rule_id == "OT002").collect();
     assert_eq!(ot002.len(), 1);
     assert_eq!(ot002[0].severity, Severity::Fatal);
 }
@@ -114,11 +111,8 @@ fn check_against_populated_lockfile_still_flags_user_model() {
             .insert(p.rule_prefix().to_string(), section);
     }
 
-    let mut diags = Vec::new();
-    for p in &registry {
-        diags.extend(p.check(&air, &lockfile, CheckMode::Human));
-    }
-    let ot002: Vec<_> = diags.iter().filter(|d| d.rule_id == "OT002").collect();
+    let out = governance::run(&air, &lockfile, CheckMode::Human);
+    let ot002: Vec<_> = out.diagnostics.iter().filter(|d| d.rule_id == "OT002").collect();
     assert_eq!(ot002.len(), 1, "expected exactly one OT002 (UserModel)");
     assert!(ot002[0].message.contains("UserModel"));
 }
@@ -144,11 +138,7 @@ fn lockfile_only_acceptance_blocks_ot002_even_without_hint() {
     });
     lockfile.paradigms.insert(OT_PREFIX.to_string(), section);
 
-    let registry = registry();
-    let mut diags = Vec::new();
-    for p in &registry {
-        diags.extend(p.check(&air, &lockfile, CheckMode::Human));
-    }
+    let diags = governance::run(&air, &lockfile, CheckMode::Human).diagnostics;
     let ot002: Vec<_> = diags.iter().filter(|d| d.rule_id == "OT002").collect();
     assert!(
         ot002.is_empty(),
@@ -162,10 +152,7 @@ fn no_ot002_for_accepted_canonical_or_boundary() {
     // must not appear in OT002 diagnostics.
     let air = locus_rust::scan(&fixture_path()).expect("scan succeeds");
     let lockfile = Lockfile::empty();
-    let mut diags = Vec::new();
-    for paradigm in registry() {
-        diags.extend(paradigm.check(&air, &lockfile, CheckMode::Human));
-    }
+    let diags = governance::run(&air, &lockfile, CheckMode::Human).diagnostics;
     for d in diags.iter().filter(|d| d.rule_id == "OT002") {
         assert!(
             !d.message.contains("crate::User\""),
@@ -187,10 +174,7 @@ fn baseline_fixture_has_no_ot001() {
     // promoted a second canonical, which is a regression in inference.
     let air = locus_rust::scan(&fixture_path()).expect("scan succeeds");
     let lockfile = Lockfile::empty();
-    let mut diags = Vec::new();
-    for paradigm in registry() {
-        diags.extend(paradigm.check(&air, &lockfile, CheckMode::Human));
-    }
+    let diags = governance::run(&air, &lockfile, CheckMode::Human).diagnostics;
     let ot001: Vec<_> = diags.iter().filter(|d| d.rule_id == "OT001").collect();
     assert!(
         ot001.is_empty(),
@@ -218,10 +202,7 @@ fn ot006_fires_on_unaccepted_conversion_after_partial_lockfile() {
     });
     lockfile.paradigms.insert(OT_PREFIX.to_string(), section);
 
-    let mut diags = Vec::new();
-    for p in registry() {
-        diags.extend(p.check(&air, &lockfile, CheckMode::Human));
-    }
+    let diags = governance::run(&air, &lockfile, CheckMode::Human).diagnostics;
     let ot006: Vec<_> = diags.iter().filter(|d| d.rule_id == "OT006").collect();
     assert_eq!(
         ot006.len(),
@@ -247,10 +228,7 @@ fn ot003_fires_on_handler_after_init() {
             .insert(p.rule_prefix().to_string(), p.init(&air));
     }
 
-    let mut diags = Vec::new();
-    for p in &registry {
-        diags.extend(p.check(&air, &lockfile, CheckMode::Human));
-    }
+    let diags = governance::run(&air, &lockfile, CheckMode::Human).diagnostics;
     let ot003: Vec<_> = diags.iter().filter(|d| d.rule_id == "OT003").collect();
     assert!(
         ot003
@@ -275,10 +253,7 @@ fn ot004_fires_on_handler_after_init() {
             .insert(p.rule_prefix().to_string(), p.init(&air));
     }
 
-    let mut diags = Vec::new();
-    for p in &registry {
-        diags.extend(p.check(&air, &lockfile, CheckMode::Human));
-    }
+    let diags = governance::run(&air, &lockfile, CheckMode::Human).diagnostics;
     let ot004: Vec<_> = diags.iter().filter(|d| d.rule_id == "OT004").collect();
     assert!(
         ot004.iter().any(|d| d.span.file.ends_with("handler.rs")
@@ -294,10 +269,7 @@ fn baseline_fixture_no_ot003_or_ot004_pre_init() {
     // until they've onboarded" behavior.
     let air = locus_rust::scan(&fixture_path()).expect("scan succeeds");
     let lockfile = Lockfile::empty();
-    let mut diags = Vec::new();
-    for p in registry() {
-        diags.extend(p.check(&air, &lockfile, CheckMode::Human));
-    }
+    let diags = governance::run(&air, &lockfile, CheckMode::Human).diagnostics;
     assert!(
         diags
             .iter()
@@ -320,10 +292,7 @@ fn ot006_quiet_after_init_promotes_converters() {
             .insert(p.rule_prefix().to_string(), section);
     }
 
-    let mut diags = Vec::new();
-    for p in &registry {
-        diags.extend(p.check(&air, &lockfile, CheckMode::Human));
-    }
+    let diags = governance::run(&air, &lockfile, CheckMode::Human).diagnostics;
     let ot006: Vec<_> = diags.iter().filter(|d| d.rule_id == "OT006").collect();
     assert!(
         ot006.is_empty(),
