@@ -11,3 +11,7 @@
 //! Spec: `docs/superpowers/specs/2026-05-11-governance-spine-design.md`.
 
 // locus: ot canonical
+
+pub mod ids;
+
+pub use ids::{FindingId, FindingIdMinter, ParadigmId, PolicyId, RuleId};
