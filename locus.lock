@@ -34,6 +34,8 @@
             "locus_core::LOCKFILE_NAME",
             "locus_core::Lockfile",
             "locus_core::LockfileError",
+            "locus_core::AcknowledgedEmpty",
+            "locus_core::AcknowledgedEmptyEntry",
             "locus_core::Paradigm",
             "locus_core::registry",
             "locus_core::paradigms::*",
