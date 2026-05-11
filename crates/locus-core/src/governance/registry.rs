@@ -331,10 +331,16 @@ mod tests {
     #[test]
     fn rule_registry_contains_cx001_after_p2_migration() {
         let reg = RuleRegistry::standard();
-        assert!(reg.contains_code("CX001"), "CX001 must be in RuleRegistry::standard() after P2");
+        assert!(
+            reg.contains_code("CX001"),
+            "CX001 must be in RuleRegistry::standard() after P2"
+        );
         let rule = reg.find(&RuleId::new("CX001")).expect("CX001 missing");
         assert_eq!(rule.paradigm().as_str(), "CX");
-        assert_eq!(rule.default_severity(), crate::diagnostics::Severity::Warning);
+        assert_eq!(
+            rule.default_severity(),
+            crate::diagnostics::Severity::Warning
+        );
     }
 
     #[test]

@@ -36,10 +36,7 @@ impl RuleDefinition for Cx001Rule {
     }
     fn observe(&self, ctx: &RuleContext<'_>) -> Vec<RuleFinding> {
         use super::super::lockfile_schema::CxSection;
-        let section: CxSection = ctx
-            .lockfile
-            .paradigm_section("CX")
-            .unwrap_or_default();
+        let section: CxSection = ctx.lockfile.paradigm_section("CX").unwrap_or_default();
         let default_budget = section.effective_default();
         let mut out = Vec::new();
         for pkg in &ctx.air.packages {
@@ -97,7 +94,9 @@ fn make_finding(
     default_budget: u32,
     ctx: &RuleContext<'_>,
 ) -> RuleFinding {
-    let severity = ctx.mode.elevate_when_actionable(Severity::Warning, narrowed);
+    let severity = ctx
+        .mode
+        .elevate_when_actionable(Severity::Warning, narrowed);
     let message = format!(
         "function `{}` is {} lines, budget {} ({})",
         func.symbol,
@@ -109,7 +108,10 @@ fn make_finding(
         }
     );
     let mut why = vec![
-        format!("function `{}` spans {} line(s)", func.symbol, func.line_count),
+        format!(
+            "function `{}` spans {} line(s)",
+            func.symbol, func.line_count
+        ),
         if let Some(o) = matched_override {
             format!("budget {budget} from override `module = {}`", o.module)
         } else {
@@ -182,7 +184,10 @@ mod tests {
         let findings = Cx001Rule.observe(&ctx);
         assert_eq!(findings.len(), 1, "expected one finding, got {findings:?}");
         let f = &findings[0];
-        assert_eq!(f.source, FindingSource::RegisteredRule(RuleId::new("CX001")));
+        assert_eq!(
+            f.source,
+            FindingSource::RegisteredRule(RuleId::new("CX001"))
+        );
         assert_eq!(f.rule_id, Some(RuleId::new("CX001")));
         assert_eq!(f.paradigm_id, Some(ParadigmId::new("CX")));
         assert_eq!(f.default_severity, Severity::Warning);

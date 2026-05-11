@@ -120,7 +120,13 @@ mod tests {
         // == true and skips synthesizing a legacy CX001 finding — that's
         // the strangler invariant in action.
         let reg = RuleRegistry::standard();
-        assert!(reg.contains_code("CX001"), "CX001 must be registered post-P2");
-        assert!(!reg.contains_code("XX999"), "unregistered codes must return false");
+        assert!(
+            reg.contains_code("CX001"),
+            "CX001 must be registered post-P2"
+        );
+        assert!(
+            !reg.contains_code("XX999"),
+            "unregistered codes must return false"
+        );
     }
 }

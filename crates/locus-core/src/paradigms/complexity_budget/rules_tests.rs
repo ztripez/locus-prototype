@@ -94,12 +94,19 @@ fn cx001_fires_with_built_in_fallback_on_default_section() {
     let findings = observe_cx001(&air, &section, CheckMode::Human);
     assert_eq!(findings.len(), 1, "expected one finding, got {findings:?}");
     assert!(
-        findings[0].why.iter().any(|w| w.contains("built-in fallback")),
+        findings[0]
+            .why
+            .iter()
+            .any(|w| w.contains("built-in fallback")),
         "expected built-in fallback explanation in why; got {:?}",
         findings[0].why,
     );
     match &findings[0].evidence[0] {
-        Evidence::ComplexityBudget { lines, budget, override_match } => {
+        Evidence::ComplexityBudget {
+            lines,
+            budget,
+            override_match,
+        } => {
             assert_eq!(*lines, 500);
             assert_eq!(*budget, 50);
             assert_eq!(*override_match, None);
@@ -129,7 +136,11 @@ fn cx001_fires_when_line_count_exceeds_default_budget() {
     assert!(findings[0].message.contains("60"));
     assert!(findings[0].message.contains("budget 50"));
     match &findings[0].evidence[0] {
-        Evidence::ComplexityBudget { lines, budget, override_match } => {
+        Evidence::ComplexityBudget {
+            lines,
+            budget,
+            override_match,
+        } => {
             assert_eq!(*lines, 60);
             assert_eq!(*budget, 50);
             assert_eq!(*override_match, None);
@@ -183,7 +194,11 @@ fn cx001_override_lowers_budget_effectively() {
         ..CxSection::default()
     };
     let findings = observe_cx001(&air, &section, CheckMode::Human);
-    assert_eq!(findings.len(), 1, "override should lower budget below count");
+    assert_eq!(
+        findings.len(),
+        1,
+        "override should lower budget below count"
+    );
     assert_eq!(findings[0].rule_id, Some(RuleId::new("CX001")));
     assert!(findings[0].message.contains("budget 20"));
     assert!(
@@ -195,7 +210,11 @@ fn cx001_override_lowers_budget_effectively() {
         findings[0].why
     );
     match &findings[0].evidence[0] {
-        Evidence::ComplexityBudget { lines, budget, override_match } => {
+        Evidence::ComplexityBudget {
+            lines,
+            budget,
+            override_match,
+        } => {
             assert_eq!(*lines, 40);
             assert_eq!(*budget, 20);
             assert_eq!(*override_match, Some("lore::convert::*".to_string()));
@@ -216,7 +235,11 @@ fn cx001_agent_strict_elevates_to_fatal() {
         "agent-strict should elevate Warning to Fatal"
     );
     match &findings[0].evidence[0] {
-        Evidence::ComplexityBudget { lines, budget, override_match } => {
+        Evidence::ComplexityBudget {
+            lines,
+            budget,
+            override_match,
+        } => {
             assert_eq!(*lines, 60);
             assert_eq!(*budget, 50);
             assert_eq!(*override_match, None);
@@ -243,7 +266,11 @@ fn cx001_agent_strict_stays_warning_when_using_built_in_fallback() {
          user must declare a budget before this becomes a CI blocker",
     );
     match &findings[0].evidence[0] {
-        Evidence::ComplexityBudget { lines, budget, override_match } => {
+        Evidence::ComplexityBudget {
+            lines,
+            budget,
+            override_match,
+        } => {
             assert_eq!(*lines, 500);
             assert_eq!(*budget, 50);
             assert_eq!(*override_match, None);
@@ -266,7 +293,11 @@ fn cx001_agent_strict_elevates_when_workspace_default_set() {
     assert_eq!(findings.len(), 1);
     assert_eq!(findings[0].default_severity, Severity::Fatal);
     match &findings[0].evidence[0] {
-        Evidence::ComplexityBudget { lines, budget, override_match } => {
+        Evidence::ComplexityBudget {
+            lines,
+            budget,
+            override_match,
+        } => {
             assert_eq!(*lines, 60);
             assert_eq!(*budget, 50);
             assert_eq!(*override_match, None);
@@ -296,7 +327,11 @@ fn cx001_agent_strict_elevates_when_module_override_matches() {
     assert_eq!(findings.len(), 1);
     assert_eq!(findings[0].default_severity, Severity::Fatal);
     match &findings[0].evidence[0] {
-        Evidence::ComplexityBudget { lines, budget, override_match } => {
+        Evidence::ComplexityBudget {
+            lines,
+            budget,
+            override_match,
+        } => {
             assert_eq!(*lines, 200);
             assert_eq!(*budget, 100);
             assert_eq!(*override_match, Some("foo::*".to_string()));
