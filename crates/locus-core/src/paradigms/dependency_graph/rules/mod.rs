@@ -10,6 +10,8 @@
 //! - [`dg004`]: shared module reaching feature-specific code (a `shared_paths`
 //!   module imports a path that belongs to any feature)
 
+pub mod dg001;
+
 use std::collections::{BTreeMap, BTreeSet};
 
 use locus_air::{AirItem, AirSpan, AirWorkspace};
