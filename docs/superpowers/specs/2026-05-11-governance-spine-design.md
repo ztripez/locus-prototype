@@ -130,6 +130,12 @@ pub struct RuleFinding {
     pub evidence: Vec<Evidence>,             // multi-signal
     pub why: Vec<String>,
     pub suggested_fix: Option<String>,
+    /// Governance/policy diagnostic code to emit, when distinct from the
+    /// rule_id / source. Lets RegistryIntegrityPolicy emit `LOCUS003`
+    /// without overloading the `PolicyId` ("registry-integrity") as a
+    /// user-facing code. Resolved against `GovernanceDiagnosticRegistry`;
+    /// unresolved codes are an internal error.
+    pub diagnostic_code: Option<String>,
 }
 
 pub enum FindingSource {
@@ -287,10 +293,21 @@ pub struct PolicyContext<'a> {
 
 ### Registries
 
+Four registries — three architectural, one for governance-layer diagnostic
+codes. Governance codes are deliberately separate from rule codes:
+
+- `RuleRegistry` — rule codes (`CX001`, `OT002`, ...)
+- `ParadigmRegistry` — concern packs
+- `PolicyRegistry` — decision-makers
+- `GovernanceDiagnosticRegistry` — governance/policy diagnostic codes
+  (`LOCUS001`, `LOCUS002`, `LOCUS003`, ...). Static table for MVP.
+  `LOCUS003` is owned by `RegistryIntegrityPolicy`.
+
 ```rust
-pub struct RuleRegistry      { /* Vec<&'static dyn RuleDefinition> */ }
-pub struct ParadigmRegistry  { /* Vec<&'static dyn ParadigmDefinition> */ }
-pub struct PolicyRegistry    { /* Vec<&'static dyn PolicyDefinition> */ }
+pub struct RuleRegistry                   { /* Vec<&'static dyn RuleDefinition> */ }
+pub struct ParadigmRegistry               { /* Vec<&'static dyn ParadigmDefinition> */ }
+pub struct PolicyRegistry                 { /* Vec<&'static dyn PolicyDefinition> */ }
+pub struct GovernanceDiagnosticRegistry   { /* &'static [(code, owner_policy)] */ }
 
 impl RuleRegistry {
     pub fn standard() -> Self { /* validated at construction */ }
@@ -418,14 +435,26 @@ fn materialize(decision: &Decision, store: &FindingStore) -> Option<Diagnostic> 
 }
 
 fn emitted_rule_code(f: &RuleFinding) -> String {
-    // Prefer the registered rule's id; fall back to the legacy code or the
-    // policy id, depending on source. Legacy codes preserve verbatim so
-    // existing snapshots match.
+    // Resolution order:
+    //   1. explicit governance/policy diagnostic code (e.g. LOCUS003)
+    //   2. registered rule id (CX001, OT002, ...)
+    //   3. legacy diagnostic's verbatim rule_code
+    //   4. RegisteredRule source as last resort
+    // PolicyId is NEVER displayed as a user-facing code — policy-emitted
+    // findings must carry a registered governance code via diagnostic_code,
+    // resolved against GovernanceDiagnosticRegistry.
+    if let Some(code) = f.diagnostic_code.as_deref() {
+        return code.to_string();
+    }
     match (&f.rule_id, &f.source) {
         (Some(r), _)                                              => r.as_str().to_string(),
         (None, FindingSource::LegacyDiagnostic { rule_code, .. }) => rule_code.clone(),
-        (None, FindingSource::Policy(p))                          => p.as_str().to_string(),
         (None, FindingSource::RegisteredRule(r))                  => r.as_str().to_string(),
+        // FindingSource::Policy without a diagnostic_code is an internal
+        // error caught by validate_decisions / registry construction.
+        (None, FindingSource::Policy(p))                          => {
+            panic!("policy finding from {:?} missing diagnostic_code", p);
+        }
     }
 }
 
@@ -519,13 +548,18 @@ governance abstractions: `Rule`, `Paradigm`, `Policy`. It reports the state
 of the registries to the user; it does not enforce architecture mutation.
 
 **Diagnostic code: `LOCUS003`** (slots alongside `LOCUS001` expired-exception
-and `LOCUS002` vacant-paradigm). Owned by `RegistryIntegrityPolicy`.
+and `LOCUS002` vacant-paradigm). Registered in
+`GovernanceDiagnosticRegistry` with owner `PolicyId("registry-integrity")`.
 
-> Governance-layer diagnostic codes are registered the same way rule codes
-> are. `LOCUS003` is registered as a governance/policy diagnostic code owned
-> by `RegistryIntegrityPolicy`. The principle: rules are registered,
-> policies are registered, policy diagnostic codes are registered. A small
-> static table is enough for MVP, but the contract matters.
+> Governance-layer diagnostic codes are registered separately from rule
+> codes — `GovernanceDiagnosticRegistry`, not `RuleRegistry`. The principle:
+> rules are registered, policies are registered, policy diagnostic codes
+> are registered. A small static table is enough for MVP, but `PolicyId`
+> values (`"registry-integrity"`, ...) are internal — they MUST NOT appear
+> as user-facing diagnostic codes. Findings emitted by
+> `RegistryIntegrityPolicy` set `RuleFinding.diagnostic_code = Some("LOCUS003")`
+> so the materializer emits the registered governance code, never the
+> policy ID.
 
 ### Checks emitted
 
@@ -616,10 +650,15 @@ All three PRs are part of this single spec.
 - All types from "Core types" and "Traits and registries".
 - Pipeline (`governance::run`), `LegacyParadigmRuleAdapter`,
   `DefaultPassThroughPolicy`.
-- `RuleRegistry::standard()` is empty.
+- `RuleRegistry::standard()` is empty (no migrated rules yet). The
+  `ParadigmDefinition::rules()`-must-resolve invariant trivially passes
+  because every `rules()` slice is empty in P1.
 - `ParadigmRegistry::standard()` includes all current legacy paradigms with
   empty `rules()`.
 - `PolicyRegistry::standard()` contains only `DefaultPassThroughPolicy`.
+- `GovernanceDiagnosticRegistry::standard()` registers existing codes
+  (`LOCUS001`, `LOCUS002`) and reserves `LOCUS003` for P3 ownership by
+  `RegistryIntegrityPolicy`.
 - CLI rewired to call `governance::run`.
 - Legacy `Paradigm::check` annotated as transitional in code +
   `CLAUDE.md` / `AGENTS.md`.
