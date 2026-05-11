@@ -27,4 +27,8 @@ pub use finding::{
 pub use ids::{FindingId, FindingIdMinter, ParadigmId, PolicyId, RuleId};
 pub use paradigm::ParadigmDefinition;
 pub use policy::{PolicyContext, PolicyDefinition, PolicyOutput};
+pub use registry::{
+    GovernanceDiagnosticRegistry, ParadigmRegistry, PolicyRegistry, RegistryError, RuleRegistry,
+    validate_decisions,
+};
 pub use rule::{RuleContext, RuleDefinition};

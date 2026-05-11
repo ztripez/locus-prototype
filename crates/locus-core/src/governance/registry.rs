@@ -1,9 +1,330 @@
-//! Governance registries. Bodies filled in Task 9 — this file is a stub
-//! so rule.rs / policy.rs can reference these types from Tasks 6 and 8.
+//! Governance registries.
+//!
+//! Four registries:
+//! - `RuleRegistry` — migrated `RuleDefinition`s (rule codes like `CX001`).
+//! - `ParadigmRegistry` — all current legacy paradigms, lifted as
+//!   `ParadigmDefinition` so the new pipeline can ask each paradigm what
+//!   rules it owns.
+//! - `PolicyRegistry` — ordered policy chain. `DefaultPassThroughPolicy`
+//!   is guaranteed last.
+//! - `GovernanceDiagnosticRegistry` — governance/policy diagnostic codes
+//!   (`LOCUS001`/`LOCUS002`/`LOCUS003`). Deliberately separate from
+//!   `RuleRegistry`: `PolicyId` values are internal and must not surface
+//!   as user-facing codes.
 
 // locus: ot canonical
 
-pub struct RuleRegistry;
-pub struct ParadigmRegistry;
-pub struct PolicyRegistry;
-pub struct GovernanceDiagnosticRegistry;
+use crate::governance::decision::Decision;
+use crate::governance::finding::FindingStore;
+use crate::governance::ids::{ParadigmId, PolicyId, RuleId};
+use crate::governance::paradigm::ParadigmDefinition;
+use crate::governance::policy::PolicyDefinition;
+use crate::governance::rule::RuleDefinition;
+
+pub struct RuleRegistry {
+    rules: Vec<&'static dyn RuleDefinition>,
+}
+
+impl RuleRegistry {
+    /// Empty registry. P1 wires no migrated rules.
+    pub fn standard() -> Self {
+        Self { rules: Vec::new() }
+    }
+
+    /// Test-only constructor.
+    #[cfg(test)]
+    pub fn with_rules(rules: Vec<&'static dyn RuleDefinition>) -> Self {
+        let r = Self { rules };
+        r.validate().expect("test registry violated invariants");
+        r
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = &&'static dyn RuleDefinition> {
+        self.rules.iter()
+    }
+
+    pub fn find(&self, id: &RuleId) -> Option<&'static dyn RuleDefinition> {
+        self.rules.iter().copied().find(|r| r.id() == *id)
+    }
+
+    /// Used by the legacy adapter to decide whether to wrap a legacy
+    /// diagnostic's rule_code or skip it (because a registered rule
+    /// already covers that code).
+    pub fn contains_code(&self, code: &str) -> bool {
+        self.rules.iter().any(|r| r.id().as_str() == code)
+    }
+
+    /// Validate construction invariants:
+    /// 1. Rule IDs are distinct.
+    /// 2. Every rule's id starts with its paradigm prefix.
+    pub fn validate(&self) -> Result<(), RegistryError> {
+        let mut seen = std::collections::HashSet::new();
+        for r in &self.rules {
+            if !seen.insert(r.id()) {
+                return Err(RegistryError::DuplicateRuleId(r.id().as_str().to_string()));
+            }
+            if !r.id().as_str().starts_with(r.paradigm().as_str()) {
+                return Err(RegistryError::RulePrefixMismatch {
+                    rule: r.id().as_str().to_string(),
+                    paradigm: r.paradigm().as_str().to_string(),
+                });
+            }
+        }
+        Ok(())
+    }
+}
+
+pub struct ParadigmRegistry {
+    paradigms: Vec<&'static dyn ParadigmDefinition>,
+}
+
+impl ParadigmRegistry {
+    /// All current legacy paradigms with empty `rules()` slices. P2 fills
+    /// the slices as rules migrate.
+    pub fn standard() -> Self {
+        Self {
+            paradigms: standard_paradigms(),
+        }
+    }
+
+    #[cfg(test)]
+    pub fn empty() -> Self {
+        Self {
+            paradigms: Vec::new(),
+        }
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = &&'static dyn ParadigmDefinition> {
+        self.paradigms.iter()
+    }
+
+    pub fn find(&self, id: &ParadigmId) -> Option<&'static dyn ParadigmDefinition> {
+        self.paradigms.iter().copied().find(|p| p.id() == *id)
+    }
+}
+
+pub struct PolicyRegistry {
+    policies: Vec<&'static dyn PolicyDefinition>,
+}
+
+impl PolicyRegistry {
+    /// Only `DefaultPassThroughPolicy` in P1. RegistryIntegrityPolicy lands
+    /// in P3 and goes BEFORE pass-through.
+    pub fn standard() -> Self {
+        Self {
+            policies: standard_policies(),
+        }
+    }
+
+    #[cfg(test)]
+    pub fn with_policies(policies: Vec<&'static dyn PolicyDefinition>) -> Self {
+        Self { policies }
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = &&'static dyn PolicyDefinition> {
+        self.policies.iter()
+    }
+
+    pub fn find(&self, id: &PolicyId) -> Option<&'static dyn PolicyDefinition> {
+        self.policies.iter().copied().find(|p| p.id() == *id)
+    }
+}
+
+pub struct GovernanceDiagnosticRegistry {
+    codes: Vec<(&'static str, PolicyId)>,
+}
+
+impl GovernanceDiagnosticRegistry {
+    pub fn standard() -> Self {
+        Self {
+            codes: vec![
+                // Existing CLI-layer governance codes. Owner becomes a real
+                // PolicyId when those migrate (future epic).
+                ("LOCUS001", PolicyId::new("legacy-exceptions")),
+                ("LOCUS002", PolicyId::new("legacy-vacancy-nudge")),
+                // Reserved for P3 RegistryIntegrityPolicy.
+                ("LOCUS003", PolicyId::new("registry-integrity")),
+            ],
+        }
+    }
+
+    pub fn contains(&self, code: &str) -> bool {
+        self.codes.iter().any(|(c, _)| *c == code)
+    }
+
+    pub fn owner(&self, code: &str) -> Option<PolicyId> {
+        self.codes
+            .iter()
+            .find(|(c, _)| *c == code)
+            .map(|(_, p)| *p)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RegistryError {
+    DuplicateRuleId(String),
+    RulePrefixMismatch { rule: String, paradigm: String },
+    DuplicateDecision { finding_id: u64 },
+}
+
+impl std::fmt::Display for RegistryError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            RegistryError::DuplicateRuleId(id) => {
+                write!(f, "duplicate rule id in RuleRegistry: {id}")
+            }
+            RegistryError::RulePrefixMismatch { rule, paradigm } => write!(
+                f,
+                "rule id {rule} does not start with paradigm prefix {paradigm}"
+            ),
+            RegistryError::DuplicateDecision { finding_id } => {
+                write!(f, "multiple decisions for finding {finding_id}")
+            }
+        }
+    }
+}
+
+impl std::error::Error for RegistryError {}
+
+/// Asserts every finding has exactly one decision. Called after policy
+/// evaluation in pipeline::run.
+pub fn validate_decisions(
+    decisions: &[Decision],
+    store: &FindingStore,
+) -> Result<(), RegistryError> {
+    use std::collections::HashSet;
+    let mut seen = HashSet::new();
+    for d in decisions {
+        if !seen.insert(d.finding_id) {
+            return Err(RegistryError::DuplicateDecision {
+                finding_id: d.finding_id.as_u64(),
+            });
+        }
+    }
+    // Every finding in the store must be decided.
+    for f in store.iter() {
+        if !seen.contains(&f.id) {
+            panic!(
+                "finding {} has no decision after policy chain",
+                f.id.as_u64()
+            );
+        }
+    }
+    Ok(())
+}
+
+/// Filled in Task 10 — wires legacy paradigms as ParadigmDefinitions.
+fn standard_paradigms() -> Vec<&'static dyn ParadigmDefinition> {
+    Vec::new()
+}
+
+/// Filled in Task 12 — wires DefaultPassThroughPolicy.
+fn standard_policies() -> Vec<&'static dyn PolicyDefinition> {
+    Vec::new()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::diagnostics::Severity;
+    use crate::governance::finding::{FindingSource, RuleFinding};
+    use crate::governance::ids::{FindingId, RuleId};
+    use crate::governance::rule::{RuleContext, RuleDefinition};
+
+    struct StubRule(&'static str, &'static str);
+    impl RuleDefinition for StubRule {
+        fn id(&self) -> RuleId {
+            RuleId::new(self.0)
+        }
+        fn paradigm(&self) -> ParadigmId {
+            ParadigmId::new(self.1)
+        }
+        fn title(&self) -> &'static str {
+            "stub"
+        }
+        fn default_severity(&self) -> Severity {
+            Severity::Warning
+        }
+        fn observe(&self, _: &RuleContext<'_>) -> Vec<RuleFinding> {
+            Vec::new()
+        }
+    }
+
+    static R_CX001: StubRule = StubRule("CX001", "CX");
+    static R_CX001_DUP: StubRule = StubRule("CX001", "CX");
+    static R_BAD_PREFIX: StubRule = StubRule("OT001", "CX");
+
+    #[test]
+    fn duplicate_rule_ids_are_rejected() {
+        let r = RuleRegistry {
+            rules: vec![&R_CX001, &R_CX001_DUP],
+        };
+        assert!(matches!(r.validate(), Err(RegistryError::DuplicateRuleId(_))));
+    }
+
+    #[test]
+    fn rule_prefix_mismatch_is_rejected() {
+        let r = RuleRegistry {
+            rules: vec![&R_BAD_PREFIX],
+        };
+        assert!(matches!(
+            r.validate(),
+            Err(RegistryError::RulePrefixMismatch { .. })
+        ));
+    }
+
+    #[test]
+    fn well_formed_registry_validates() {
+        let r = RuleRegistry {
+            rules: vec![&R_CX001],
+        };
+        assert!(r.validate().is_ok());
+        assert!(r.contains_code("CX001"));
+        assert!(!r.contains_code("CX002"));
+    }
+
+    #[test]
+    fn governance_diagnostic_registry_knows_locus003() {
+        let g = GovernanceDiagnosticRegistry::standard();
+        assert!(g.contains("LOCUS003"));
+        assert_eq!(g.owner("LOCUS003").unwrap().as_str(), "registry-integrity");
+    }
+
+    #[test]
+    fn validate_decisions_rejects_duplicates() {
+        use crate::governance::decision::{DecisionStatus, SeverityChange};
+        let fid = FindingId::from_raw_for_test(0);
+        let mut store = FindingStore::new();
+        store.insert(test_finding(fid));
+        let d = Decision {
+            finding_id: fid,
+            policy: PolicyId::new("p"),
+            severity: Severity::Warning,
+            status: DecisionStatus::Active,
+            severity_change: SeverityChange::Unchanged,
+            rationale: Vec::new(),
+        };
+        let result = validate_decisions(&[d.clone(), d], &store);
+        assert!(matches!(
+            result,
+            Err(RegistryError::DuplicateDecision { .. })
+        ));
+    }
+
+    fn test_finding(id: FindingId) -> RuleFinding {
+        RuleFinding {
+            id,
+            source: FindingSource::RegisteredRule(RuleId::new("CX001")),
+            rule_id: None,
+            paradigm_id: None,
+            default_severity: Severity::Warning,
+            span: None,
+            concept: None,
+            message: String::new(),
+            evidence: Vec::new(),
+            why: Vec::new(),
+            suggested_fix: None,
+            diagnostic_code: None,
+        }
+    }
+}
