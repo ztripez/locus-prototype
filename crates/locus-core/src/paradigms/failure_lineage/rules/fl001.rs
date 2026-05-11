@@ -55,39 +55,60 @@ pub fn fl001(air: &AirWorkspace, section: &FlSection, mode: CheckMode) -> Vec<Di
                 else {
                     continue;
                 };
-                out.push(Diagnostic {
-                    rule_id: "FL001".to_string(),
-                    severity: mode.elevate(Severity::Fatal),
-                    span: func.span.clone(),
-                    concept: None,
-                    message: format!(
-                        "domain function `{}` returns boundary error type `{}` \
-                         (matched domain pattern `{}`, boundary pattern `{}`)",
-                        func.name, err_ty, domain_pattern, boundary_pattern,
-                    ),
-                    why: vec![
-                        format!("module `{module_path}` matches domain pattern `{domain_pattern}`"),
-                        format!("function `{}` (`{}`)", func.name, func.symbol),
-                        format!("return type `{ret}`"),
-                        format!(
-                            "extracted error type `{err_ty}` matches boundary pattern \
-                             `{boundary_pattern}`"
-                        ),
-                        "domain function signatures must speak the domain's error \
-                         vocabulary; transport / boundary errors leak the failure lineage \
-                         past the layer that should have wrapped them"
-                            .into(),
-                    ],
-                    suggested_fix: Some(format!(
-                        "wrap `{err_ty}` in a domain error type at the layer's edge — \
-                         either `impl From<{err_ty}> for <DomainError>` or an explicit \
-                         `map_err` at the boundary — so `{}` returns the domain error \
-                         instead",
-                        func.name,
-                    )),
-                });
+                out.push(fl001_diagnostic(
+                    func,
+                    module_path,
+                    ret,
+                    err_ty,
+                    domain_pattern,
+                    boundary_pattern,
+                    mode,
+                ));
             }
         }
     }
     out
+}
+
+#[allow(clippy::too_many_arguments)]
+fn fl001_diagnostic(
+    func: &locus_air::AirFunction,
+    module_path: &str,
+    ret: &str,
+    err_ty: &str,
+    domain_pattern: &str,
+    boundary_pattern: &str,
+    mode: CheckMode,
+) -> Diagnostic {
+    Diagnostic {
+        rule_id: "FL001".to_string(),
+        severity: mode.elevate(Severity::Fatal),
+        span: func.span.clone(),
+        concept: None,
+        message: format!(
+            "domain function `{}` returns boundary error type `{}` \
+             (matched domain pattern `{}`, boundary pattern `{}`)",
+            func.name, err_ty, domain_pattern, boundary_pattern,
+        ),
+        why: vec![
+            format!("module `{module_path}` matches domain pattern `{domain_pattern}`"),
+            format!("function `{}` (`{}`)", func.name, func.symbol),
+            format!("return type `{ret}`"),
+            format!(
+                "extracted error type `{err_ty}` matches boundary pattern \
+                 `{boundary_pattern}`"
+            ),
+            "domain function signatures must speak the domain's error \
+             vocabulary; transport / boundary errors leak the failure lineage \
+             past the layer that should have wrapped them"
+                .into(),
+        ],
+        suggested_fix: Some(format!(
+            "wrap `{err_ty}` in a domain error type at the layer's edge — \
+             either `impl From<{err_ty}> for <DomainError>` or an explicit \
+             `map_err` at the boundary — so `{}` returns the domain error \
+             instead",
+            func.name,
+        )),
+    }
 }

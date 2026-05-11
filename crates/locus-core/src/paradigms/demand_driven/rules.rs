@@ -22,6 +22,64 @@ use locus_air::{ActionKind, AirFunction, AirItem, AirType, AirWorkspace, TypeKin
 use super::lockfile_schema::{DaSection, matches_name_glob};
 use crate::diagnostics::{CheckMode, Diagnostic, Severity};
 
+fn da001_diagnostic(decl: &AirType, mode: CheckMode) -> Diagnostic {
+    Diagnostic {
+        rule_id: "DA001".to_string(),
+        severity: mode.elevate(Severity::Warning),
+        span: decl.span.clone(),
+        concept: Some(decl.name.clone()),
+        message: format!(
+            "trait `{}` has exactly one implementation — abstraction may be speculative",
+            decl.name
+        ),
+        why: vec![
+            format!("trait declared at `{}`", decl.symbol),
+            "exactly one `impl` block found in the workspace".into(),
+            "Demand-Driven Architecture: an abstraction is justified by present \
+             demand (multiple impls, accepted port role, generated boundary, …); \
+             a trait with one impl and no accepted role is variation rent without \
+             variation"
+                .into(),
+        ],
+        suggested_fix: Some(format!(
+            "if this trait is a real port / accepted single-impl seam, add `\"{}\"` \
+             (or its full symbol `\"{}\"`) to `paradigms.DA.accepted_single_impl` in \
+             `locus.lock`; otherwise inline the trait's contract into the concrete \
+             type and call sites",
+            decl.name, decl.symbol
+        )),
+    }
+}
+
+/// Count impl blocks per declared trait. Returns a map of symbol → impl count.
+fn count_da001_impls<'a>(
+    air: &AirWorkspace,
+    traits: &'a BTreeMap<String, &AirType>,
+) -> BTreeMap<&'a str, u32> {
+    let mut impl_counts: BTreeMap<&str, u32> = traits.keys().map(|k| (k.as_str(), 0u32)).collect();
+    for pkg in &air.packages {
+        for file in &pkg.files {
+            for item in &file.items {
+                let AirItem::Impl(imp) = item else { continue };
+                let Some(raw) = imp.interface.as_deref() else {
+                    continue;
+                };
+                let normalized = strip_generics(raw);
+                let short = last_segment(normalized);
+                for (sym, decl) in traits {
+                    if normalized == sym.as_str() || short == decl.name.as_str() {
+                        if let Some(c) = impl_counts.get_mut(sym.as_str()) {
+                            *c += 1;
+                        }
+                        break;
+                    }
+                }
+            }
+        }
+    }
+    impl_counts
+}
+
 /// DA001 — trait with exactly one implementation and no accepted port role.
 ///
 /// Walks every `AirItem::Type` whose `kind == Trait`, counts the
@@ -48,10 +106,6 @@ pub fn da001(air: &AirWorkspace, section: &DaSection, mode: CheckMode) -> Vec<Di
     if !section.enabled {
         return Vec::new();
     }
-
-    // First pass: every trait declaration in the workspace, keyed by symbol.
-    // We carry the trait's name and span alongside the symbol so the
-    // diagnostic can anchor on the trait's source location.
     let mut traits: BTreeMap<String, &AirType> = BTreeMap::new();
     for pkg in &air.packages {
         for file in &pkg.files {
@@ -67,74 +121,17 @@ pub fn da001(air: &AirWorkspace, section: &DaSection, mode: CheckMode) -> Vec<Di
     if traits.is_empty() {
         return Vec::new();
     }
-
-    // Second pass: count impl blocks per trait. We match an `AirImplBlock.interface`
-    // to a declared trait by either:
-    // - exact symbol equality (`my_crate::ports::Clock` matches symbol), OR
-    // - last-segment name equality (the trait was imported and used as `Clock`).
-    // The short-name fallback is necessary because `render_path` reflects the
-    // path as written, not as resolved — `use foo::Clock; impl Clock for X`
-    // emits `trait_path = "Clock"`. A name collision between two traits with
-    // the same short name would over-count, which is acceptable for a Warning:
-    // the diagnostic invites the user to inspect, not to enforce silently.
-    let mut impl_counts: BTreeMap<&str, u32> = traits.keys().map(|k| (k.as_str(), 0u32)).collect();
-    for pkg in &air.packages {
-        for file in &pkg.files {
-            for item in &file.items {
-                let AirItem::Impl(imp) = item else { continue };
-                let Some(raw) = imp.interface.as_deref() else {
-                    continue; // inherent impl
-                };
-                let normalized = strip_generics(raw);
-                let short = last_segment(normalized);
-                for (sym, decl) in &traits {
-                    if normalized == sym.as_str() || short == decl.name.as_str() {
-                        if let Some(c) = impl_counts.get_mut(sym.as_str()) {
-                            *c += 1;
-                        }
-                        break;
-                    }
-                }
-            }
-        }
-    }
-
+    let impl_counts = count_da001_impls(air, &traits);
     let mut out = Vec::new();
     for (sym, decl) in &traits {
         let count = impl_counts.get(sym.as_str()).copied().unwrap_or(0);
         if count != 1 {
-            continue; // 0 → out of scope (future rule); >=2 → real variation, fine
+            continue;
         }
         if section.is_accepted(sym, &decl.name) {
-            continue; // user has accepted this single-impl trait
+            continue;
         }
-
-        out.push(Diagnostic {
-            rule_id: "DA001".to_string(),
-            severity: mode.elevate(Severity::Warning),
-            span: decl.span.clone(),
-            concept: Some(decl.name.clone()),
-            message: format!(
-                "trait `{}` has exactly one implementation — abstraction may be speculative",
-                decl.name
-            ),
-            why: vec![
-                format!("trait declared at `{}`", decl.symbol),
-                "exactly one `impl` block found in the workspace".into(),
-                "Demand-Driven Architecture: an abstraction is justified by present \
-                 demand (multiple impls, accepted port role, generated boundary, …); \
-                 a trait with one impl and no accepted role is variation rent without \
-                 variation"
-                    .into(),
-            ],
-            suggested_fix: Some(format!(
-                "if this trait is a real port / accepted single-impl seam, add `\"{}\"` \
-                 (or its full symbol `\"{}\"`) to `paradigms.DA.accepted_single_impl` in \
-                 `locus.lock`; otherwise inline the trait's contract into the concrete \
-                 type and call sites",
-                decl.name, decl.symbol
-            )),
-        });
+        out.push(da001_diagnostic(decl, mode));
     }
     out
 }
@@ -154,6 +151,34 @@ fn strip_generics(path: &str) -> &str {
 /// name after a `use` import.
 fn last_segment(path: &str) -> &str {
     path.rsplit("::").next().unwrap_or(path)
+}
+
+/// Build a per-function-symbol → `Da002ConstructStats` index from all
+/// `Construct` truth-actions in the workspace. Functions with no `Construct`
+/// actions are absent from the map.
+fn build_da002_construct_index(air: &AirWorkspace) -> BTreeMap<&str, Da002ConstructStats> {
+    let mut by_fn: BTreeMap<&str, Da002ConstructStats> = BTreeMap::new();
+    for pkg in &air.packages {
+        for file in &pkg.files {
+            for item in &file.items {
+                let AirItem::TruthAction(act) = item else {
+                    continue;
+                };
+                if act.action != ActionKind::Construct {
+                    continue;
+                }
+                let Some(fn_sym) = act.function.as_deref() else {
+                    continue;
+                };
+                let entry = by_fn.entry(fn_sym).or_insert_with(|| Da002ConstructStats {
+                    count: 0,
+                    first_target: act.target.clone(),
+                });
+                entry.count += 1;
+            }
+        }
+    }
+    by_fn
 }
 
 /// DA002 — single-construct factory function.
@@ -178,34 +203,7 @@ pub fn da002(air: &AirWorkspace, section: &DaSection, mode: CheckMode) -> Vec<Di
         return Vec::new();
     }
 
-    // Index Construct truth-actions by enclosing function symbol. Each
-    // entry's value is the count + a sample target (used for the
-    // diagnostic's why).
-    struct ConstructStats {
-        count: u32,
-        first_target: String,
-    }
-    let mut by_fn: BTreeMap<&str, ConstructStats> = BTreeMap::new();
-    for pkg in &air.packages {
-        for file in &pkg.files {
-            for item in &file.items {
-                let AirItem::TruthAction(act) = item else {
-                    continue;
-                };
-                if act.action != ActionKind::Construct {
-                    continue;
-                }
-                let Some(fn_sym) = act.function.as_deref() else {
-                    continue;
-                };
-                let entry = by_fn.entry(fn_sym).or_insert_with(|| ConstructStats {
-                    count: 0,
-                    first_target: act.target.clone(),
-                });
-                entry.count += 1;
-            }
-        }
-    }
+    let by_fn = build_da002_construct_index(air);
 
     let mut out = Vec::new();
     for pkg in &air.packages {
@@ -237,6 +235,12 @@ pub fn da002(air: &AirWorkspace, section: &DaSection, mode: CheckMode) -> Vec<Di
         }
     }
     out
+}
+
+/// Construct-action accumulator for DA002.
+struct Da002ConstructStats {
+    count: u32,
+    first_target: String,
 }
 
 fn diagnostic_da002(
@@ -278,6 +282,43 @@ fn diagnostic_da002(
     }
 }
 
+fn da007_diagnostic(
+    ty: &AirType,
+    matched_pattern: &str,
+    only_variant: &str,
+    mode: CheckMode,
+) -> Diagnostic {
+    Diagnostic {
+        rule_id: "DA007".to_string(),
+        severity: mode.elevate(Severity::Warning),
+        span: ty.span.clone(),
+        concept: Some(ty.name.clone()),
+        message: format!(
+            "strategy-shaped enum `{}` has exactly one variant \
+             (`{only_variant}`) — abstraction is a stub",
+            ty.name
+        ),
+        why: vec![
+            format!("enum `{}` (`{}`)", ty.name, ty.symbol),
+            format!("name matches strategy pattern `{matched_pattern}`"),
+            format!("single variant: `{only_variant}` (no actual variation)"),
+            "Demand-Driven Architecture: a 1-variant enum \
+             carries no decision — it's an unstarted point of \
+             variation"
+                .into(),
+        ],
+        suggested_fix: Some(format!(
+            "if there is no real variation, inline the only \
+             variant `{only_variant}` at call sites and delete the \
+             enum. If a second variant is expected soon, \
+             narrow `paradigms.DA.strategy_name_patterns` so \
+             `{name}` isn't matched until the second variant \
+             lands.",
+            name = ty.name,
+        )),
+    }
+}
+
 /// DA007 — single-variant strategy enum.
 ///
 /// For every `AirItem::Type` whose `kind == Enum` and whose `name`
@@ -314,36 +355,7 @@ pub fn da007(air: &AirWorkspace, section: &DaSection, mode: CheckMode) -> Vec<Di
                     continue;
                 }
                 let only_variant = &ty.variants[0].name;
-                out.push(Diagnostic {
-                    rule_id: "DA007".to_string(),
-                    severity: mode.elevate(Severity::Warning),
-                    span: ty.span.clone(),
-                    concept: Some(ty.name.clone()),
-                    message: format!(
-                        "strategy-shaped enum `{}` has exactly one variant \
-                         (`{}`) — abstraction is a stub",
-                        ty.name, only_variant
-                    ),
-                    why: vec![
-                        format!("enum `{}` (`{}`)", ty.name, ty.symbol),
-                        format!("name matches strategy pattern `{matched_pattern}`"),
-                        format!("single variant: `{}` (no actual variation)", only_variant),
-                        "Demand-Driven Architecture: a 1-variant enum \
-                         carries no decision — it's an unstarted point of \
-                         variation"
-                            .into(),
-                    ],
-                    suggested_fix: Some(format!(
-                        "if there is no real variation, inline the only \
-                         variant `{variant}` at call sites and delete the \
-                         enum. If a second variant is expected soon, \
-                         narrow `paradigms.DA.strategy_name_patterns` so \
-                         `{name}` isn't matched until the second variant \
-                         lands.",
-                        variant = only_variant,
-                        name = ty.name,
-                    )),
-                });
+                out.push(da007_diagnostic(ty, matched_pattern, only_variant, mode));
             }
         }
     }

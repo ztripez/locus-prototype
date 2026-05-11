@@ -21,6 +21,34 @@ use locus_air::{
 use super::lockfile_schema::{PaSection, matches_pattern};
 use crate::diagnostics::{CheckMode, Diagnostic, Severity};
 
+fn pa001_diagnostic(ty: &locus_air::AirType, imp: &AirImplBlock, mode: CheckMode) -> Diagnostic {
+    Diagnostic {
+        rule_id: "PA001".to_string(),
+        severity: mode.elevate(Severity::Warning),
+        span: ty.span.clone(),
+        concept: None,
+        message: format!(
+            "trait `{}` and its only impl (`{}`) share file `{}`",
+            ty.name, imp.target_type, ty.span.file
+        ),
+        why: vec![
+            format!("trait `{}` declared in `{}`", ty.symbol, ty.span.file),
+            format!(
+                "sole impl is `impl {} for {}` in the same file",
+                ty.name, imp.target_type
+            ),
+            "no `accepted_colocated_traits` pattern matched".into(),
+        ],
+        suggested_fix: Some(format!(
+            "move `{}` to a ports module (typically `application::ports::*`) and the \
+             impl for `{}` to an adapter/infrastructure module; if this trait is a \
+             genuine utility helper rather than a port, accept it via \
+             `paradigms.PA.accepted_colocated_traits` in `locus.lock`",
+            ty.name, imp.target_type
+        )),
+    }
+}
+
 /// PA001 — port and its sole impl in the same file.
 ///
 /// A trait declared and immediately implemented in the same file is the
@@ -40,65 +68,45 @@ use crate::diagnostics::{CheckMode, Diagnostic, Severity};
 ///   `accepted_colocated_traits`.
 ///
 /// Severity: Warning by default; elevated to Fatal under `--agent-strict`.
+/// Check a single trait type for PA001 (co-located port+adapter).
+/// Returns `Some(Diagnostic)` when the rule fires.
+fn pa001_check_trait<'a>(
+    ty: &'a locus_air::AirType,
+    trait_to_impls: &'a BTreeMap<&str, Vec<&'a AirImplBlock>>,
+    section: &PaSection,
+    mode: CheckMode,
+) -> Option<Diagnostic> {
+    if ty.kind != TypeKind::Trait {
+        return None;
+    }
+    let impls = trait_to_impls.get(ty.name.as_str())?;
+    if impls.len() != 1 {
+        return None;
+    }
+    let imp = impls[0];
+    if imp.span.file != ty.span.file {
+        return None;
+    }
+    let exempted = section
+        .accepted_colocated_traits
+        .iter()
+        .any(|pat| matches_pattern(pat, &ty.symbol) || matches_pattern(pat, &ty.name));
+    if exempted {
+        return None;
+    }
+    Some(pa001_diagnostic(ty, imp, mode))
+}
+
 pub fn pa001(air: &AirWorkspace, section: &PaSection, mode: CheckMode) -> Vec<Diagnostic> {
     let trait_to_impls = build_trait_to_impls(air);
-
     let mut out = Vec::new();
     for pkg in &air.packages {
         for file in &pkg.files {
             for item in &file.items {
-                let AirItem::Type(ty) = item else {
-                    continue;
-                };
-                if ty.kind != TypeKind::Trait {
-                    continue;
+                let AirItem::Type(ty) = item else { continue };
+                if let Some(d) = pa001_check_trait(ty, &trait_to_impls, section, mode) {
+                    out.push(d);
                 }
-
-                let impls = match trait_to_impls.get(ty.name.as_str()) {
-                    Some(v) => v,
-                    None => continue, // zero impls — intentionally-uninhabited
-                };
-                if impls.len() != 1 {
-                    continue; // zero (handled above) or 2+ (already split)
-                }
-                let imp = impls[0];
-                if imp.span.file != ty.span.file {
-                    continue; // adapter already lives in a different file
-                }
-
-                if section
-                    .accepted_colocated_traits
-                    .iter()
-                    .any(|pat| matches_pattern(pat, &ty.symbol) || matches_pattern(pat, &ty.name))
-                {
-                    continue;
-                }
-
-                out.push(Diagnostic {
-                    rule_id: "PA001".to_string(),
-                    severity: mode.elevate(Severity::Warning),
-                    span: ty.span.clone(),
-                    concept: None,
-                    message: format!(
-                        "trait `{}` and its only impl (`{}`) share file `{}`",
-                        ty.name, imp.target_type, ty.span.file
-                    ),
-                    why: vec![
-                        format!("trait `{}` declared in `{}`", ty.symbol, ty.span.file),
-                        format!(
-                            "sole impl is `impl {} for {}` in the same file",
-                            ty.name, imp.target_type
-                        ),
-                        "no `accepted_colocated_traits` pattern matched".into(),
-                    ],
-                    suggested_fix: Some(format!(
-                        "move `{}` to a ports module (typically `application::ports::*`) and the \
-                         impl for `{}` to an adapter/infrastructure module; if this trait is a \
-                         genuine utility helper rather than a port, accept it via \
-                         `paradigms.PA.accepted_colocated_traits` in `locus.lock`",
-                        ty.name, imp.target_type
-                    )),
-                });
             }
         }
     }
@@ -125,6 +133,48 @@ fn build_trait_to_impls(air: &AirWorkspace) -> BTreeMap<&str, Vec<&AirImplBlock>
         }
     }
     out
+}
+
+fn pa002_diagnostic(
+    module_path: &str,
+    imp: &locus_air::AirImport,
+    application_pattern: &str,
+    adapter_pattern: &str,
+    mode: CheckMode,
+) -> Diagnostic {
+    Diagnostic {
+        rule_id: "PA002".to_string(),
+        severity: mode.elevate(Severity::Fatal),
+        span: imp.span.clone(),
+        concept: None,
+        message: format!(
+            "application/domain module `{module_path}` imports concrete adapter `{}`",
+            imp.path
+        ),
+        why: vec![
+            format!(
+                "module `{module_path}` matches application_paths \
+                 pattern `{application_pattern}`"
+            ),
+            format!(
+                "import `{}` matches concrete_adapter_patterns \
+                 pattern `{adapter_pattern}`",
+                imp.path
+            ),
+            "application/domain code must depend on ports (traits), \
+             not concrete adapters; the adapter belongs at the \
+             boundary"
+                .into(),
+        ],
+        suggested_fix: Some(format!(
+            "introduce a port (trait) the application depends on, \
+             move the `{}` usage into an infrastructure adapter \
+             that implements the port; if the import is genuinely \
+             a non-adapter utility, narrow \
+             `paradigms.PA.concrete_adapter_patterns` in `locus.lock`",
+            imp.path
+        )),
+    }
 }
 
 /// PA002 — concrete adapter import in application/domain layer.
@@ -168,40 +218,13 @@ pub fn pa002(air: &AirWorkspace, section: &PaSection, mode: CheckMode) -> Vec<Di
                 else {
                     continue;
                 };
-                out.push(Diagnostic {
-                    rule_id: "PA002".to_string(),
-                    severity: mode.elevate(Severity::Fatal),
-                    span: imp.span.clone(),
-                    concept: None,
-                    message: format!(
-                        "application/domain module `{module_path}` imports concrete \
-                         adapter `{}`",
-                        imp.path
-                    ),
-                    why: vec![
-                        format!(
-                            "module `{module_path}` matches application_paths \
-                             pattern `{application_pattern}`"
-                        ),
-                        format!(
-                            "import `{}` matches concrete_adapter_patterns \
-                             pattern `{adapter_pattern}`",
-                            imp.path
-                        ),
-                        "application/domain code must depend on ports (traits), \
-                         not concrete adapters; the adapter belongs at the \
-                         boundary"
-                            .into(),
-                    ],
-                    suggested_fix: Some(format!(
-                        "introduce a port (trait) the application depends on, \
-                         move the `{}` usage into an infrastructure adapter \
-                         that implements the port; if the import is genuinely \
-                         a non-adapter utility, narrow \
-                         `paradigms.PA.concrete_adapter_patterns` in `locus.lock`",
-                        imp.path
-                    )),
-                });
+                out.push(pa002_diagnostic(
+                    module_path,
+                    imp,
+                    application_pattern,
+                    adapter_pattern,
+                    mode,
+                ));
             }
         }
     }
@@ -326,6 +349,46 @@ fn pa003_diagnostic(
     }
 }
 
+fn pa004_diagnostic(
+    a: &locus_air::AirTruthAction,
+    module_label: &str,
+    function_label: &str,
+    adapter_pattern: &str,
+    mode: CheckMode,
+) -> Diagnostic {
+    Diagnostic {
+        rule_id: "PA004".to_string(),
+        severity: mode.elevate(Severity::Fatal),
+        span: a.span.clone(),
+        concept: None,
+        message: format!(
+            "adapter `{}` constructed in module `{module_label}` \
+             outside any accepted construction path",
+            a.target
+        ),
+        why: vec![
+            format!(
+                "target `{}` matches adapter_type_patterns pattern `{adapter_pattern}`",
+                a.target
+            ),
+            format!(
+                "module `{module_label}` matches none of the \
+                 `accepted_construction_paths` patterns"
+            ),
+            format!("enclosing function: `{function_label}`"),
+        ],
+        suggested_fix: Some(format!(
+            "move the construction of `{}` into a composition \
+             root (e.g. `main`, a `bootstrap` module, or a \
+             declared `composition::*` module); if `{module_label}` \
+             is itself a legitimate composition site, add it to \
+             `paradigms.PA.accepted_construction_paths` in \
+             `locus.lock`",
+            a.target
+        )),
+    }
+}
+
 /// PA004 — adapter construction outside composition root.
 ///
 /// For each `AirItem::TruthAction { action: Construct, target }`, fire when
@@ -339,6 +402,47 @@ fn pa003_diagnostic(
 /// Silent when `adapter_type_patterns` is empty. Defaults populate
 /// `accepted_construction_paths` so the user only needs to opt in by listing
 /// adapter types.
+/// Check a single file's Construct actions for PA004. Appends diagnostics.
+fn pa004_check_file(
+    file: &locus_air::AirFile,
+    module_path: &str,
+    section: &PaSection,
+    mode: CheckMode,
+    out: &mut Vec<Diagnostic>,
+) {
+    let module_label = if module_path.is_empty() {
+        "(unknown module)"
+    } else {
+        module_path
+    };
+    for item in &file.items {
+        let AirItem::TruthAction(a) = item else {
+            continue;
+        };
+        if a.action != ActionKind::Construct {
+            continue;
+        }
+        let Some(adapter_pattern) = section
+            .adapter_type_patterns
+            .iter()
+            .find(|pat| matches_pattern(pat, &a.target))
+        else {
+            continue;
+        };
+        let function_label = a
+            .function
+            .as_deref()
+            .unwrap_or("(no enclosing function recorded)");
+        out.push(pa004_diagnostic(
+            a,
+            module_label,
+            function_label,
+            adapter_pattern,
+            mode,
+        ));
+    }
+}
+
 pub fn pa004(air: &AirWorkspace, section: &PaSection, mode: CheckMode) -> Vec<Diagnostic> {
     if section.adapter_type_patterns.is_empty() {
         return Vec::new();
@@ -347,71 +451,14 @@ pub fn pa004(air: &AirWorkspace, section: &PaSection, mode: CheckMode) -> Vec<Di
     for pkg in &air.packages {
         for file in &pkg.files {
             let module_path = file.module_path.as_deref().unwrap_or("");
-            // If the file itself is an accepted construction path, skip
-            // every action it contains.
             if section
                 .accepted_construction_paths
                 .iter()
                 .any(|pat| matches_pattern(pat, module_path))
             {
-                continue;
+                continue; // file is itself an accepted construction path
             }
-            for item in &file.items {
-                let AirItem::TruthAction(a) = item else {
-                    continue;
-                };
-                if a.action != ActionKind::Construct {
-                    continue;
-                }
-                let Some(adapter_pattern) = section
-                    .adapter_type_patterns
-                    .iter()
-                    .find(|pat| matches_pattern(pat, &a.target))
-                else {
-                    continue;
-                };
-                let function_label = a
-                    .function
-                    .as_deref()
-                    .unwrap_or("(no enclosing function recorded)");
-                let module_label = if module_path.is_empty() {
-                    "(unknown module)"
-                } else {
-                    module_path
-                };
-                out.push(Diagnostic {
-                    rule_id: "PA004".to_string(),
-                    severity: mode.elevate(Severity::Fatal),
-                    span: a.span.clone(),
-                    concept: None,
-                    message: format!(
-                        "adapter `{}` constructed in module `{module_label}` \
-                         outside any accepted construction path",
-                        a.target
-                    ),
-                    why: vec![
-                        format!(
-                            "target `{}` matches adapter_type_patterns pattern \
-                             `{adapter_pattern}`",
-                            a.target
-                        ),
-                        format!(
-                            "module `{module_label}` matches none of the \
-                             `accepted_construction_paths` patterns"
-                        ),
-                        format!("enclosing function: `{function_label}`"),
-                    ],
-                    suggested_fix: Some(format!(
-                        "move the construction of `{}` into a composition \
-                         root (e.g. `main`, a `bootstrap` module, or a \
-                         declared `composition::*` module); if `{module_label}` \
-                         is itself a legitimate composition site, add it to \
-                         `paradigms.PA.accepted_construction_paths` in \
-                         `locus.lock`",
-                        a.target
-                    )),
-                });
-            }
+            pa004_check_file(file, module_path, section, mode, &mut out);
         }
     }
     out

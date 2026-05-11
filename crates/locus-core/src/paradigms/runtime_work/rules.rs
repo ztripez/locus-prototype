@@ -121,6 +121,22 @@ pub fn rw002(air: &AirWorkspace, section: &RwSection, mode: CheckMode) -> Vec<Di
     out
 }
 
+fn rw002_why(module_path: &str, fact: &AirFact) -> Vec<String> {
+    let mut w = vec![format!(
+        "module `{module_path}` matches none of the `runtime_owner_paths` patterns"
+    )];
+    if fact.reasons.is_empty() {
+        w.push("loader detected blocking-shaped call".to_string());
+    } else {
+        w.extend(fact.reasons.iter().cloned());
+    }
+    if let Some(ev) = fact.evidence.as_deref() {
+        w.push(format!("evidence: `{ev}`"));
+    }
+    w.push("blocking calls should be confined to runtime-owner modules so the runtime can budget them appropriately".to_string());
+    w
+}
+
 fn rw002_diagnostic(
     fact: &AirFact,
     symbol: &str,
@@ -133,11 +149,6 @@ fn rw002_diagnostic(
         FactTarget::Function { .. } | FactTarget::File { .. } => fn_span,
     };
     let evidence = fact.evidence.as_deref().unwrap_or("blocking call");
-    let why_reasons = if fact.reasons.is_empty() {
-        vec!["loader detected blocking-shaped call".to_string()]
-    } else {
-        fact.reasons.clone()
-    };
     Diagnostic {
         rule_id: "RW002".to_string(),
         severity: mode.elevate(Severity::Warning),
@@ -147,24 +158,7 @@ fn rw002_diagnostic(
             "blocking call `{evidence}` in module `{module_path}` \
              (function `{symbol}`) outside any declared runtime owner"
         ),
-        why: {
-            let mut w = vec![format!(
-                "module `{module_path}` matches none of the \
-                 `runtime_owner_paths` patterns"
-            )];
-            for r in why_reasons {
-                w.push(r);
-            }
-            if let Some(ev) = fact.evidence.as_deref() {
-                w.push(format!("evidence: `{ev}`"));
-            }
-            w.push(
-                "blocking calls should be confined to runtime-owner \
-                 modules so the runtime can budget them appropriately"
-                    .to_string(),
-            );
-            w
-        },
+        why: rw002_why(module_path, fact),
         suggested_fix: Some(format!(
             "move the blocking call to a runtime-owner module (a thread \
              pool, a worker, a blocking-allowed task) and call it through \
@@ -510,6 +504,22 @@ pub fn rw005(air: &AirWorkspace, mode: CheckMode) -> Vec<Diagnostic> {
     out
 }
 
+fn rw005_why(symbol: &str, module_path: &str, fact: &AirFact) -> Vec<String> {
+    let mut w = vec![format!(
+        "function `{symbol}` carries `HotPath` marker (in module `{module_path}`)"
+    )];
+    if fact.reasons.is_empty() {
+        w.push("loader detected blocking-shaped call".to_string());
+    } else {
+        w.extend(fact.reasons.iter().cloned());
+    }
+    if let Some(ev) = fact.evidence.as_deref() {
+        w.push(format!("evidence: `{ev}`"));
+    }
+    w.push("blocking calls in hot paths starve the runtime — they must be moved off-thread or replaced with non-blocking equivalents".to_string());
+    w
+}
+
 fn rw005_diagnostic(
     fact: &AirFact,
     symbol: &str,
@@ -522,11 +532,6 @@ fn rw005_diagnostic(
         FactTarget::Function { .. } | FactTarget::File { .. } => fn_span,
     };
     let evidence = fact.evidence.as_deref().unwrap_or("blocking call");
-    let why_reasons = if fact.reasons.is_empty() {
-        vec!["loader detected blocking-shaped call".to_string()]
-    } else {
-        fact.reasons.clone()
-    };
     Diagnostic {
         rule_id: "RW005".to_string(),
         severity: mode.elevate(Severity::Fatal),
@@ -536,25 +541,7 @@ fn rw005_diagnostic(
             "hot-path function `{symbol}` performs blocking call \
              `{evidence}` — blocks the hot loop / frame budget"
         ),
-        why: {
-            let mut w = vec![format!(
-                "function `{symbol}` carries `HotPath` marker (in module \
-                 `{module_path}`)"
-            )];
-            for r in why_reasons {
-                w.push(r);
-            }
-            if let Some(ev) = fact.evidence.as_deref() {
-                w.push(format!("evidence: `{ev}`"));
-            }
-            w.push(
-                "blocking calls in hot paths starve the runtime — they \
-                 must be moved off-thread or replaced with non-blocking \
-                 equivalents"
-                    .to_string(),
-            );
-            w
-        },
+        why: rw005_why(symbol, module_path, fact),
         suggested_fix: Some(format!(
             "move the blocking call out of `{symbol}`: spawn a one-off \
              worker (`std::thread::spawn`) or submit the work to a job \
@@ -600,6 +587,22 @@ pub fn rw006(air: &AirWorkspace, mode: CheckMode) -> Vec<Diagnostic> {
     out
 }
 
+fn rw006_why(symbol: &str, module_path: &str, fact: &AirFact) -> Vec<String> {
+    let mut w = vec![format!(
+        "function `{symbol}` carries `HotPath` marker (in module `{module_path}`)"
+    )];
+    if fact.reasons.is_empty() {
+        w.push("loader detected spawn-shaped call".to_string());
+    } else {
+        w.extend(fact.reasons.iter().cloned());
+    }
+    if let Some(ev) = fact.evidence.as_deref() {
+        w.push(format!("evidence: `{ev}`"));
+    }
+    w.push("spawning inside a hot loop creates unbounded task pressure — work should be pre-spawned and submitted via a port, or reused via a thread pool".to_string());
+    w
+}
+
 fn rw006_diagnostic(
     fact: &AirFact,
     symbol: &str,
@@ -612,11 +615,6 @@ fn rw006_diagnostic(
         FactTarget::Function { .. } | FactTarget::File { .. } => fn_span,
     };
     let evidence = fact.evidence.as_deref().unwrap_or("spawn");
-    let why_reasons = if fact.reasons.is_empty() {
-        vec!["loader detected spawn-shaped call".to_string()]
-    } else {
-        fact.reasons.clone()
-    };
     Diagnostic {
         rule_id: "RW006".to_string(),
         severity: mode.elevate(Severity::Fatal),
@@ -626,25 +624,7 @@ fn rw006_diagnostic(
             "hot-path function `{symbol}` spawns work `{evidence}` \
              — uncontrolled per-iteration spawning"
         ),
-        why: {
-            let mut w = vec![format!(
-                "function `{symbol}` carries `HotPath` marker (in module \
-                 `{module_path}`)"
-            )];
-            for r in why_reasons {
-                w.push(r);
-            }
-            if let Some(ev) = fact.evidence.as_deref() {
-                w.push(format!("evidence: `{ev}`"));
-            }
-            w.push(
-                "spawning inside a hot loop creates unbounded task \
-                 pressure — work should be pre-spawned and submitted via \
-                 a port, or reused via a thread pool"
-                    .to_string(),
-            );
-            w
-        },
+        why: rw006_why(symbol, module_path, fact),
         suggested_fix: Some(format!(
             "pre-spawn the worker in a runtime-owner module and submit \
              work from `{symbol}` via a channel (or other port) instead \

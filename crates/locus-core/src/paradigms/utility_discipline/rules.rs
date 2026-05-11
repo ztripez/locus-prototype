@@ -23,6 +23,40 @@ use locus_air::{ActionKind, AirItem, AirWorkspace, Visibility};
 use super::lockfile_schema::{UtSection, matches_pattern};
 use crate::diagnostics::{CheckMode, Diagnostic, Severity};
 
+fn ut001_diagnostic(
+    ty: &locus_air::AirType,
+    module_path: &str,
+    pattern: &str,
+    mode: CheckMode,
+) -> Diagnostic {
+    Diagnostic {
+        rule_id: "UT001".to_string(),
+        severity: mode.elevate(Severity::Warning),
+        span: ty.span.clone(),
+        concept: None,
+        message: format!(
+            "utility module `{module_path}` defines public type `{}` \
+             (matched utility pattern `{pattern}`)",
+            ty.name
+        ),
+        why: vec![
+            format!("module `{module_path}` matches utility pattern `{pattern}`"),
+            format!("public type `{}` (`{}`)", ty.name, ty.symbol),
+            "utility modules must hold only domain-free technical helpers; \
+             public types carry semantics that belong to a domain/feature module"
+                .into(),
+        ],
+        suggested_fix: Some(format!(
+            "move `{}` to a domain/feature module that owns the concept it \
+             represents; if it really is a domain-free helper type, demote it \
+             to private (utility modules can hold private types) or rename the \
+             module so it's no longer marked as utility in \
+             `paradigms.UT.utility_paths`",
+            ty.name
+        )),
+    }
+}
+
 /// UT001 — utility module defines a public type.
 ///
 /// For every `AirFile` whose `module_path` matches any pattern in
@@ -55,36 +89,53 @@ pub fn ut001(air: &AirWorkspace, section: &UtSection, mode: CheckMode) -> Vec<Di
                 if ty.visibility != Visibility::Public {
                     continue;
                 }
-                out.push(Diagnostic {
-                    rule_id: "UT001".to_string(),
-                    severity: mode.elevate(Severity::Warning),
-                    span: ty.span.clone(),
-                    concept: None,
-                    message: format!(
-                        "utility module `{module_path}` defines public type `{}` \
-                         (matched utility pattern `{pattern}`)",
-                        ty.name
-                    ),
-                    why: vec![
-                        format!("module `{module_path}` matches utility pattern `{pattern}`"),
-                        format!("public type `{}` (`{}`)", ty.name, ty.symbol),
-                        "utility modules must hold only domain-free technical helpers; \
-                         public types carry semantics that belong to a domain/feature module"
-                            .into(),
-                    ],
-                    suggested_fix: Some(format!(
-                        "move `{}` to a domain/feature module that owns the concept it \
-                         represents; if it really is a domain-free helper type, demote it \
-                         to private (utility modules can hold private types) or rename the \
-                         module so it's no longer marked as utility in \
-                         `paradigms.UT.utility_paths`",
-                        ty.name
-                    )),
-                });
+                out.push(ut001_diagnostic(ty, module_path, pattern, mode));
             }
         }
     }
     out
+}
+
+fn ut002_diagnostic(
+    imp: &locus_air::AirImport,
+    module_path: &str,
+    utility_pattern: &str,
+    forbidden_pattern: &str,
+    mode: CheckMode,
+) -> Diagnostic {
+    Diagnostic {
+        rule_id: "UT002".to_string(),
+        severity: mode.elevate(Severity::Fatal),
+        span: imp.span.clone(),
+        concept: None,
+        message: format!(
+            "utility module `{module_path}` imports forbidden \
+             feature/domain path `{}`",
+            imp.path
+        ),
+        why: vec![
+            format!(
+                "importer `{module_path}` matches utility_paths pattern \
+                 `{utility_pattern}`"
+            ),
+            format!(
+                "import `{}` matches forbidden_imports pattern `{forbidden_pattern}`",
+                imp.path
+            ),
+            "utility modules must hold only domain-free technical helpers; \
+             importing a feature/domain concept means the helper knows about \
+             semantics that belong to a domain/feature module"
+                .into(),
+        ],
+        suggested_fix: Some(format!(
+            "move the helper that needs `{}` out of the utility module and \
+             into the domain/feature module that owns the concept; if the \
+             dependency is legitimate, remove `{module_path}` from \
+             `paradigms.UT.utility_paths` (or narrow \
+             `paradigms.UT.forbidden_imports`) in `locus.lock`",
+            imp.path
+        )),
+    }
 }
 
 /// UT002 — utility module imports a forbidden feature/domain path.
@@ -123,44 +174,52 @@ pub fn ut002(air: &AirWorkspace, section: &UtSection, mode: CheckMode) -> Vec<Di
                 else {
                     continue;
                 };
-                out.push(Diagnostic {
-                    rule_id: "UT002".to_string(),
-                    severity: mode.elevate(Severity::Fatal),
-                    span: imp.span.clone(),
-                    concept: None,
-                    message: format!(
-                        "utility module `{module_path}` imports forbidden \
-                         feature/domain path `{}`",
-                        imp.path
-                    ),
-                    why: vec![
-                        format!(
-                            "importer `{module_path}` matches utility_paths pattern \
-                             `{utility_pattern}`"
-                        ),
-                        format!(
-                            "import `{}` matches forbidden_imports pattern \
-                             `{forbidden_pattern}`",
-                            imp.path
-                        ),
-                        "utility modules must hold only domain-free technical helpers; \
-                         importing a feature/domain concept means the helper knows about \
-                         semantics that belong to a domain/feature module"
-                            .into(),
-                    ],
-                    suggested_fix: Some(format!(
-                        "move the helper that needs `{}` out of the utility module and \
-                         into the domain/feature module that owns the concept; if the \
-                         dependency is legitimate, remove `{module_path}` from \
-                         `paradigms.UT.utility_paths` (or narrow \
-                         `paradigms.UT.forbidden_imports`) in `locus.lock`",
-                        imp.path
-                    )),
-                });
+                out.push(ut002_diagnostic(
+                    imp,
+                    module_path,
+                    utility_pattern,
+                    forbidden_pattern,
+                    mode,
+                ));
             }
         }
     }
     out
+}
+
+fn ut003_diagnostic(
+    module_path: &str,
+    matched_pattern: &str,
+    span: locus_air::AirSpan,
+    mode: CheckMode,
+) -> Diagnostic {
+    Diagnostic {
+        rule_id: "UT003".to_string(),
+        severity: mode.elevate(Severity::Warning),
+        span,
+        concept: None,
+        message: format!(
+            "module `{module_path}` uses a generic utility name (matched \
+             pattern `{matched_pattern}`) and is not in `accepted_utility_paths`"
+        ),
+        why: vec![
+            format!(
+                "module `{module_path}` matches generic_utility_patterns \
+                 entry `{matched_pattern}`"
+            ),
+            "generic-named modules (`utils`, `helpers`, `common`, `misc`, \
+             `shared`) tend to accumulate unrelated logic; require explicit \
+             acceptance so each one is a deliberate choice"
+                .into(),
+        ],
+        suggested_fix: Some(format!(
+            "if `{module_path}` is intentionally a utility module, accept it \
+             by adding its path to `paradigms.UT.accepted_utility_paths` in \
+             `locus.lock` (you may also want to add it to `utility_paths` so \
+             UT001/UT002/UT004/UT005 apply). Otherwise rename the module to \
+             reflect its actual responsibility."
+        )),
+    }
 }
 
 /// UT003 — new generic-utility-named module without acceptance.
@@ -174,6 +233,31 @@ pub fn ut002(air: &AirWorkspace, section: &UtSection, mode: CheckMode) -> Vec<Di
 /// Severity: Warning by default; `--agent-strict` elevates to Fatal. The
 /// rule goes silent when `generic_utility_patterns` is empty — UT003 is
 /// gated on the user explicitly opting in to the generic-naming check.
+/// Anchor a UT003 diagnostic at the file's first item, or line 1 as fallback.
+fn ut003_anchor_span(file: &locus_air::AirFile) -> locus_air::AirSpan {
+    file.items
+        .iter()
+        .map(|item| match item {
+            AirItem::Type(t) => t.span.clone(),
+            AirItem::Function(f) => f.span.clone(),
+            AirItem::Import(i) => i.span.clone(),
+            AirItem::Impl(i) => i.span.clone(),
+            AirItem::Conversion(c) => c.span.clone(),
+            AirItem::TruthAction(a) => a.span.clone(),
+            AirItem::Usage(u) => u.span.clone(),
+            AirItem::CallSite(c) => c.span.clone(),
+            AirItem::SilentDiscard(d) => d.span.clone(),
+            AirItem::PartialResultMatch(p) => p.span.clone(),
+            AirItem::MatchArm(a) => a.span.clone(),
+            AirItem::ClosureMethodCall(c) => c.span.clone(),
+            AirItem::FallbackCall(c) => c.span.clone(),
+            AirItem::RetryLoop(l) => l.span.clone(),
+            AirItem::ScrutineeLiteral(l) => l.span.clone(),
+        })
+        .next()
+        .unwrap_or_else(|| locus_air::AirSpan::new(file.path.clone(), 1, 1))
+}
+
 pub fn ut003(air: &AirWorkspace, section: &UtSection, mode: CheckMode) -> Vec<Diagnostic> {
     if section.generic_utility_patterns.is_empty() {
         return Vec::new();
@@ -198,59 +282,49 @@ pub fn ut003(air: &AirWorkspace, section: &UtSection, mode: CheckMode) -> Vec<Di
             {
                 continue;
             }
-            // Anchor at the file's first item, falling back to line 1.
-            let span = file
-                .items
-                .iter()
-                .map(|item| match item {
-                    AirItem::Type(t) => t.span.clone(),
-                    AirItem::Function(f) => f.span.clone(),
-                    AirItem::Import(i) => i.span.clone(),
-                    AirItem::Impl(i) => i.span.clone(),
-                    AirItem::Conversion(c) => c.span.clone(),
-                    AirItem::TruthAction(a) => a.span.clone(),
-                    AirItem::Usage(u) => u.span.clone(),
-                    AirItem::CallSite(c) => c.span.clone(),
-                    AirItem::SilentDiscard(d) => d.span.clone(),
-                    AirItem::PartialResultMatch(p) => p.span.clone(),
-                    AirItem::MatchArm(a) => a.span.clone(),
-                    AirItem::ClosureMethodCall(c) => c.span.clone(),
-                    AirItem::FallbackCall(c) => c.span.clone(),
-                    AirItem::RetryLoop(l) => l.span.clone(),
-                    AirItem::ScrutineeLiteral(l) => l.span.clone(),
-                })
-                .next()
-                .unwrap_or_else(|| locus_air::AirSpan::new(file.path.clone(), 1, 1));
-            out.push(Diagnostic {
-                rule_id: "UT003".to_string(),
-                severity: mode.elevate(Severity::Warning),
-                span,
-                concept: None,
-                message: format!(
-                    "module `{module_path}` uses a generic utility name (matched \
-                     pattern `{matched_pattern}`) and is not in `accepted_utility_paths`"
-                ),
-                why: vec![
-                    format!(
-                        "module `{module_path}` matches generic_utility_patterns \
-                         entry `{matched_pattern}`"
-                    ),
-                    "generic-named modules (`utils`, `helpers`, `common`, `misc`, \
-                     `shared`) tend to accumulate unrelated logic; require explicit \
-                     acceptance so each one is a deliberate choice"
-                        .into(),
-                ],
-                suggested_fix: Some(format!(
-                    "if `{module_path}` is intentionally a utility module, accept it \
-                     by adding its path to `paradigms.UT.accepted_utility_paths` in \
-                     `locus.lock` (you may also want to add it to `utility_paths` so \
-                     UT001/UT002/UT004/UT005 apply). Otherwise rename the module to \
-                     reflect its actual responsibility."
-                )),
-            });
+            let span = ut003_anchor_span(file);
+            out.push(ut003_diagnostic(module_path, matched_pattern, span, mode));
         }
     }
     out
+}
+
+fn ut004_diagnostic(
+    action: &locus_air::AirTruthAction,
+    module_path: &str,
+    utility_pattern: &str,
+    label: &str,
+    mode: CheckMode,
+) -> Diagnostic {
+    Diagnostic {
+        rule_id: "UT004".to_string(),
+        severity: mode.elevate(Severity::Warning),
+        span: action.span.clone(),
+        concept: None,
+        message: format!(
+            "utility module `{module_path}` performs {label} on `{}`",
+            action.target
+        ),
+        why: vec![
+            format!("module `{module_path}` matches utility_paths pattern `{utility_pattern}`"),
+            format!(
+                "found `{:?}` action targeting `{}`",
+                action.action, action.target
+            ),
+            "utility modules must hold only domain-free technical \
+             helpers; constructing canonical concepts or performing \
+             validation/normalization is domain logic that belongs in \
+             a feature/domain module"
+                .into(),
+        ],
+        suggested_fix: Some(format!(
+            "move the {label} of `{}` into the domain/feature module \
+             that owns the concept. If `{module_path}` is genuinely \
+             not a utility, remove it from `paradigms.UT.utility_paths` \
+             in `locus.lock`.",
+            action.target
+        )),
+    }
 }
 
 /// UT004 — domain-concept logic inside a utility module.
@@ -269,6 +343,27 @@ pub fn ut003(air: &AirWorkspace, section: &UtSection, mode: CheckMode) -> Vec<Di
 /// the file actually carries Validate/Normalize actions. Specifically,
 /// the rule short-circuits when `utility_paths` is empty — same convention
 /// as UT001/UT002.
+/// Check a single truth-action for UT004 eligibility. Returns the label
+/// string when the action should fire, `None` otherwise.
+fn ut004_action_label(
+    action: &locus_air::AirTruthAction,
+    section: &UtSection,
+) -> Option<&'static str> {
+    let target_is_canonical = section
+        .canonical_construct_patterns
+        .iter()
+        .any(|p| matches_pattern(p, &action.target));
+    if !target_is_canonical {
+        return None;
+    }
+    match action.action {
+        ActionKind::Validate => Some("validation of a canonical concept"),
+        ActionKind::Normalize => Some("normalization of a canonical concept"),
+        ActionKind::Construct => Some("construction of a canonical concept"),
+        _ => None,
+    }
+}
+
 pub fn ut004(air: &AirWorkspace, section: &UtSection, mode: CheckMode) -> Vec<Diagnostic> {
     if section.utility_paths.is_empty() {
         return Vec::new();
@@ -286,67 +381,61 @@ pub fn ut004(air: &AirWorkspace, section: &UtSection, mode: CheckMode) -> Vec<Di
             else {
                 continue;
             };
-            // UT004 only fires on actions whose `target` matches one of the
-            // user's `canonical_construct_patterns` — i.e. the file is doing
-            // *concept-aware* logic, not just generic helper work. UT005
-            // fires on the broader "any Validate/Normalize" shape so it can
-            // catch validation that hasn't been canonicalized yet. The two
-            // rules deliberately don't overlap on the same action: an
-            // action either targets a known concept (UT004) or it doesn't
-            // (UT005's territory).
             for item in &file.items {
                 let AirItem::TruthAction(action) = item else {
                     continue;
                 };
-                let target_is_canonical = section
-                    .canonical_construct_patterns
-                    .iter()
-                    .any(|p| matches_pattern(p, &action.target));
-                if !target_is_canonical {
+                let Some(label) = ut004_action_label(action, section) else {
                     continue;
-                }
-                let label = match action.action {
-                    ActionKind::Validate => "validation of a canonical concept",
-                    ActionKind::Normalize => "normalization of a canonical concept",
-                    ActionKind::Construct => "construction of a canonical concept",
-                    _ => continue,
                 };
-                out.push(Diagnostic {
-                    rule_id: "UT004".to_string(),
-                    severity: mode.elevate(Severity::Warning),
-                    span: action.span.clone(),
-                    concept: None,
-                    message: format!(
-                        "utility module `{module_path}` performs {label} on `{}`",
-                        action.target
-                    ),
-                    why: vec![
-                        format!(
-                            "module `{module_path}` matches utility_paths pattern \
-                             `{utility_pattern}`"
-                        ),
-                        format!(
-                            "found `{:?}` action targeting `{}`",
-                            action.action, action.target
-                        ),
-                        "utility modules must hold only domain-free technical \
-                         helpers; constructing canonical concepts or performing \
-                         validation/normalization is domain logic that belongs in \
-                         a feature/domain module"
-                            .into(),
-                    ],
-                    suggested_fix: Some(format!(
-                        "move the {label} of `{}` into the domain/feature module \
-                         that owns the concept. If `{module_path}` is genuinely \
-                         not a utility, remove it from `paradigms.UT.utility_paths` \
-                         in `locus.lock`.",
-                        action.target
-                    )),
-                });
+                out.push(ut004_diagnostic(
+                    action,
+                    module_path,
+                    utility_pattern,
+                    label,
+                    mode,
+                ));
             }
         }
     }
     out
+}
+
+fn ut005_diagnostic(
+    action: &locus_air::AirTruthAction,
+    module_path: &str,
+    utility_pattern: &str,
+    label: &str,
+    mode: CheckMode,
+) -> Diagnostic {
+    Diagnostic {
+        rule_id: "UT005".to_string(),
+        severity: mode.elevate(Severity::Warning),
+        span: action.span.clone(),
+        concept: None,
+        message: format!(
+            "utility module `{module_path}` performs {label} on `{}`",
+            action.target
+        ),
+        why: vec![
+            format!("module `{module_path}` matches utility_paths pattern `{utility_pattern}`"),
+            format!(
+                "found `{:?}` action targeting `{}`",
+                action.action, action.target
+            ),
+            "validation and normalization express domain rules; \
+             they belong in a domain/feature module, not a \
+             domain-free utility"
+                .into(),
+        ],
+        suggested_fix: Some(format!(
+            "move the {label} of `{}` into the domain/feature module \
+             that owns the rule. If `{module_path}` is genuinely not \
+             a utility, remove it from `paradigms.UT.utility_paths` \
+             in `locus.lock`.",
+            action.target
+        )),
+    }
 }
 
 /// UT005 — validation/normalization inside a utility module.
@@ -361,6 +450,29 @@ pub fn ut004(air: &AirWorkspace, section: &UtSection, mode: CheckMode) -> Vec<Di
 /// Severity: Warning by default; `--agent-strict` elevates to Fatal.
 ///
 /// Lockfile-driven silence: stays silent when `utility_paths` is empty.
+/// Check a single truth-action for UT005 eligibility. Returns the label
+/// string when the action should fire, `None` otherwise.
+fn ut005_action_label(
+    action: &locus_air::AirTruthAction,
+    section: &UtSection,
+) -> Option<&'static str> {
+    let label = match action.action {
+        ActionKind::Validate => "validation",
+        ActionKind::Normalize => "normalization",
+        _ => return None,
+    };
+    // UT004 owns the canonical-target case; UT005 covers the non-canonical residual.
+    let target_is_canonical = section
+        .canonical_construct_patterns
+        .iter()
+        .any(|p| matches_pattern(p, &action.target));
+    if target_is_canonical {
+        None
+    } else {
+        Some(label)
+    }
+}
+
 pub fn ut005(air: &AirWorkspace, section: &UtSection, mode: CheckMode) -> Vec<Diagnostic> {
     if section.utility_paths.is_empty() {
         return Vec::new();
@@ -382,55 +494,16 @@ pub fn ut005(air: &AirWorkspace, section: &UtSection, mode: CheckMode) -> Vec<Di
                 let AirItem::TruthAction(action) = item else {
                     continue;
                 };
-                let label = match action.action {
-                    ActionKind::Validate => "validation",
-                    ActionKind::Normalize => "normalization",
-                    _ => continue,
-                };
-                // UT004 owns the canonical-target case; UT005 covers the
-                // non-canonical residual so the two rules don't double-fire
-                // on the same action. If the user hasn't populated
-                // `canonical_construct_patterns`, the canonical check is
-                // vacuously false — UT005 fires on every Validate/Normalize
-                // (the broadest posture, matching the rule's intent).
-                let target_is_canonical = section
-                    .canonical_construct_patterns
-                    .iter()
-                    .any(|p| matches_pattern(p, &action.target));
-                if target_is_canonical {
+                let Some(label) = ut005_action_label(action, section) else {
                     continue;
-                }
-                out.push(Diagnostic {
-                    rule_id: "UT005".to_string(),
-                    severity: mode.elevate(Severity::Warning),
-                    span: action.span.clone(),
-                    concept: None,
-                    message: format!(
-                        "utility module `{module_path}` performs {label} on `{}`",
-                        action.target
-                    ),
-                    why: vec![
-                        format!(
-                            "module `{module_path}` matches utility_paths pattern \
-                             `{utility_pattern}`"
-                        ),
-                        format!(
-                            "found `{:?}` action targeting `{}`",
-                            action.action, action.target
-                        ),
-                        "validation and normalization express domain rules; \
-                         they belong in a domain/feature module, not a \
-                         domain-free utility"
-                            .into(),
-                    ],
-                    suggested_fix: Some(format!(
-                        "move the {label} of `{}` into the domain/feature module \
-                         that owns the rule. If `{module_path}` is genuinely not \
-                         a utility, remove it from `paradigms.UT.utility_paths` \
-                         in `locus.lock`.",
-                        action.target
-                    )),
-                });
+                };
+                out.push(ut005_diagnostic(
+                    action,
+                    module_path,
+                    utility_pattern,
+                    label,
+                    mode,
+                ));
             }
         }
     }

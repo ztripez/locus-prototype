@@ -58,35 +58,53 @@ pub fn ot012(air: &AirWorkspace, section: &OtSection, mode: CheckMode) -> Vec<Di
                     if !is_primitive_type_text(&field.type_text) {
                         continue;
                     }
-                    out.push(Diagnostic {
-                        rule_id: "OT012".to_string(),
+                    out.push(ot012_diagnostic(
+                        ty,
+                        field,
+                        &canonical_short_name,
+                        concept_id,
+                        confidence,
                         severity,
-                        span: ty.span.clone(),
-                        concept: Some(concept_id.clone()),
-                        message: format!(
-                            "field `{}::{}: {}` is a primitive substitute for canonical \
-                             `{canonical_short_name}` (concept `{concept_id}`)",
-                            ty.symbol, field.name, field.type_text
-                        ),
-                        why: vec![
-                            format!(
-                                "field name `{}` maps to canonical `{canonical_short_name}`",
-                                field.name
-                            ),
-                            format!("type `{}` is a primitive", field.type_text),
-                            format!("enclosing type `{}` is not an accepted boundary", ty.symbol),
-                            format!("inference confidence: {confidence:.2}"),
-                        ],
-                        suggested_fix: Some(format!(
-                            "use `{canonical_short_name}` instead of `{}` for `{}`, or \
-                             accept `{}` as a boundary via `// locus: ot boundary {concept_id} \
-                             <name>` if it's a wire-shape adapter",
-                            field.type_text, field.name, ty.symbol
-                        )),
-                    });
+                    ));
                 }
             }
         }
     }
     out
+}
+
+fn ot012_diagnostic(
+    ty: &locus_air::AirType,
+    field: &locus_air::AirField,
+    canonical_short_name: &str,
+    concept_id: &str,
+    confidence: f32,
+    severity: Severity,
+) -> Diagnostic {
+    Diagnostic {
+        rule_id: "OT012".to_string(),
+        severity,
+        span: ty.span.clone(),
+        concept: Some(concept_id.to_string()),
+        message: format!(
+            "field `{}::{}: {}` is a primitive substitute for canonical \
+             `{canonical_short_name}` (concept `{concept_id}`)",
+            ty.symbol, field.name, field.type_text
+        ),
+        why: vec![
+            format!(
+                "field name `{}` maps to canonical `{canonical_short_name}`",
+                field.name
+            ),
+            format!("type `{}` is a primitive", field.type_text),
+            format!("enclosing type `{}` is not an accepted boundary", ty.symbol),
+            format!("inference confidence: {confidence:.2}"),
+        ],
+        suggested_fix: Some(format!(
+            "use `{canonical_short_name}` instead of `{}` for `{}`, or \
+             accept `{}` as a boundary via `// locus: ot boundary {concept_id} \
+             <name>` if it's a wire-shape adapter",
+            field.type_text, field.name, ty.symbol
+        )),
+    }
 }

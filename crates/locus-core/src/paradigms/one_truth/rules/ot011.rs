@@ -50,30 +50,46 @@ pub fn ot011(air: &AirWorkspace, section: &OtSection, mode: CheckMode) -> Vec<Di
                 if &ty.symbol == canonical_symbol {
                     continue; // canonical itself, just not accepted under that concept yet
                 }
-                out.push(Diagnostic {
-                    rule_id: "OT011".to_string(),
+                out.push(ot011_diagnostic(
+                    ty,
+                    concept_id,
+                    canonical_symbol,
+                    confidence,
                     severity,
-                    span: ty.span.clone(),
-                    concept: Some(concept_id.clone()),
-                    message: format!(
-                        "newtype `{}` shadows accepted canonical `{canonical_symbol}` \
-                         (concept `{concept_id}`)",
-                        ty.symbol
-                    ),
-                    why: vec![
-                        format!("single-field struct named `{}`", ty.name),
-                        format!("canonical for `{concept_id}`: `{canonical_symbol}`"),
-                        format!("inference confidence: {confidence:.2}"),
-                    ],
-                    suggested_fix: Some(format!(
-                        "remove `{}` and import `{canonical_symbol}` instead; if this \
-                         really is a parallel boundary representation, accept it via \
-                         `// locus: ot boundary {concept_id} <name>` then rerun `locus init`",
-                        ty.symbol
-                    )),
-                });
+                ));
             }
         }
     }
     out
+}
+
+fn ot011_diagnostic(
+    ty: &locus_air::AirType,
+    concept_id: &str,
+    canonical_symbol: &str,
+    confidence: f32,
+    severity: Severity,
+) -> Diagnostic {
+    Diagnostic {
+        rule_id: "OT011".to_string(),
+        severity,
+        span: ty.span.clone(),
+        concept: Some(concept_id.to_string()),
+        message: format!(
+            "newtype `{}` shadows accepted canonical `{canonical_symbol}` \
+             (concept `{concept_id}`)",
+            ty.symbol
+        ),
+        why: vec![
+            format!("single-field struct named `{}`", ty.name),
+            format!("canonical for `{concept_id}`: `{canonical_symbol}`"),
+            format!("inference confidence: {confidence:.2}"),
+        ],
+        suggested_fix: Some(format!(
+            "remove `{}` and import `{canonical_symbol}` instead; if this \
+             really is a parallel boundary representation, accept it via \
+             `// locus: ot boundary {concept_id} <name>` then rerun `locus init`",
+            ty.symbol
+        )),
+    }
 }

@@ -46,6 +46,44 @@ use crate::diagnostics::{CheckMode, Diagnostic, Severity};
 /// before OB001 starts firing. The default `forbidden_log_targets` (the
 /// print/dbg family) is non-empty, so once `observer_paths` gets a single
 /// entry the rule starts working without further configuration.
+/// Try to resolve one OB001-candidate fact into a diagnostic.
+/// Returns `Some(Diagnostic)` when the fact fires, `None` otherwise.
+fn ob001_check_fact(
+    fact: &locus_air::AirFact,
+    air: &AirWorkspace,
+    forbidden: &[String],
+    section: &ObSection,
+    mode: CheckMode,
+) -> Option<Diagnostic> {
+    if fact.kind != FactKind::Logging {
+        return None;
+    }
+    let evidence = fact.evidence.as_deref()?;
+    let forbidden_pattern = forbidden
+        .iter()
+        .find(|pat| matches_pattern(pat, evidence))?;
+    let FactTarget::Function { symbol } = &fact.target else {
+        return None;
+    };
+    let (module_path, fn_span) = lookup_function(air, symbol)?;
+    if section
+        .observer_paths
+        .iter()
+        .any(|pat| matches_pattern(pat, module_path))
+    {
+        return None;
+    }
+    Some(diagnostic_for(
+        fact,
+        symbol,
+        module_path,
+        fn_span,
+        evidence,
+        forbidden_pattern,
+        mode,
+    ))
+}
+
 pub fn ob001(air: &AirWorkspace, section: &ObSection, mode: CheckMode) -> Vec<Diagnostic> {
     if section.observer_paths.is_empty() {
         return Vec::new();
@@ -54,46 +92,10 @@ pub fn ob001(air: &AirWorkspace, section: &ObSection, mode: CheckMode) -> Vec<Di
     if forbidden.is_empty() {
         return Vec::new();
     }
-
-    let mut out = Vec::new();
-    for fact in &air.facts {
-        if fact.kind != FactKind::Logging {
-            continue;
-        }
-        // OB001 only flags loggers whose evidence (the callee path) matches
-        // a forbidden pattern. Loaders with no evidence (aggregate facts)
-        // are skipped — there's nothing to match against.
-        let Some(evidence) = fact.evidence.as_deref() else {
-            continue;
-        };
-        let Some(forbidden_pattern) = forbidden.iter().find(|pat| matches_pattern(pat, evidence))
-        else {
-            continue;
-        };
-        let FactTarget::Function { symbol } = &fact.target else {
-            continue;
-        };
-        let Some((module_path, fn_span)) = lookup_function(air, symbol) else {
-            continue;
-        };
-        if section
-            .observer_paths
-            .iter()
-            .any(|pat| matches_pattern(pat, module_path))
-        {
-            continue;
-        }
-        out.push(diagnostic_for(
-            fact,
-            symbol,
-            module_path,
-            fn_span,
-            evidence,
-            forbidden_pattern,
-            mode,
-        ));
-    }
-    out
+    air.facts
+        .iter()
+        .filter_map(|fact| ob001_check_fact(fact, air, forbidden, section, mode))
+        .collect()
 }
 
 fn lookup_function<'a>(air: &'a AirWorkspace, symbol: &str) -> Option<(&'a str, AirSpan)> {
@@ -112,6 +114,26 @@ fn lookup_function<'a>(air: &'a AirWorkspace, symbol: &str) -> Option<(&'a str, 
     None
 }
 
+fn ob001_why(
+    module_path: &str,
+    evidence: &str,
+    forbidden_pattern: &str,
+    function_label: &str,
+    fact: &AirFact,
+) -> Vec<String> {
+    let mut w = vec![
+        format!("module `{module_path}` does not match any `paradigms.OB.observer_paths` pattern"),
+        format!("evidence `{evidence}` matches forbidden pattern `{forbidden_pattern}`"),
+    ];
+    if fact.reasons.is_empty() {
+        w.push("loader detected logging primitive".to_string());
+    } else {
+        w.extend(fact.reasons.iter().cloned());
+    }
+    w.push(format!("enclosing function: `{function_label}`"));
+    w
+}
+
 #[allow(clippy::too_many_arguments)]
 fn diagnostic_for(
     fact: &AirFact,
@@ -126,35 +148,16 @@ fn diagnostic_for(
         FactTarget::Span(s) => s.clone(),
         FactTarget::Function { .. } | FactTarget::File { .. } => fn_span,
     };
-    let function_label = symbol;
-    let why_reasons = if fact.reasons.is_empty() {
-        vec!["loader detected logging primitive".to_string()]
-    } else {
-        fact.reasons.clone()
-    };
     Diagnostic {
         rule_id: "OB001".to_string(),
         severity: mode.elevate(Severity::Warning),
         span,
         concept: None,
         message: format!(
-            "logging call `{evidence}` in `{module_path}` (fn `{function_label}`) — \
+            "logging call `{evidence}` in `{module_path}` (fn `{symbol}`) — \
              matches `paradigms.OB.forbidden_log_targets` pattern `{forbidden_pattern}`"
         ),
-        why: {
-            let mut w = vec![
-                format!(
-                    "module `{module_path}` does not match any \
-                     `paradigms.OB.observer_paths` pattern"
-                ),
-                format!("evidence `{evidence}` matches forbidden pattern `{forbidden_pattern}`"),
-            ];
-            for r in why_reasons {
-                w.push(r);
-            }
-            w.push(format!("enclosing function: `{function_label}`"));
-            w
-        },
+        why: ob001_why(module_path, evidence, forbidden_pattern, symbol, fact),
         suggested_fix: Some(format!(
             "route this through the project's structured logging facility \
              (e.g. `tracing::info!` / `log::warn!` with accepted spans and \
@@ -230,7 +233,8 @@ pub fn ob003(air: &AirWorkspace, section: &ObSection, mode: CheckMode) -> Vec<Di
 /// exist anywhere in the workspace, OB004 is silent.
 ///
 /// Severity: Warning by default; Fatal under `--agent-strict`.
-pub fn ob004(air: &AirWorkspace, _section: &ObSection, mode: CheckMode) -> Vec<Diagnostic> {
+/// Collect boundary-entry symbols and logged symbols from workspace facts.
+fn ob004_collect_symbols(air: &AirWorkspace) -> (HashSet<&str>, HashSet<&str>) {
     let mut boundary_entries: HashSet<&str> = HashSet::new();
     let mut logged: HashSet<&str> = HashSet::new();
     for fact in &air.facts {
@@ -247,10 +251,14 @@ pub fn ob004(air: &AirWorkspace, _section: &ObSection, mode: CheckMode) -> Vec<D
             _ => {}
         }
     }
+    (boundary_entries, logged)
+}
+
+pub fn ob004(air: &AirWorkspace, _section: &ObSection, mode: CheckMode) -> Vec<Diagnostic> {
+    let (boundary_entries, logged) = ob004_collect_symbols(air);
     if boundary_entries.is_empty() {
         return Vec::new();
     }
-
     let mut missing: Vec<&str> = boundary_entries
         .iter()
         .filter(|sym| !logged.contains(*sym))
@@ -259,40 +267,82 @@ pub fn ob004(air: &AirWorkspace, _section: &ObSection, mode: CheckMode) -> Vec<D
     // Stable ordering so multiple-diagnostic tests (and human output)
     // don't depend on HashSet iteration order.
     missing.sort_unstable();
+    missing
+        .into_iter()
+        .map(|symbol| {
+            let span = lookup_function(air, symbol)
+                .map(|(_, s)| s)
+                .unwrap_or_else(|| AirSpan::new("<unknown>", 0, 0));
+            ob004_diagnostic(symbol, span, mode)
+        })
+        .collect()
+}
 
-    let mut out = Vec::new();
-    for symbol in missing {
-        let span = match lookup_function(air, symbol) {
-            Some((_, fn_span)) => fn_span,
-            None => AirSpan::new("<unknown>", 0, 0),
-        };
-        out.push(Diagnostic {
-            rule_id: "OB004".to_string(),
-            severity: mode.elevate(Severity::Warning),
-            span,
-            concept: None,
-            message: format!(
-                "boundary entry function `{symbol}` has no observability — \
-                 every entry should emit at least one logging / metric / \
-                 event call"
-            ),
-            why: vec![
-                format!("function `{symbol}` carries `BoundaryEntry` marker"),
-                format!("no `Logging` fact targets `{symbol}`"),
-                "boundary entries are the audit / debug surface — silent \
-                 entries make outage triage and request tracing impossible"
-                    .to_string(),
-            ],
-            suggested_fix: Some(format!(
-                "emit at least one structured log line at the entry of \
-                 `{symbol}` (e.g. `tracing::info!(\"entering boundary\", \
-                 request_id = %id)`), or a metric counter increment, or a \
-                 span. The `paradigms.OB` lockfile section enumerates what \
-                 counts as logging in this codebase."
-            )),
-        });
+fn ob004_diagnostic(symbol: &str, span: AirSpan, mode: CheckMode) -> Diagnostic {
+    Diagnostic {
+        rule_id: "OB004".to_string(),
+        severity: mode.elevate(Severity::Warning),
+        span,
+        concept: None,
+        message: format!(
+            "boundary entry function `{symbol}` has no observability — \
+             every entry should emit at least one logging / metric / \
+             event call"
+        ),
+        why: vec![
+            format!("function `{symbol}` carries `BoundaryEntry` marker"),
+            format!("no `Logging` fact targets `{symbol}`"),
+            "boundary entries are the audit / debug surface — silent \
+             entries make outage triage and request tracing impossible"
+                .to_string(),
+        ],
+        suggested_fix: Some(format!(
+            "emit at least one structured log line at the entry of \
+             `{symbol}` (e.g. `tracing::info!(\"entering boundary\", \
+             request_id = %id)`), or a metric counter increment, or a \
+             span. The `paradigms.OB` lockfile section enumerates what \
+             counts as logging in this codebase."
+        )),
     }
-    out
+}
+
+/// Check a single file's call-sites for macro-emission rule violations.
+#[allow(clippy::too_many_arguments)]
+fn macro_emission_check_file(
+    file: &locus_air::AirFile,
+    module_path: &str,
+    macro_patterns: &[String],
+    rule_id: &str,
+    kind_label: &str,
+    macro_lockfile_path: &str,
+    owner_lockfile_path: &str,
+    mode: CheckMode,
+    out: &mut Vec<Diagnostic>,
+) {
+    for item in &file.items {
+        let AirItem::CallSite(cs) = item else {
+            continue;
+        };
+        if cs.kind != CallKind::Meta {
+            continue;
+        }
+        let Some(matched_pattern) = macro_patterns
+            .iter()
+            .find(|pat| matches_pattern(pat, &cs.callee))
+        else {
+            continue;
+        };
+        out.push(diagnostic_for_macro_emission(
+            cs,
+            module_path,
+            matched_pattern,
+            rule_id,
+            kind_label,
+            macro_lockfile_path,
+            owner_lockfile_path,
+            mode,
+        ));
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -318,30 +368,17 @@ fn macro_emission_diagnostics(
             {
                 continue;
             }
-            for item in &file.items {
-                let AirItem::CallSite(cs) = item else {
-                    continue;
-                };
-                if cs.kind != CallKind::Meta {
-                    continue;
-                }
-                let Some(matched_pattern) = macro_patterns
-                    .iter()
-                    .find(|pat| matches_pattern(pat, &cs.callee))
-                else {
-                    continue;
-                };
-                out.push(diagnostic_for_macro_emission(
-                    cs,
-                    module_path,
-                    matched_pattern,
-                    rule_id,
-                    kind_label,
-                    macro_lockfile_path,
-                    owner_lockfile_path,
-                    mode,
-                ));
-            }
+            macro_emission_check_file(
+                file,
+                module_path,
+                macro_patterns,
+                rule_id,
+                kind_label,
+                macro_lockfile_path,
+                owner_lockfile_path,
+                mode,
+                &mut out,
+            );
         }
     }
     out

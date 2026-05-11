@@ -57,35 +57,48 @@ pub fn ot008(air: &AirWorkspace, section: &OtSection, mode: CheckMode) -> Vec<Di
                     if is_boundary_shape_method(method) {
                         continue;
                     }
-                    out.push(Diagnostic {
-                        rule_id: "OT008".to_string(),
-                        severity,
-                        span: im.span.clone(),
-                        concept: Some(concept_id.clone()),
-                        message: format!(
-                            "boundary `{self_short}` carries domain-shaped method \
-                             `{method}` — boundary adapters should only translate, \
-                             not reason about, the concept"
-                        ),
-                        why: vec![
-                            format!("`{self_short}` is the accepted boundary for `{concept_id}`"),
-                            format!(
-                                "`{method}` is not in the boundary-shape allowlist \
-                                 (from/try_from/into/as_*/to_*/serialize/deserialize/fmt/new/default/builder)"
-                            ),
-                            format!("inference confidence: {confidence:.2}"),
-                        ],
-                        suggested_fix: Some(format!(
-                            "move `{method}` onto the canonical for `{concept_id}` \
-                             (where domain behaviour lives), or rename it into the \
-                             boundary-shape allowlist if it really is pure translation"
-                        )),
-                    });
+                    out.push(ot008_diagnostic(
+                        im, self_short, method, concept_id, confidence, severity,
+                    ));
                 }
             }
         }
     }
     out
+}
+
+fn ot008_diagnostic(
+    im: &locus_air::AirImplBlock,
+    self_short: &str,
+    method: &str,
+    concept_id: &str,
+    confidence: f32,
+    severity: Severity,
+) -> Diagnostic {
+    Diagnostic {
+        rule_id: "OT008".to_string(),
+        severity,
+        span: im.span.clone(),
+        concept: Some(concept_id.to_string()),
+        message: format!(
+            "boundary `{self_short}` carries domain-shaped method \
+             `{method}` — boundary adapters should only translate, \
+             not reason about, the concept"
+        ),
+        why: vec![
+            format!("`{self_short}` is the accepted boundary for `{concept_id}`"),
+            format!(
+                "`{method}` is not in the boundary-shape allowlist \
+                 (from/try_from/into/as_*/to_*/serialize/deserialize/fmt/new/default/builder)"
+            ),
+            format!("inference confidence: {confidence:.2}"),
+        ],
+        suggested_fix: Some(format!(
+            "move `{method}` onto the canonical for `{concept_id}` \
+             (where domain behaviour lives), or rename it into the \
+             boundary-shape allowlist if it really is pure translation"
+        )),
+    }
 }
 
 /// True for method names that are part of the *translation* surface of a

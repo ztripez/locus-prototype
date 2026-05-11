@@ -20,27 +20,76 @@ use locus_air::{
 use super::lockfile_schema::{MoSection, matches_name_glob, matches_pattern};
 use crate::diagnostics::{CheckMode, Diagnostic, Severity};
 
+fn mo001_why(
+    module_path: &str,
+    count: u32,
+    budget: u32,
+    default_budget: u32,
+    matched_override: Option<&super::lockfile_schema::MoOverride>,
+    section: &MoSection,
+) -> Vec<String> {
+    let mut why = vec![
+        format!("file `{module_path}` defines {count} public top-level type(s)"),
+        if let Some(o) = matched_override {
+            format!("budget {budget} from override `module = {}`", o.module)
+        } else {
+            format!("budget {budget} (workspace default)")
+        },
+    ];
+    if matched_override.is_none() && section.default_max_public_types.is_none() {
+        why.push(format!(
+            "no `default_max_public_types` configured; using built-in fallback {default_budget}",
+        ));
+    }
+    why
+}
+
+#[allow(clippy::too_many_arguments)]
+fn mo001_diagnostic(
+    module_path: &str,
+    count: u32,
+    budget: u32,
+    default_budget: u32,
+    span: AirSpan,
+    matched_override: Option<&super::lockfile_schema::MoOverride>,
+    section: &MoSection,
+    mode: CheckMode,
+) -> Diagnostic {
+    Diagnostic {
+        rule_id: "MO001".to_string(),
+        severity: mode.elevate(Severity::Warning),
+        span,
+        concept: None,
+        message: format!(
+            "module `{module_path}` has {count} public top-level types (budget {budget})"
+        ),
+        why: mo001_why(
+            module_path,
+            count,
+            budget,
+            default_budget,
+            matched_override,
+            section,
+        ),
+        suggested_fix: Some(
+            "split the module into submodules each owning one architectural role, \
+             or — if this density is intended (e.g. an API surface) — raise the \
+             budget by adding an override to `paradigms.MO.overrides` in \
+             `locus.lock`"
+                .into(),
+        ),
+    }
+}
+
 /// MO001 — module file has too many public top-level types.
 ///
 /// For each `AirFile` with a `module_path`, count `AirItem::Type` items
 /// whose visibility is `Public`. Compare against the file's effective
-/// budget:
-/// - if the file's `module_path` matches an override's `module` pattern,
-///   the override's `max_public_types` wins;
-/// - otherwise the section's `default_max_public_types` (or the constant
-///   fallback) is used.
+/// budget (override wins, then default, then built-in fallback).
+/// Fires when `count > budget`. One diagnostic per file.
 ///
-/// One diagnostic per file (not per type) — the violation is the file's
-/// responsibility, not any individual type.
-///
-/// Severity: Warning by default. `--agent-strict` elevates to Fatal via
-/// [`CheckMode::elevate`].
-///
-/// Fires by default — the section's built-in fallback budget is treated
-/// as real configuration. Configuration narrows: users raise the budget
-/// on legitimately-broad modules via `paradigms.MO.overrides`, or replace
-/// the workspace default via `default_max_public_types`. Add the prefix
-/// to `acknowledged_empty` to silence the paradigm entirely.
+/// Severity: Warning by default; `--agent-strict` elevates to Fatal.
+/// Fires by default on un-onboarded code using built-in fallback budgets.
 pub fn mo001(air: &AirWorkspace, section: &MoSection, mode: CheckMode) -> Vec<Diagnostic> {
     let default_budget = section.effective_default();
     let mut out = Vec::new();
@@ -56,7 +105,6 @@ pub fn mo001(air: &AirWorkspace, section: &MoSection, mode: CheckMode) -> Vec<Di
                     |item| matches!(item, AirItem::Type(t) if t.visibility == Visibility::Public),
                 )
                 .count() as u32;
-
             let matched_override = section.matching_override(module_path);
             let budget = matched_override
                 .map(|o| o.max_public_types)
@@ -64,10 +112,7 @@ pub fn mo001(air: &AirWorkspace, section: &MoSection, mode: CheckMode) -> Vec<Di
             if count <= budget {
                 continue;
             }
-
-            // Anchor the diagnostic at the file's first public type when
-            // possible — otherwise at line 1 of the file. Either way, the
-            // diagnostic is per-file, not per-type.
+            // Anchor at the first public type, or line 1 of the file.
             let span = file
                 .items
                 .iter()
@@ -76,39 +121,16 @@ pub fn mo001(air: &AirWorkspace, section: &MoSection, mode: CheckMode) -> Vec<Di
                     _ => None,
                 })
                 .unwrap_or_else(|| locus_air::AirSpan::new(file.path.clone(), 1, 1));
-
-            let mut why = vec![
-                format!("file `{module_path}` defines {count} public top-level type(s)"),
-                if let Some(o) = matched_override {
-                    format!("budget {budget} from override `module = {}`", o.module)
-                } else {
-                    format!("budget {budget} (workspace default)")
-                },
-            ];
-            if matched_override.is_none() && section.default_max_public_types.is_none() {
-                why.push(format!(
-                    "no `default_max_public_types` configured; using built-in fallback {}",
-                    default_budget
-                ));
-            }
-
-            out.push(Diagnostic {
-                rule_id: "MO001".to_string(),
-                severity: mode.elevate(Severity::Warning),
+            out.push(mo001_diagnostic(
+                module_path,
+                count,
+                budget,
+                default_budget,
                 span,
-                concept: None,
-                message: format!(
-                    "module `{module_path}` has {count} public top-level types (budget {budget})"
-                ),
-                why,
-                suggested_fix: Some(
-                    "split the module into submodules each owning one architectural role, \
-                     or — if this density is intended (e.g. an API surface) — raise the \
-                     budget by adding an override to `paradigms.MO.overrides` in \
-                     `locus.lock`"
-                        .into(),
-                ),
-            });
+                matched_override,
+                section,
+                mode,
+            ));
         }
     }
     out
@@ -201,24 +223,54 @@ fn has_io_call_site(file: &AirFile) -> bool {
     })
 }
 
+fn mo002_diagnostic(
+    module_path: &str,
+    count: u32,
+    threshold: u32,
+    role_list: &str,
+    span: AirSpan,
+    mode: CheckMode,
+) -> Diagnostic {
+    Diagnostic {
+        rule_id: "MO002".to_string(),
+        severity: mode.elevate(Severity::Warning),
+        span,
+        concept: None,
+        message: format!(
+            "module `{module_path}` carries {count} distinct architectural roles \
+             ({role_list}); threshold is {threshold}"
+        ),
+        why: vec![
+            format!("file `{module_path}` exhibits roles: {role_list}"),
+            format!(
+                "MO002 entropy threshold is {threshold} (configured via \
+                 `paradigms.MO.entropy_threshold` in `locus.lock`)"
+            ),
+            "a single file mixing canonical/boundary/converter/handler/persistence/io \
+             roles is a responsibility blob — split each role into its own module"
+                .into(),
+        ],
+        suggested_fix: Some(
+            "split this file along role boundaries: canonical types into \
+             `domain/`, boundary DTOs into `dto/`, conversions into a \
+             `convert.rs`, handlers into a `handlers/` module, and \
+             persistence/io into an adapter layer. If the density is \
+             intentional, raise `paradigms.MO.entropy_threshold` in \
+             `locus.lock`."
+                .into(),
+        ),
+    }
+}
+
 /// MO002 — responsibility entropy in a single file.
 ///
-/// Counts the number of distinct architectural roles a file carries:
-/// (a) `AirHint::Canonical` present, (b) `AirHint::Boundary` present,
-/// (c) `AirHint::Converter` present, (d) any function whose name matches
-/// `handler_name_patterns` (default `*_handler`/`handle_*`), (e) any
-/// `AirImport.path` matching `persistence_import_patterns`, (f) any
-/// `AirItem::CallSite.callee` matching the built-in io pattern set.
-///
-/// Fires when the count `>= entropy_threshold` (default 3).
+/// Counts how many of the six architectural roles a file carries:
+/// canonical hint, boundary hint, converter hint, handler-named function,
+/// persistence import, or IO call site. Fires when `count >= threshold`
+/// (default 3).
 ///
 /// Severity: Warning by default; `--agent-strict` elevates to Fatal.
-///
-/// Fires by default — the section's built-in fallback threshold and
-/// pattern lists are treated as real configuration. Configuration
-/// narrows: users widen the entropy budget via `entropy_threshold`,
-/// override per-module via `overrides`, or add the prefix to
-/// `acknowledged_empty` to silence the paradigm entirely.
+/// Fires by default with built-in fallback threshold and pattern lists.
 pub fn mo002(air: &AirWorkspace, section: &MoSection, mode: CheckMode) -> Vec<Diagnostic> {
     let threshold = section.effective_entropy_threshold();
     let handler_patterns = section.effective_handler_name_patterns();
@@ -254,38 +306,43 @@ pub fn mo002(air: &AirWorkspace, section: &MoSection, mode: CheckMode) -> Vec<Di
             }
             let span = file_anchor_span(file);
             let role_list = roles.join(", ");
-            out.push(Diagnostic {
-                rule_id: "MO002".to_string(),
-                severity: mode.elevate(Severity::Warning),
+            out.push(mo002_diagnostic(
+                module_path,
+                count,
+                threshold,
+                &role_list,
                 span,
-                concept: None,
-                message: format!(
-                    "module `{module_path}` carries {count} distinct architectural roles \
-                     ({role_list}); threshold is {threshold}"
-                ),
-                why: vec![
-                    format!("file `{module_path}` exhibits roles: {role_list}"),
-                    format!(
-                        "MO002 entropy threshold is {threshold} (configured via \
-                         `paradigms.MO.entropy_threshold` in `locus.lock`)"
-                    ),
-                    "a single file mixing canonical/boundary/converter/handler/persistence/io \
-                     roles is a responsibility blob — split each role into its own module"
-                        .into(),
-                ],
-                suggested_fix: Some(
-                    "split this file along role boundaries: canonical types into \
-                     `domain/`, boundary DTOs into `dto/`, conversions into a \
-                     `convert.rs`, handlers into a `handlers/` module, and \
-                     persistence/io into an adapter layer. If the density is \
-                     intentional, raise `paradigms.MO.entropy_threshold` in \
-                     `locus.lock`."
-                        .into(),
-                ),
-            });
+                mode,
+            ));
         }
     }
     out
+}
+
+fn mo003_diagnostic(module_path: &str, span: AirSpan, mode: CheckMode) -> Diagnostic {
+    Diagnostic {
+        rule_id: "MO003".to_string(),
+        severity: mode.elevate(Severity::Warning),
+        span,
+        concept: None,
+        message: format!("module `{module_path}` mixes canonical and boundary types"),
+        why: vec![
+            format!(
+                "file `{module_path}` has both a `// locus: ot canonical` \
+                 and a `// locus: ot boundary` hint"
+            ),
+            "canonical types are the domain truth; boundary types are the \
+             wire/protocol shadow of that truth — keeping them in one file \
+             blurs ownership and makes the converter direction ambiguous"
+                .into(),
+        ],
+        suggested_fix: Some(
+            "split the file: move canonical types into a `domain/` module \
+             and boundary types into a `dto/` module, with explicit \
+             `From`/`TryFrom` converters between them"
+                .into(),
+        ),
+    }
 }
 
 /// MO003 — canonical type co-located with a boundary type in the same file.
@@ -313,31 +370,47 @@ pub fn mo003(air: &AirWorkspace, mode: CheckMode) -> Vec<Diagnostic> {
                 .find(|h| matches!(h.kind, HintKind::Canonical))
                 .map(|h: &AirHint| h.span.clone())
                 .unwrap_or_else(|| file_anchor_span(file));
-            out.push(Diagnostic {
-                rule_id: "MO003".to_string(),
-                severity: mode.elevate(Severity::Warning),
-                span,
-                concept: None,
-                message: format!(
-                    "module `{module_path}` mixes canonical and boundary types"
-                ),
-                why: vec![
-                    format!("file `{module_path}` has both a `// locus: ot canonical` and a `// locus: ot boundary` hint"),
-                    "canonical types are the domain truth; boundary types are the \
-                     wire/protocol shadow of that truth — keeping them in one file \
-                     blurs ownership and makes the converter direction ambiguous"
-                        .into(),
-                ],
-                suggested_fix: Some(
-                    "split the file: move canonical types into a `domain/` module \
-                     and boundary types into a `dto/` module, with explicit \
-                     `From`/`TryFrom` converters between them"
-                        .into(),
-                ),
-            });
+            out.push(mo003_diagnostic(module_path, span, mode));
         }
     }
     out
+}
+
+fn mo004_diagnostic(
+    module_path: &str,
+    handler: &locus_air::AirFunction,
+    handler_patterns: &[&str],
+    mode: CheckMode,
+) -> Diagnostic {
+    Diagnostic {
+        rule_id: "MO004".to_string(),
+        severity: mode.elevate(Severity::Warning),
+        span: handler.span.clone(),
+        concept: None,
+        message: format!(
+            "module `{module_path}` co-locates handler `{}` with a canonical concept",
+            handler.name
+        ),
+        why: vec![
+            format!("file `{module_path}` has a `// locus: ot canonical` hint"),
+            format!(
+                "function `{}` matches handler name pattern (one of {handler_patterns:?})",
+                handler.name,
+            ),
+            "handlers belong to an application/transport layer; canonical \
+             types belong to the domain layer — co-locating them couples \
+             the two and makes the canonical reusable from non-handler \
+             callers harder"
+                .into(),
+        ],
+        suggested_fix: Some(format!(
+            "move `{}` into a `handlers/` module that depends on the \
+             canonical, instead of defining both in the same file. If the \
+             name match is a false positive, narrow \
+             `paradigms.MO.handler_name_patterns` in `locus.lock`.",
+            handler.name
+        )),
+    }
 }
 
 /// MO004 — handler co-located with a canonical concept in the same file.
@@ -377,35 +450,12 @@ pub fn mo004(air: &AirWorkspace, section: &MoSection, mode: CheckMode) -> Vec<Di
             let Some(handler) = handler else {
                 continue;
             };
-            out.push(Diagnostic {
-                rule_id: "MO004".to_string(),
-                severity: mode.elevate(Severity::Warning),
-                span: handler.span.clone(),
-                concept: None,
-                message: format!(
-                    "module `{module_path}` co-locates handler `{}` with a canonical concept",
-                    handler.name
-                ),
-                why: vec![
-                    format!("file `{module_path}` has a `// locus: ot canonical` hint"),
-                    format!(
-                        "function `{}` matches handler name pattern (one of {:?})",
-                        handler.name, handler_patterns
-                    ),
-                    "handlers belong to an application/transport layer; canonical \
-                     types belong to the domain layer — co-locating them couples \
-                     the two and makes the canonical reusable from non-handler \
-                     callers harder"
-                        .into(),
-                ],
-                suggested_fix: Some(format!(
-                    "move `{}` into a `handlers/` module that depends on the \
-                     canonical, instead of defining both in the same file. If the \
-                     name match is a false positive, narrow \
-                     `paradigms.MO.handler_name_patterns` in `locus.lock`.",
-                    handler.name
-                )),
-            });
+            out.push(mo004_diagnostic(
+                module_path,
+                handler,
+                &handler_patterns,
+                mode,
+            ));
         }
     }
     out
@@ -599,78 +649,82 @@ fn is_composition_host_struct(type_item: &locus_air::AirType, same_file_items: &
 ///
 /// Returns `None` when the item is permitted; returns `Some(reason)` when
 /// it is a forbidden declaration that MO005 should flag.
+/// Classify a `Type` item in an entrypoint module.
+fn classify_type_item(
+    t: &locus_air::AirType,
+    same_file_items: &[AirItem],
+    kind: EntrypointKind,
+) -> Option<String> {
+    // The composition-host exception applies only in mod.rs files.
+    if kind == EntrypointKind::Mod && is_composition_host_struct(t, same_file_items) {
+        return None;
+    }
+    let kind_str = match t.kind {
+        locus_air::TypeKind::Struct => "struct",
+        locus_air::TypeKind::Enum => "enum",
+        locus_air::TypeKind::Trait => "trait",
+        locus_air::TypeKind::Alias => "type alias",
+        locus_air::TypeKind::Union => "union",
+    };
+    Some(format!(
+        "{kind_str} `{}` declared in entrypoint module — move to a sibling module",
+        t.name
+    ))
+}
+
+/// Classify an `Impl` item in an entrypoint module.
+fn classify_impl_item(
+    i: &locus_air::AirImplBlock,
+    same_file_items: &[AirItem],
+    kind: EntrypointKind,
+) -> Option<String> {
+    // Allow the composition-host impl in mod.rs only.
+    if kind == EntrypointKind::Mod && is_composition_host_impl(i, same_file_items) {
+        return None;
+    }
+    let target = &i.target_type;
+    Some(format!(
+        "impl block for `{target}` in entrypoint module — move to the module that owns `{target}`"
+    ))
+}
+
+/// Classify a `Function` item in an entrypoint module.
+fn classify_function_item(f: &locus_air::AirFunction) -> Option<String> {
+    let is_permitted_name = ENTRYPOINT_FN_NAMES.contains(&f.name.as_str());
+    let within_budget = f.line_count <= MO005_THIN_FN_MAX_LINES;
+    if is_permitted_name && within_budget {
+        return None; // thin composition-glue function: allowed
+    }
+    if is_permitted_name {
+        Some(format!(
+            "function `{}` in entrypoint module spans {} lines (budget {}); \
+             move its body into a dedicated module",
+            f.name, f.line_count, MO005_THIN_FN_MAX_LINES
+        ))
+    } else {
+        Some(format!(
+            "function `{}` in entrypoint module is not composition glue; \
+             move it to a sibling module (e.g. `commands/`, `routes/`, \
+             `handlers/`)",
+            f.name
+        ))
+    }
+}
+
 fn mo005_classify_item(
     item: &AirItem,
     same_file_items: &[AirItem],
     kind: EntrypointKind,
 ) -> Option<String> {
     match item {
-        AirItem::Type(t) => {
-            // The composition-host exception (unit struct paired with thin
-            // impl Paradigm) applies only in mod.rs files — it is a
-            // directory-module convention, not a binary-entrypoint convention.
-            if kind == EntrypointKind::Mod && is_composition_host_struct(t, same_file_items) {
-                return None;
-            }
-            let kind_str = match t.kind {
-                locus_air::TypeKind::Struct => "struct",
-                locus_air::TypeKind::Enum => "enum",
-                locus_air::TypeKind::Trait => "trait",
-                locus_air::TypeKind::Alias => "type alias",
-                locus_air::TypeKind::Union => "union",
-            };
-            Some(format!(
-                "{kind_str} `{}` declared in entrypoint module — move to a sibling module",
-                t.name
-            ))
-        }
-        AirItem::Impl(i) => {
-            // Allow the composition-host impl: `impl Paradigm for LocalUnitStruct`
-            // in a mod.rs, where all methods are thin (impl block ≤120 lines).
-            // This exception does NOT apply to main.rs — the binary entrypoint
-            // must have zero impl blocks.
-            if kind == EntrypointKind::Mod && is_composition_host_impl(i, same_file_items) {
-                return None;
-            }
-            let target = &i.target_type;
-            Some(format!(
-                "impl block for `{target}` in entrypoint module — move to the module that owns `{target}`"
-            ))
-        }
-        AirItem::Function(f) => {
-            let is_permitted_name = ENTRYPOINT_FN_NAMES.contains(&f.name.as_str());
-            let within_budget = f.line_count <= MO005_THIN_FN_MAX_LINES;
-            if is_permitted_name && within_budget {
-                // Thin composition-glue function: allowed.
-                return None;
-            }
-            if is_permitted_name {
-                // Named correctly but too large — this is itself a smell.
-                Some(format!(
-                    "function `{}` in entrypoint module spans {} lines (budget {}); \
-                     move its body into a dedicated module",
-                    f.name, f.line_count, MO005_THIN_FN_MAX_LINES
-                ))
-            } else {
-                // Non-permitted name — regardless of line count this is a
-                // domain/business function that belongs elsewhere.
-                Some(format!(
-                    "function `{}` in entrypoint module is not composition glue; \
-                     move it to a sibling module (e.g. `commands/`, `routes/`, \
-                     `handlers/`)",
-                    f.name
-                ))
-            }
-        }
-        AirItem::Conversion(c) => {
-            // Converter / From/TryFrom impls in an entrypoint are unlikely;
-            // flag them as misplaced.
-            Some(format!(
-                "converter `{}` declared in entrypoint module — move to a `convert.rs` \
-                 or the owning domain module",
-                c.symbol
-            ))
-        }
+        AirItem::Type(t) => classify_type_item(t, same_file_items, kind),
+        AirItem::Impl(i) => classify_impl_item(i, same_file_items, kind),
+        AirItem::Function(f) => classify_function_item(f),
+        AirItem::Conversion(c) => Some(format!(
+            "converter `{}` declared in entrypoint module — move to a `convert.rs` \
+             or the owning domain module",
+            c.symbol
+        )),
         // All other item kinds — imports, hints, facts, call-sites, etc.
         // — are passive observations, not declarations. Permitted.
         _ => None,
@@ -718,6 +772,54 @@ fn mo005_classify_item(
 ///
 /// No lockfile configuration in the first pass — exemption via the standard
 /// `// locus: allow MO005` source-hint.
+/// Emit MO005 diagnostics for forbidden items in a single entrypoint file.
+fn mo005_check_file(
+    file: &locus_air::AirFile,
+    module_path: &str,
+    ep_kind: EntrypointKind,
+    file_label: &str,
+    mode: CheckMode,
+    out: &mut Vec<Diagnostic>,
+) {
+    for item in &file.items {
+        let Some(reason) = mo005_classify_item(item, &file.items, ep_kind) else {
+            continue;
+        };
+        let span = match item {
+            AirItem::Type(t) => t.span.clone(),
+            AirItem::Function(f) => f.span.clone(),
+            AirItem::Impl(i) => i.span.clone(),
+            AirItem::Conversion(c) => c.span.clone(),
+            _ => AirSpan::new(file.path.clone(), 1, 1),
+        };
+        out.push(Diagnostic {
+            rule_id: "MO005".to_string(),
+            severity: mode.elevate(Severity::Warning),
+            span,
+            concept: None,
+            message: format!("MO005: {reason}"),
+            why: vec![
+                format!(
+                    "`{file_label}` (module `{module_path}`) is an entrypoint \
+                     module — it must be a composition surface, not an ownership site"
+                ),
+                "entrypoint modules are composition surfaces — they wire \
+                 modules together via `mod` declarations, imports, and thin \
+                 `main`/`run`/`init` functions. Substantial declarations \
+                 belong in dedicated sibling modules."
+                    .into(),
+            ],
+            suggested_fix: Some(
+                "move this declaration into a dedicated sibling module \
+                 (e.g. `cli.rs` for the root arg struct, `commands/` for \
+                 command implementations). Entrypoint should contain only \
+                 `mod` decls, imports, and a thin `main` or `run` function."
+                    .into(),
+            ),
+        });
+    }
+}
+
 pub fn mo005(air: &AirWorkspace, mode: CheckMode) -> Vec<Diagnostic> {
     let mut out = Vec::new();
     for pkg in &air.packages {
@@ -728,49 +830,12 @@ pub fn mo005(air: &AirWorkspace, mode: CheckMode) -> Vec<Diagnostic> {
             let Some(ep_kind) = entrypoint_kind(module_path, &file.path) else {
                 continue;
             };
-            // Compute a human-readable entrypoint label for the diagnostic.
-            // Prefer the file basename (e.g. "main.rs") so the message
-            // remains clear even when the module_path is flat (crate root).
+            // Prefer the file basename (e.g. "main.rs") for the diagnostic.
             let file_label = std::path::Path::new(&file.path)
                 .file_name()
                 .and_then(|s| s.to_str())
                 .unwrap_or(&file.path);
-            for item in &file.items {
-                if let Some(reason) = mo005_classify_item(item, &file.items, ep_kind) {
-                    let span = match item {
-                        AirItem::Type(t) => t.span.clone(),
-                        AirItem::Function(f) => f.span.clone(),
-                        AirItem::Impl(i) => i.span.clone(),
-                        AirItem::Conversion(c) => c.span.clone(),
-                        _ => AirSpan::new(file.path.clone(), 1, 1),
-                    };
-                    out.push(Diagnostic {
-                        rule_id: "MO005".to_string(),
-                        severity: mode.elevate(Severity::Warning),
-                        span,
-                        concept: None,
-                        message: format!("MO005: {reason}"),
-                        why: vec![
-                            format!(
-                                "`{file_label}` (module `{module_path}`) is an entrypoint \
-                                 module — it must be a composition surface, not an ownership site"
-                            ),
-                            "entrypoint modules are composition surfaces — they wire \
-                             modules together via `mod` declarations, imports, and thin \
-                             `main`/`run`/`init` functions. Substantial declarations \
-                             belong in dedicated sibling modules."
-                                .into(),
-                        ],
-                        suggested_fix: Some(
-                            "move this declaration into a dedicated sibling module \
-                             (e.g. `cli.rs` for the root arg struct, `commands/` for \
-                             command implementations). Entrypoint should contain only \
-                             `mod` decls, imports, and a thin `main` or `run` function."
-                                .into(),
-                        ),
-                    });
-                }
-            }
+            mo005_check_file(file, module_path, ep_kind, file_label, mode, &mut out);
         }
     }
     out

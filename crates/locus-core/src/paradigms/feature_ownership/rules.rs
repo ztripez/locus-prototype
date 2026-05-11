@@ -23,33 +23,64 @@ use locus_air::{AirItem, AirSpan, AirWorkspace, Visibility};
 use super::lockfile_schema::{FoFeature, FoSection, matches_pattern};
 use crate::diagnostics::{CheckMode, Diagnostic, Severity};
 
-/// FO001 — same concept defined in two different features.
+/// Per-name incumbent tracker for FO001.
+struct Fo001Incumbent<'a> {
+    feature: &'a FoFeature,
+    symbol: String,
+    #[allow(dead_code)]
+    span: AirSpan,
+}
+
+fn fo001_diagnostic(
+    ty: &locus_air::AirType,
+    module_path: &str,
+    feature: &FoFeature,
+    prev_feature_name: &str,
+    prev_symbol: &str,
+    mode: CheckMode,
+) -> Diagnostic {
+    Diagnostic {
+        rule_id: "FO001".to_string(),
+        severity: mode.elevate(Severity::Fatal),
+        span: ty.span.clone(),
+        concept: Some(ty.name.clone()),
+        message: format!(
+            "type `{}` is defined in both feature `{prev_feature_name}` and feature `{}`",
+            ty.name, feature.name,
+        ),
+        why: vec![
+            format!("`{}` belongs to feature `{}`", ty.symbol, feature.name),
+            format!(
+                "`{module_path}` matches feature `{}`'s module pattern `{}`",
+                feature.name, feature.module
+            ),
+            format!(
+                "feature `{prev_feature_name}` already defines a public type `{}` (`{prev_symbol}`)",
+                ty.name,
+            ),
+        ],
+        suggested_fix: Some(format!(
+            "rename this type to a feature-specific name (e.g. \
+             `{feat_name}::{name}` could become `{feat_pascal}{name}`), or \
+             move the concept to whichever feature owns it and import it \
+             from there",
+            feat_name = feature.name,
+            feat_pascal = pascalize(&feature.name),
+            name = ty.name,
+        )),
+    }
+}
+
+/// FO001 — same public type name defined in two different features.
 ///
-/// For every public `AirItem::Type`, compute `(feature, type_name)` if the
-/// file's `module_path` matches some feature's `module` pattern. Group by
-/// `type_name` (case-sensitive). Whenever the same name is defined in two or
-/// more different features, fire one diagnostic per non-incumbent definition
-/// (the second, third, etc. feature to define that name). The "incumbent" is
-/// the feature whose definition is encountered first in workspace iteration
-/// order (package, then file, then item).
-///
-/// Always Fatal: same-name public types across features is a structural
-/// ownership conflict — at most one feature can own the canonical concept.
+/// Groups public types by name across feature-owned modules. Fires once per
+/// non-incumbent duplicate (second, third, etc. feature to define the name).
+/// Always Fatal — at most one feature can own the canonical concept.
 pub fn fo001(air: &AirWorkspace, section: &FoSection, mode: CheckMode) -> Vec<Diagnostic> {
     if section.features.is_empty() {
         return Vec::new();
     }
-
-    // For each type name, remember the first (feature, symbol, span) we
-    // saw. Iteration order over packages/files/items is the source-walk
-    // order, so "first" is deterministic for a given AIR.
-    struct Incumbent<'a> {
-        feature: &'a FoFeature,
-        symbol: String,
-        #[allow(dead_code)]
-        span: AirSpan,
-    }
-    let mut incumbents: BTreeMap<String, Incumbent<'_>> = BTreeMap::new();
+    let mut incumbents: BTreeMap<String, Fo001Incumbent<'_>> = BTreeMap::new();
 
     let mut out = Vec::new();
     for pkg in &air.packages {
@@ -71,7 +102,7 @@ pub fn fo001(air: &AirWorkspace, section: &FoSection, mode: CheckMode) -> Vec<Di
                     None => {
                         incumbents.insert(
                             ty.name.clone(),
-                            Incumbent {
+                            Fo001Incumbent {
                                 feature,
                                 symbol: ty.symbol.clone(),
                                 span: ty.span.clone(),
@@ -84,38 +115,14 @@ pub fn fo001(air: &AirWorkspace, section: &FoSection, mode: CheckMode) -> Vec<Di
                         // duplicate; that's a different paradigm.)
                     }
                     Some(prev) => {
-                        out.push(Diagnostic {
-                            rule_id: "FO001".to_string(),
-                            severity: mode.elevate(Severity::Fatal),
-                            span: ty.span.clone(),
-                            concept: Some(ty.name.clone()),
-                            message: format!(
-                                "type `{name}` is defined in both feature `{a}` and feature `{b}`",
-                                name = ty.name,
-                                a = prev.feature.name,
-                                b = feature.name,
-                            ),
-                            why: vec![
-                                format!("`{}` belongs to feature `{}`", ty.symbol, feature.name),
-                                format!(
-                                    "`{module_path}` matches feature `{}`'s module pattern `{}`",
-                                    feature.name, feature.module
-                                ),
-                                format!(
-                                    "feature `{}` already defines a public type `{}` (`{}`)",
-                                    prev.feature.name, ty.name, prev.symbol
-                                ),
-                            ],
-                            suggested_fix: Some(format!(
-                                "rename this type to a feature-specific name (e.g. \
-                                 `{feat_name}::{name}` could become `{feat_pascal}{name}`), or \
-                                 move the concept to whichever feature owns it and import it \
-                                 from there",
-                                feat_name = feature.name,
-                                feat_pascal = pascalize(&feature.name),
-                                name = ty.name,
-                            )),
-                        });
+                        out.push(fo001_diagnostic(
+                            ty,
+                            module_path,
+                            feature,
+                            &prev.feature.name,
+                            &prev.symbol,
+                            mode,
+                        ));
                     }
                 }
             }
@@ -132,30 +139,58 @@ fn owning_feature<'a>(features: &'a [FoFeature], path: &str) -> Option<&'a FoFea
     features.iter().find(|f| matches_pattern(&f.module, path))
 }
 
+fn fo004_diagnostic(
+    ty: &locus_air::AirType,
+    module_path: &str,
+    field: &locus_air::AirField,
+    token: &str,
+    feature: &FoFeature,
+    mode: CheckMode,
+) -> Diagnostic {
+    Diagnostic {
+        rule_id: "FO004".to_string(),
+        severity: mode.elevate(Severity::Warning),
+        span: ty.span.clone(),
+        concept: Some(ty.name.clone()),
+        message: format!(
+            "shared type `{}` in `{module_path}` has field `{}`: `{}` \
+             referencing feature `{}` internal symbol `{token}`",
+            ty.name, field.name, field.type_text, feature.name,
+        ),
+        why: vec![
+            format!(
+                "type `{}` lives in shared module `{module_path}`",
+                ty.symbol
+            ),
+            format!("field `{}` has type text `{}`", field.name, field.type_text),
+            format!(
+                "path token `{token}` matches feature `{}`'s module pattern `{}`",
+                feature.name, feature.module
+            ),
+            "Feature Ownership: a shared module that names a \
+             feature-internal type is no longer shared — every \
+             consumer now indirectly depends on that feature"
+                .into(),
+        ],
+        suggested_fix: Some(format!(
+            "either move `{}` into feature `{}` (where the \
+             coupling already lives) or replace the field's type \
+             with a feature-neutral DTO. If the coupling is \
+             intentional (e.g. a billing-event schema), narrow \
+             `paradigms.FO.shared_paths` so this module is no \
+             longer treated as shared.",
+            ty.name, feature.name
+        )),
+    }
+}
+
 /// FO004 — shared type field references a feature-internal symbol.
 ///
-/// For every `AirItem::Type` whose enclosing `AirFile.module_path` matches
-/// any pattern in `section.shared_paths`, scan each field's `type_text`
-/// for path-like tokens (split on non-identifier characters and `::`)
-/// that match any declared feature's `module` pattern. Fires once per
-/// (shared type, field, feature-mention).
+/// For each type in a `shared_paths` module, splits field `type_text` into
+/// path-like tokens and fires when any token matches a declared feature's
+/// `module` pattern. Silent when `shared_paths` or `features` is empty.
 ///
-/// The motivating shape: a workspace declares `shared::dto` as a shared
-/// module and `crate::billing::*` as a feature. When `shared::dto::Receipt`
-/// has a field of type `Vec<crate::billing::Invoice>`, the shared DTO
-/// has secretly become billing-coupled — defeating the point of sharing
-/// it across other features. The fix is either to move the type into
-/// `billing` (where the coupling already lives) or to mediate the
-/// coupling through a feature-neutral shape.
-///
-/// Stays silent when `shared_paths` is empty OR `features` is empty:
-/// the rule needs both halves to reason about boundary violations, so
-/// silence is the correct posture for un-onboarded codebases.
-///
-/// Severity: Warning by default; Fatal under `--agent-strict` via
-/// [`CheckMode::elevate`]. The decision-tier is "warn-then-discuss":
-/// some shared modules legitimately depend on a single feature's types
-/// (a billing-event schema in a `shared::events` crate is fine).
+/// Severity: Warning; Fatal under `--agent-strict`.
 pub fn fo004(air: &AirWorkspace, section: &FoSection, mode: CheckMode) -> Vec<Diagnostic> {
     if section.shared_paths.is_empty() || section.features.is_empty() {
         return Vec::new();
@@ -184,49 +219,14 @@ pub fn fo004(air: &AirWorkspace, section: &FoSection, mode: CheckMode) -> Vec<Di
                             .iter()
                             .find(|f| matches_pattern(&f.module, token))
                         {
-                            out.push(Diagnostic {
-                                rule_id: "FO004".to_string(),
-                                severity: mode.elevate(Severity::Warning),
-                                span: ty.span.clone(),
-                                concept: Some(ty.name.clone()),
-                                message: format!(
-                                    "shared type `{ty_name}` in `{module_path}` has field \
-                                     `{field}: {field_type}` referencing feature `{feat}` \
-                                     internal symbol `{token}`",
-                                    ty_name = ty.name,
-                                    field = field.name,
-                                    field_type = field.type_text,
-                                    feat = feature.name,
-                                ),
-                                why: vec![
-                                    format!(
-                                        "type `{}` lives in shared module `{module_path}`",
-                                        ty.symbol
-                                    ),
-                                    format!(
-                                        "field `{}` has type text `{}`",
-                                        field.name, field.type_text
-                                    ),
-                                    format!(
-                                        "path token `{token}` matches feature `{}`'s \
-                                         module pattern `{}`",
-                                        feature.name, feature.module
-                                    ),
-                                    "Feature Ownership: a shared module that names a \
-                                     feature-internal type is no longer shared — every \
-                                     consumer now indirectly depends on that feature"
-                                        .into(),
-                                ],
-                                suggested_fix: Some(format!(
-                                    "either move `{}` into feature `{}` (where the \
-                                     coupling already lives) or replace the field's type \
-                                     with a feature-neutral DTO. If the coupling is \
-                                     intentional (e.g. a billing-event schema), narrow \
-                                     `paradigms.FO.shared_paths` so this module is no \
-                                     longer treated as shared.",
-                                    ty.name, feature.name
-                                )),
-                            });
+                            out.push(fo004_diagnostic(
+                                ty,
+                                module_path,
+                                field,
+                                token,
+                                feature,
+                                mode,
+                            ));
                             // Each (field, feature) pair fires at most once.
                             break;
                         }

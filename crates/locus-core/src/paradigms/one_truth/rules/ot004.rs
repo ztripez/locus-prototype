@@ -16,8 +16,11 @@ use super::super::lockfile_schema::OtSection;
 use super::helpers::{file_of_symbol, matches_symbol_pattern};
 use crate::diagnostics::{CheckMode, Diagnostic, Severity};
 
-pub fn ot004(air: &AirWorkspace, section: &OtSection, mode: CheckMode) -> Vec<Diagnostic> {
-    // canonical short_name → (full symbol, owner file path, concept id)
+/// Build canonical short-name index: `short → (full_symbol, owner_file, concept_id)`.
+fn build_ot004_canonicals(
+    air: &AirWorkspace,
+    section: &OtSection,
+) -> BTreeMap<String, (String, String, String)> {
     let mut canonicals: BTreeMap<String, (String, String, String)> = BTreeMap::new();
     for (concept_id, entry) in &section.concepts {
         let symbol = &entry.canonical.symbol;
@@ -32,6 +35,66 @@ pub fn ot004(air: &AirWorkspace, section: &OtSection, mode: CheckMode) -> Vec<Di
             (symbol.clone(), file_path, concept_id.clone()),
         );
     }
+    canonicals
+}
+
+/// Check one `Construct` action against the canonical index; push a diagnostic
+/// if it violates OT004.
+fn ot004_check_action(
+    a: &locus_air::AirTruthAction,
+    file_path: &str,
+    canonicals: &BTreeMap<String, (String, String, String)>,
+    accepted_converters: &BTreeSet<&str>,
+    section: &OtSection,
+    mode: CheckMode,
+    out: &mut Vec<Diagnostic>,
+) {
+    if a.action != ActionKind::Construct {
+        return;
+    }
+    // `target` is the rendered constructed-path text. Use the last `::` segment
+    // so path-prefixed literal forms still match.
+    let short = a
+        .target
+        .rsplit("::")
+        .next()
+        .unwrap_or(a.target.as_str())
+        .trim();
+    let Some((canonical_symbol, owner_file, concept_id)) = canonicals.get(short) else {
+        return;
+    };
+    if file_path == owner_file {
+        return; // construction in owner module is fine
+    }
+    if let Some(fn_sym) = &a.function
+        && accepted_converters.contains(fn_sym.as_str())
+    {
+        return; // construction inside an accepted converter is fine
+    }
+    if section.converter_paths.iter().any(|p| {
+        a.function
+            .as_deref()
+            .is_some_and(|f| matches_symbol_pattern(f, p))
+            || matches_symbol_pattern(file_path, p)
+    }) {
+        return; // accepted by OT.converter_paths authority
+    }
+    let function_label = a
+        .function
+        .as_deref()
+        .unwrap_or("(no enclosing function recorded)");
+    out.push(ot004_diagnostic(
+        a,
+        canonical_symbol,
+        owner_file,
+        function_label,
+        concept_id,
+        mode,
+    ));
+}
+
+pub fn ot004(air: &AirWorkspace, section: &OtSection, mode: CheckMode) -> Vec<Diagnostic> {
+    let canonicals = build_ot004_canonicals(air, section);
     if canonicals.is_empty() {
         return Vec::new();
     }
@@ -48,62 +111,46 @@ pub fn ot004(air: &AirWorkspace, section: &OtSection, mode: CheckMode) -> Vec<Di
                 let AirItem::TruthAction(a) = item else {
                     continue;
                 };
-                if a.action != ActionKind::Construct {
-                    continue;
-                }
-                // `target` is the rendered constructed-path text (e.g. `User`
-                // or `crate::dto::UserModel`). Use the last `::` segment so
-                // path-prefixed literal forms still match.
-                let short = a
-                    .target
-                    .rsplit("::")
-                    .next()
-                    .unwrap_or(a.target.as_str())
-                    .trim();
-                let Some((canonical_symbol, owner_file, concept_id)) = canonicals.get(short) else {
-                    continue;
-                };
-                if &file.path == owner_file {
-                    continue; // construction in owner module is fine
-                }
-                if let Some(fn_sym) = &a.function
-                    && accepted_converters.contains(fn_sym.as_str())
-                {
-                    continue; // construction inside an accepted converter is fine
-                }
-                if section.converter_paths.iter().any(|p| {
-                    a.function
-                        .as_deref()
-                        .is_some_and(|f| matches_symbol_pattern(f, p))
-                        || matches_symbol_pattern(&file.path, p)
-                }) {
-                    continue; // accepted by OT.converter_paths authority
-                }
-                let function_label = a
-                    .function
-                    .as_deref()
-                    .unwrap_or("(no enclosing function recorded)");
-                out.push(Diagnostic {
-                    rule_id: "OT004".to_string(),
-                    severity: mode.elevate(Severity::Fatal),
-                    span: a.span.clone(),
-                    concept: Some(concept_id.clone()),
-                    message: format!(
-                        "direct construction of canonical `{canonical_symbol}` outside its owner module \
-                         and outside any accepted converter"
-                    ),
-                    why: vec![
-                        format!("constructed at `{}:{}`", a.span.file, a.span.line_start),
-                        format!("owner module is `{owner_file}`"),
-                        format!("enclosing function `{function_label}` is not an accepted converter"),
-                    ],
-                    suggested_fix: Some(format!(
-                        "go through the accepted converter (e.g. `{canonical_symbol}::try_from(value)?`), \
-                         or accept this function as a converter and rerun `locus init`"
-                    )),
-                });
+                ot004_check_action(
+                    a,
+                    &file.path,
+                    &canonicals,
+                    &accepted_converters,
+                    section,
+                    mode,
+                    &mut out,
+                );
             }
         }
     }
     out
+}
+
+fn ot004_diagnostic(
+    a: &locus_air::AirTruthAction,
+    canonical_symbol: &str,
+    owner_file: &str,
+    function_label: &str,
+    concept_id: &str,
+    mode: CheckMode,
+) -> Diagnostic {
+    Diagnostic {
+        rule_id: "OT004".to_string(),
+        severity: mode.elevate(Severity::Fatal),
+        span: a.span.clone(),
+        concept: Some(concept_id.to_string()),
+        message: format!(
+            "direct construction of canonical `{canonical_symbol}` outside its owner module \
+             and outside any accepted converter"
+        ),
+        why: vec![
+            format!("constructed at `{}:{}`", a.span.file, a.span.line_start),
+            format!("owner module is `{owner_file}`"),
+            format!("enclosing function `{function_label}` is not an accepted converter"),
+        ],
+        suggested_fix: Some(format!(
+            "go through the accepted converter (e.g. `{canonical_symbol}::try_from(value)?`), \
+             or accept this function as a converter and rerun `locus init`"
+        )),
+    }
 }

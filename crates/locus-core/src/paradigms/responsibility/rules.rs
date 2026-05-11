@@ -26,6 +26,14 @@ use locus_air::{
 use super::lockfile_schema::{RmSection, matches_pattern};
 use crate::diagnostics::{CheckMode, Diagnostic, Severity};
 
+/// Per-function action accumulator for RM001.
+#[derive(Default)]
+struct Rm001Group<'a> {
+    kinds: Vec<ActionKind>,
+    actions: Vec<&'a AirTruthAction>,
+    first_file: Option<String>,
+}
+
 /// RM001 — function performs too many distinct kinds of work.
 ///
 /// Walks every `AirTruthAction` whose `function` is recorded, groups by the
@@ -41,10 +49,25 @@ pub fn rm001(air: &AirWorkspace, section: &RmSection, mode: CheckMode) -> Vec<Di
         return Vec::new();
     }
     let cap = section.effective_default();
+    let (function_index, module_path_for_file) = build_workspace_indexes(air);
+    let groups = build_rm001_groups(air);
+    emit_rm001_diagnostics(
+        groups,
+        &function_index,
+        &module_path_for_file,
+        section,
+        cap,
+        mode,
+    )
+}
 
-    // Index functions by symbol: (span, file_path).
+fn build_workspace_indexes(
+    air: &AirWorkspace,
+) -> (
+    BTreeMap<String, (AirSpan, String)>,
+    BTreeMap<String, String>,
+) {
     let mut function_index: BTreeMap<String, (AirSpan, String)> = BTreeMap::new();
-    // Index file paths to their module_path so we can match exempt patterns.
     let mut module_path_for_file: BTreeMap<String, String> = BTreeMap::new();
     for pkg in &air.packages {
         for file in &pkg.files {
@@ -60,18 +83,11 @@ pub fn rm001(air: &AirWorkspace, section: &RmSection, mode: CheckMode) -> Vec<Di
             }
         }
     }
+    (function_index, module_path_for_file)
+}
 
-    // Group actions by enclosing function symbol, preserving order of first
-    // appearance for the diagnostic's `why` payload. `ActionKind` is `Copy`
-    // but not `Hash`/`Ord`, so distinct-kinds is tracked as a small `Vec`
-    // with a manual membership check (only five variants exist).
-    #[derive(Default)]
-    struct Group<'a> {
-        kinds: Vec<ActionKind>,
-        actions: Vec<&'a AirTruthAction>,
-        first_file: Option<String>,
-    }
-    let mut groups: BTreeMap<String, Group<'_>> = BTreeMap::new();
+fn build_rm001_groups(air: &AirWorkspace) -> BTreeMap<String, Rm001Group<'_>> {
+    let mut groups: BTreeMap<String, Rm001Group<'_>> = BTreeMap::new();
     for pkg in &air.packages {
         for file in &pkg.files {
             for item in &file.items {
@@ -92,43 +108,32 @@ pub fn rm001(air: &AirWorkspace, section: &RmSection, mode: CheckMode) -> Vec<Di
             }
         }
     }
+    groups
+}
 
+fn emit_rm001_diagnostics(
+    groups: BTreeMap<String, Rm001Group<'_>>,
+    function_index: &BTreeMap<String, (AirSpan, String)>,
+    module_path_for_file: &BTreeMap<String, String>,
+    section: &RmSection,
+    cap: u32,
+    mode: CheckMode,
+) -> Vec<Diagnostic> {
     let mut out = Vec::new();
     for (fn_sym, group) in groups {
         if (group.kinds.len() as u32) <= cap {
             continue;
         }
-        // Resolve span + file path.
-        let (span, file_path) = match function_index.get(&fn_sym) {
-            Some((span, fp)) => (span.clone(), fp.clone()),
-            None => {
-                let first = group
-                    .actions
-                    .first()
-                    .expect("group has at least one action");
-                (
-                    first.span.clone(),
-                    group
-                        .first_file
-                        .clone()
-                        .unwrap_or_else(|| first.span.file.clone()),
-                )
-            }
-        };
-
-        // Exempt-paths check: if the function's containing file's module_path
-        // matches any exempt pattern, skip.
-        if let Some(module_path) = module_path_for_file.get(&file_path)
+        let anchored = function_index.contains_key(&fn_sym);
+        let (span, file_path) = resolve_rm001_span(&fn_sym, &group, function_index);
+        if let Some(mp) = module_path_for_file.get(&file_path)
             && section
                 .exempt_paths
                 .iter()
-                .any(|pat| matches_pattern(pat, module_path))
+                .any(|pat| matches_pattern(pat, mp))
         {
             continue;
         }
-
-        // Build the diagnostic. Sort kinds by their stable string label so
-        // the message and `why` are deterministic across runs.
         let mut kinds_sorted: Vec<ActionKind> = group.kinds.clone();
         kinds_sorted.sort_by_key(format_kind);
         let kinds_label = kinds_sorted
@@ -136,54 +141,99 @@ pub fn rm001(air: &AirWorkspace, section: &RmSection, mode: CheckMode) -> Vec<Di
             .map(format_kind)
             .collect::<Vec<_>>()
             .join(", ");
-        let mut why = vec![format!(
-            "{} distinct ActionKind values present: {}",
-            kinds_sorted.len(),
-            kinds_label
-        )];
-        for action in group.actions.iter().take(5) {
-            why.push(format!(
-                "{} `{}` at {}:{}",
-                format_kind(&action.action),
-                action.target,
-                action.span.file,
-                action.span.line_start
-            ));
-        }
-        if group.actions.len() > 5 {
-            why.push(format!(
-                "(+ {} more action(s) elided)",
-                group.actions.len() - 5
-            ));
-        }
-        let function_was_anchored = function_index.contains_key(&fn_sym);
-        if !function_was_anchored {
-            why.push(
-                "no top-level `AirItem::Function` matched this enclosing symbol; \
-                 span pinned to the first action"
-                    .into(),
-            );
-        }
-
-        out.push(Diagnostic {
-            rule_id: "RM001".to_string(),
-            severity: mode.elevate(Severity::Warning),
-            span,
-            concept: None,
-            message: format!(
-                "function `{fn_sym}` performs {} distinct kinds of work: {kinds_label}",
-                kinds_sorted.len()
-            ),
+        let why = build_rm001_why(&kinds_sorted, &kinds_label, &group.actions, anchored);
+        out.push(rm001_diagnostic(
+            &fn_sym,
+            &kinds_sorted,
+            &kinds_label,
             why,
-            suggested_fix: Some(format!(
-                "split `{fn_sym}` along ownership lines: extract validation, construction, and \
-                 side-effect orchestration into separate single-responsibility functions. If this \
-                 density is intentional (e.g. a generated handler), add the file's module path to \
-                 `paradigms.RM.exempt_paths` in `locus.lock`."
-            )),
-        });
+            span,
+            mode,
+        ));
     }
     out
+}
+
+fn resolve_rm001_span<'a>(
+    fn_sym: &str,
+    group: &Rm001Group<'a>,
+    function_index: &BTreeMap<String, (AirSpan, String)>,
+) -> (AirSpan, String) {
+    match function_index.get(fn_sym) {
+        Some((span, fp)) => (span.clone(), fp.clone()),
+        None => {
+            let first = group
+                .actions
+                .first()
+                .expect("group has at least one action");
+            (
+                first.span.clone(),
+                group
+                    .first_file
+                    .clone()
+                    .unwrap_or_else(|| first.span.file.clone()),
+            )
+        }
+    }
+}
+
+fn build_rm001_why(
+    kinds_sorted: &[ActionKind],
+    kinds_label: &str,
+    actions: &[&AirTruthAction],
+    anchored: bool,
+) -> Vec<String> {
+    let mut why = vec![format!(
+        "{} distinct ActionKind values present: {kinds_label}",
+        kinds_sorted.len()
+    )];
+    for action in actions.iter().take(5) {
+        why.push(format!(
+            "{} `{}` at {}:{}",
+            format_kind(&action.action),
+            action.target,
+            action.span.file,
+            action.span.line_start
+        ));
+    }
+    if actions.len() > 5 {
+        why.push(format!("(+ {} more action(s) elided)", actions.len() - 5));
+    }
+    if !anchored {
+        why.push(
+            "no top-level `AirItem::Function` matched this enclosing symbol; \
+             span pinned to the first action"
+                .into(),
+        );
+    }
+    why
+}
+
+fn rm001_diagnostic(
+    fn_sym: &str,
+    kinds_sorted: &[ActionKind],
+    kinds_label: &str,
+    why: Vec<String>,
+    span: AirSpan,
+    mode: CheckMode,
+) -> Diagnostic {
+    Diagnostic {
+        rule_id: "RM001".to_string(),
+        severity: mode.elevate(Severity::Warning),
+        span,
+        concept: None,
+        message: format!(
+            "function `{fn_sym}` performs {} distinct kinds of work: {kinds_label}",
+            kinds_sorted.len()
+        ),
+        why,
+        suggested_fix: Some(format!(
+            "split `{fn_sym}` along ownership lines: extract validation, construction, and \
+             side-effect orchestration into separate single-responsibility functions. If this \
+             density is intentional (e.g. a generated handler), add the file's module path to \
+             `paradigms.RM.exempt_paths` in `locus.lock`."
+        )),
+    }
 }
 
 fn format_kind(k: &ActionKind) -> String {
@@ -399,31 +449,8 @@ fn density_rule(
     if paths.is_empty() {
         return Vec::new();
     }
-
-    // Index function symbols → (span, file_path).
-    let mut function_index: BTreeMap<String, (AirSpan, String)> = BTreeMap::new();
-    let mut module_path_for_file: BTreeMap<String, String> = BTreeMap::new();
-    for pkg in &air.packages {
-        for file in &pkg.files {
-            if let Some(mp) = file.module_path.as_deref() {
-                module_path_for_file.insert(file.path.clone(), mp.to_string());
-            }
-            for item in &file.items {
-                if let AirItem::Function(f) = item {
-                    function_index
-                        .entry(f.symbol.clone())
-                        .or_insert_with(|| (f.span.clone(), file.path.clone()));
-                }
-            }
-        }
-    }
-
-    // Group decision actions (StringCompare + EnumMatch) by enclosing fn.
-    #[derive(Default)]
-    struct DecisionGroup<'a> {
-        actions: Vec<&'a AirTruthAction>,
-    }
-    let mut groups: BTreeMap<String, DecisionGroup<'_>> = BTreeMap::new();
+    let (function_index, module_path_for_file) = build_workspace_indexes(air);
+    let mut groups: BTreeMap<String, Vec<&AirTruthAction>> = BTreeMap::new();
     for pkg in &air.packages {
         for file in &pkg.files {
             for item in &file.items {
@@ -439,77 +466,118 @@ fn density_rule(
                 let Some(fn_sym) = a.function.as_deref() else {
                     continue;
                 };
-                groups
-                    .entry(fn_sym.to_string())
-                    .or_default()
-                    .actions
-                    .push(a);
+                groups.entry(fn_sym.to_string()).or_default().push(a);
             }
         }
     }
+    emit_density_diagnostics(
+        groups,
+        &function_index,
+        &module_path_for_file,
+        paths,
+        cap,
+        role,
+        mode,
+    )
+}
 
+fn emit_density_diagnostics(
+    groups: BTreeMap<String, Vec<&AirTruthAction>>,
+    function_index: &BTreeMap<String, (AirSpan, String)>,
+    module_path_for_file: &BTreeMap<String, String>,
+    paths: &[String],
+    cap: u32,
+    role: DensityRole,
+    mode: CheckMode,
+) -> Vec<Diagnostic> {
     let mut out = Vec::new();
-    for (fn_sym, group) in groups {
-        let count = group.actions.len() as u32;
+    for (fn_sym, actions) in groups {
+        let count = actions.len() as u32;
         if count <= cap {
             continue;
         }
         let Some((fn_span, file_path)) = function_index.get(&fn_sym) else {
-            continue; // can't anchor without a top-level fn AIR item
+            continue;
         };
         let Some(module_path) = module_path_for_file.get(file_path) else {
             continue;
         };
-        let matched_pattern = paths
+        let Some(matched_pattern) = paths
             .iter()
             .find(|pat| matches_pattern(pat, module_path))
-            .cloned();
-        let Some(matched_pattern) = matched_pattern else {
+            .cloned()
+        else {
             continue;
         };
-
-        let mut why = vec![
-            format!(
-                "module `{module_path}` matches {} pattern `{matched_pattern}`",
-                role.lockfile_paths_field()
-            ),
-            format!(
-                "{count} StringCompare/EnumMatch action(s) — cap is {cap} \
-                 (`{}`)",
-                role.lockfile_cap_field()
-            ),
-        ];
-        for action in group.actions.iter().take(5) {
-            why.push(format!(
-                "{} `{}` at {}:{}",
-                format_kind(&action.action),
-                action.target,
-                action.span.file,
-                action.span.line_start
-            ));
-        }
-        if group.actions.len() > 5 {
-            why.push(format!(
-                "(+ {} more action(s) elided)",
-                group.actions.len() - 5
-            ));
-        }
-
-        out.push(Diagnostic {
-            rule_id: role.rule_id().to_string(),
-            severity: mode.elevate(Severity::Warning),
-            span: fn_span.clone(),
-            concept: None,
-            message: format!(
-                "{role} `{fn_sym}` makes {count} branch-style decision(s); \
-                 {role}s should not host this much policy",
-                role = role.role_label()
-            ),
+        let why = build_density_why(module_path, &matched_pattern, count, cap, &actions, role);
+        out.push(density_diagnostic(
+            &fn_sym,
+            fn_span,
+            module_path,
+            count,
+            role,
             why,
-            suggested_fix: Some(role.suggested_fix(&fn_sym, module_path, count)),
-        });
+            mode,
+        ));
     }
     out
+}
+
+fn build_density_why(
+    module_path: &str,
+    matched_pattern: &str,
+    count: u32,
+    cap: u32,
+    actions: &[&AirTruthAction],
+    role: DensityRole,
+) -> Vec<String> {
+    let mut why = vec![
+        format!(
+            "module `{module_path}` matches {} pattern `{matched_pattern}`",
+            role.lockfile_paths_field()
+        ),
+        format!(
+            "{count} StringCompare/EnumMatch action(s) — cap is {cap} (`{}`)",
+            role.lockfile_cap_field()
+        ),
+    ];
+    for action in actions.iter().take(5) {
+        why.push(format!(
+            "{} `{}` at {}:{}",
+            format_kind(&action.action),
+            action.target,
+            action.span.file,
+            action.span.line_start
+        ));
+    }
+    if actions.len() > 5 {
+        why.push(format!("(+ {} more action(s) elided)", actions.len() - 5));
+    }
+    why
+}
+
+fn density_diagnostic(
+    fn_sym: &str,
+    fn_span: &AirSpan,
+    module_path: &str,
+    count: u32,
+    role: DensityRole,
+    why: Vec<String>,
+    mode: CheckMode,
+) -> Diagnostic {
+    Diagnostic {
+        rule_id: role.rule_id().to_string(),
+        severity: mode.elevate(Severity::Warning),
+        span: fn_span.clone(),
+        concept: None,
+        message: format!(
+            "{role} `{fn_sym}` makes {count} branch-style decision(s); \
+             {role}s should not host this much policy",
+            role = role.role_label()
+        ),
+        why,
+        suggested_fix: Some(role.suggested_fix(fn_sym, module_path, count)),
+    }
 }
 
 /// RM003 — handler module containing domain policy (branch-rich logic).

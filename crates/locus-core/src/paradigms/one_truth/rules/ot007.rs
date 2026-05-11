@@ -50,39 +50,57 @@ pub fn ot007(air: &AirWorkspace, section: &OtSection, mode: CheckMode) -> Vec<Di
                     continue;
                 }
 
-                let cross_label = if from_concept == to_concept {
-                    "within the same concept".to_string()
-                } else {
-                    format!("across concepts (`{from_concept}` → `{to_concept}`)")
-                };
-                out.push(Diagnostic {
-                    rule_id: "OT007".to_string(),
-                    severity: mode.elevate(Severity::Fatal),
-                    span: c.span.clone(),
-                    concept: Some(from_concept.clone()),
-                    message: format!(
-                        "adapter-to-adapter conversion `{}` ({} → {}) — both endpoints \
-                         are accepted boundaries",
-                        c.symbol, c.from, c.to
-                    ),
-                    why: vec![
-                        format!("`{from_short}` is a boundary for `{from_concept}`"),
-                        format!("`{to_short}` is a boundary for `{to_concept}`"),
-                        format!("conversion routes {cross_label}"),
-                        "preferred path: adapter → canonical → adapter".into(),
-                    ],
-                    suggested_fix: Some(
-                        "go through the canonical (e.g. `Canonical::try_from(from)?` then \
-                         `Other::from(canonical)`), or annotate the conversion with \
-                         `// locus: ot protocol-translation reason=\"...\"` if it's an \
-                         intentional shortcut"
-                            .into(),
-                    ),
-                });
+                out.push(ot007_diagnostic(
+                    c,
+                    from_short,
+                    to_short,
+                    from_concept,
+                    to_concept,
+                    mode,
+                ));
             }
         }
     }
     out
+}
+
+fn ot007_diagnostic(
+    c: &locus_air::AirConversion,
+    from_short: &str,
+    to_short: &str,
+    from_concept: &str,
+    to_concept: &str,
+    mode: CheckMode,
+) -> Diagnostic {
+    let cross_label = if from_concept == to_concept {
+        "within the same concept".to_string()
+    } else {
+        format!("across concepts (`{from_concept}` → `{to_concept}`)")
+    };
+    Diagnostic {
+        rule_id: "OT007".to_string(),
+        severity: mode.elevate(Severity::Fatal),
+        span: c.span.clone(),
+        concept: Some(from_concept.to_string()),
+        message: format!(
+            "adapter-to-adapter conversion `{}` ({} → {}) — both endpoints \
+             are accepted boundaries",
+            c.symbol, c.from, c.to
+        ),
+        why: vec![
+            format!("`{from_short}` is a boundary for `{from_concept}`"),
+            format!("`{to_short}` is a boundary for `{to_concept}`"),
+            format!("conversion routes {cross_label}"),
+            "preferred path: adapter → canonical → adapter".into(),
+        ],
+        suggested_fix: Some(
+            "go through the canonical (e.g. `Canonical::try_from(from)?` then \
+             `Other::from(canonical)`), or annotate the conversion with \
+             `// locus: ot protocol-translation reason=\"...\"` if it's an \
+             intentional shortcut"
+                .into(),
+        ),
+    }
 }
 
 /// True if any `// locus: ot protocol-translation` hint in the file has a
