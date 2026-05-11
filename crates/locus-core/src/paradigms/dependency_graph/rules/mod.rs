@@ -491,5 +491,5 @@ fn cycle_diagnostic(
 }
 
 #[cfg(test)]
-#[path = "rules_tests.rs"]
+#[path = "../rules_tests.rs"]
 mod rules_tests;
