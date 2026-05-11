@@ -53,7 +53,9 @@ impl PolicyId {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, serde::Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, serde::Deserialize,
+)]
 pub struct FindingId(u64);
 
 impl FindingId {
@@ -79,7 +81,9 @@ pub struct FindingIdMinter {
 
 impl FindingIdMinter {
     pub fn new() -> Self {
-        Self { next: AtomicU64::new(0) }
+        Self {
+            next: AtomicU64::new(0),
+        }
     }
 
     pub fn next(&self) -> FindingId {
@@ -101,7 +105,10 @@ mod tests {
     fn ids_round_trip_through_as_str() {
         assert_eq!(RuleId::new("CX001").as_str(), "CX001");
         assert_eq!(ParadigmId::new("CX").as_str(), "CX");
-        assert_eq!(PolicyId::new("default-pass-through").as_str(), "default-pass-through");
+        assert_eq!(
+            PolicyId::new("default-pass-through").as_str(),
+            "default-pass-through"
+        );
     }
 
     #[test]

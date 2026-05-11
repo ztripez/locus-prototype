@@ -153,10 +153,7 @@ impl GovernanceDiagnosticRegistry {
     }
 
     pub fn owner(&self, code: &str) -> Option<PolicyId> {
-        self.codes
-            .iter()
-            .find(|(c, _)| *c == code)
-            .map(|(_, p)| *p)
+        self.codes.iter().find(|(c, _)| *c == code).map(|(_, p)| *p)
     }
 }
 
@@ -259,7 +256,10 @@ mod tests {
         let r = RuleRegistry {
             rules: vec![&R_CX001, &R_CX001_DUP],
         };
-        assert!(matches!(r.validate(), Err(RegistryError::DuplicateRuleId(_))));
+        assert!(matches!(
+            r.validate(),
+            Err(RegistryError::DuplicateRuleId(_))
+        ));
     }
 
     #[test]

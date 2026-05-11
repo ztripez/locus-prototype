@@ -159,7 +159,9 @@ mod tests {
             policy: PolicyId::new("some-earlier-policy"),
             severity: Severity::Advisory,
             status: DecisionStatus::Advisory,
-            severity_change: SeverityChange::Downgraded { from: Severity::Warning },
+            severity_change: SeverityChange::Downgraded {
+                from: Severity::Warning,
+            },
             rationale: vec!["downgraded".into()],
         }];
 

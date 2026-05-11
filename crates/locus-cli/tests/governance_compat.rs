@@ -13,8 +13,8 @@ use assert_cmd::Command;
 #[test]
 fn check_sample_crate_output_is_stable() {
     let bin = env!("CARGO_BIN_EXE_locus");
-    let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../tests/fixtures/sample-crate");
+    let src =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/sample-crate");
 
     let assert = Command::new(bin)
         .arg("check")
@@ -38,8 +38,8 @@ fn check_sample_crate_output_is_stable() {
 #[test]
 fn check_sample_crate_agent_strict_output_is_stable() {
     let bin = env!("CARGO_BIN_EXE_locus");
-    let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../tests/fixtures/sample-crate");
+    let src =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/sample-crate");
 
     let assert = Command::new(bin)
         .arg("check")

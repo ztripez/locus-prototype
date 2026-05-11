@@ -72,8 +72,12 @@ mod tests {
     fn severity_change_variants_round_trip() {
         for sc in [
             SeverityChange::Unchanged,
-            SeverityChange::Downgraded { from: Severity::Fatal },
-            SeverityChange::Elevated { from: Severity::Warning },
+            SeverityChange::Downgraded {
+                from: Severity::Fatal,
+            },
+            SeverityChange::Elevated {
+                from: Severity::Warning,
+            },
         ] {
             let json = serde_json::to_string(&sc).unwrap();
             let back: SeverityChange = serde_json::from_str(&json).unwrap();
@@ -83,8 +87,17 @@ mod tests {
 
     #[test]
     fn decision_status_distinguishes_suppressed_from_accepted_from_debt() {
-        assert_ne!(DecisionStatus::SuppressedByPolicy, DecisionStatus::AcceptedException);
-        assert_ne!(DecisionStatus::SuppressedByPolicy, DecisionStatus::KnownTransitionDebt);
-        assert_ne!(DecisionStatus::AcceptedException, DecisionStatus::KnownTransitionDebt);
+        assert_ne!(
+            DecisionStatus::SuppressedByPolicy,
+            DecisionStatus::AcceptedException
+        );
+        assert_ne!(
+            DecisionStatus::SuppressedByPolicy,
+            DecisionStatus::KnownTransitionDebt
+        );
+        assert_ne!(
+            DecisionStatus::AcceptedException,
+            DecisionStatus::KnownTransitionDebt
+        );
     }
 }

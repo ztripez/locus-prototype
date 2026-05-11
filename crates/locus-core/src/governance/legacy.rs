@@ -101,7 +101,10 @@ mod tests {
         assert_eq!(span.file, "src/foo.rs");
         assert_eq!(span.line_start, 10);
         match &f.source {
-            FindingSource::LegacyDiagnostic { rule_code, paradigm } => {
+            FindingSource::LegacyDiagnostic {
+                rule_code,
+                paradigm,
+            } => {
                 assert_eq!(rule_code, "CX001");
                 assert_eq!(paradigm.unwrap().as_str(), "CX");
             }
