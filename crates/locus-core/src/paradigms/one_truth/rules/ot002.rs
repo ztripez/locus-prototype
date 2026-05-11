@@ -217,6 +217,7 @@ mod ot002_rule_tests {
     }
 
     fn workspace_with_canonical_and_sibling() -> AirWorkspace {
+        // locus: allow OT004 — test fixture; constructs AIR canonicals to feed the rule under test
         let canonical = AirType {
             kind: TypeKind::Struct,
             name: "User".into(),
@@ -240,6 +241,7 @@ mod ot002_rule_tests {
             span: AirSpan::new("src/user.rs", 5, 8),
             doc: None,
         };
+        // locus: allow OT004 — test fixture; constructs AIR canonicals to feed the rule under test
         let sibling = AirType {
             kind: TypeKind::Struct,
             name: "UserResponse".into(),
@@ -266,6 +268,7 @@ mod ot002_rule_tests {
         // The canonical hint sits one line above the canonical type's
         // span (line 4 hints, line 5 type) — target_span points at line 5
         // so the inference matches the hint to the User struct.
+        // locus: allow OT004 — test fixture; constructs AIR canonicals to feed the rule under test
         let hint = AirHint {
             kind: HintKind::Canonical,
             raw: "// locus: ot canonical".into(),
