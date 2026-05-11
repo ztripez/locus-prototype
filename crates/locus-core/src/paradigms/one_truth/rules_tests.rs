@@ -2,6 +2,19 @@ use super::super::infer::{ClusterMember, ConceptCluster, InferredRole};
 use super::*;
 use locus_air::AirSpan;
 
+// OT002 migrated to RuleDefinition (#71 P2). The legacy `ot002(...)`
+// function is gone; tests call the cluster-level helper instead, which
+// runs the same logic as `Ot002Rule::observe` post-cluster-build.
+use crate::governance::evidence::{Confidence, Evidence};
+use crate::governance::finding::RuleFinding;
+use crate::governance::ids::FindingIdMinter;
+use crate::paradigms::one_truth::rules::ot002::produce_findings_from_clusters;
+
+fn observe_ot002(clusters: &[ConceptCluster], mode: CheckMode) -> Vec<RuleFinding> {
+    let minter = FindingIdMinter::new();
+    produce_findings_from_clusters(clusters, mode, &minter)
+}
+
 fn member(
     name: &str,
     symbol: &str,
@@ -38,11 +51,21 @@ fn fires_on_unknown_with_canonical_present() {
         ],
         confidence: 0.0,
     };
-    let diags = ot002(&[cluster], CheckMode::Human);
-    assert_eq!(diags.len(), 1);
-    assert_eq!(diags[0].rule_id, "OT002");
-    assert_eq!(diags[0].severity, Severity::Warning);
-    assert_eq!(diags[0].concept.as_deref(), Some("user"));
+    let findings = observe_ot002(&[cluster], CheckMode::Human);
+    assert_eq!(findings.len(), 1);
+    assert_eq!(
+        findings[0].rule_id,
+        Some(crate::governance::ids::RuleId::new("OT002"))
+    );
+    assert_eq!(findings[0].default_severity, Severity::Warning);
+    assert_eq!(findings[0].concept.as_deref(), Some("user"));
+    // Typed evidence: 1.0 overlap → Confidence::High.
+    match &findings[0].evidence[0] {
+        Evidence::InferenceConfidence { score, .. } => {
+            assert_eq!(*score, Confidence::High);
+        }
+        other => panic!("expected InferenceConfidence, got {other:?}"),
+    }
 }
 
 #[test]
@@ -68,8 +91,8 @@ fn does_not_fire_when_no_canonical() {
         ],
         confidence: 0.0,
     };
-    let diags = ot002(&[cluster], CheckMode::Human);
-    assert!(diags.is_empty(), "no canonical anchor → no OT002");
+    let findings = observe_ot002(&[cluster], CheckMode::Human);
+    assert!(findings.is_empty(), "no canonical anchor → no OT002");
 }
 
 #[test]
@@ -89,7 +112,7 @@ fn does_not_fire_on_accepted_boundary() {
         ],
         confidence: 0.0,
     };
-    assert!(ot002(&[cluster], CheckMode::Human).is_empty());
+    assert!(observe_ot002(&[cluster], CheckMode::Human).is_empty());
 }
 
 #[test]
@@ -109,8 +132,8 @@ fn agent_strict_elevates_to_fatal() {
         ],
         confidence: 0.0,
     };
-    let diags = ot002(&[cluster], CheckMode::AgentStrict);
-    assert_eq!(diags[0].severity, Severity::Fatal);
+    let findings = observe_ot002(&[cluster], CheckMode::AgentStrict);
+    assert_eq!(findings[0].default_severity, Severity::Fatal);
 }
 
 #[test]
@@ -130,7 +153,7 @@ fn weak_overlap_below_threshold_is_dropped() {
         ],
         confidence: 0.0,
     };
-    assert!(ot002(&[cluster], CheckMode::Human).is_empty());
+    assert!(observe_ot002(&[cluster], CheckMode::Human).is_empty());
 }
 
 // ---- OT001 ----

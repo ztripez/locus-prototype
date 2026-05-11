@@ -49,7 +49,9 @@ pub mod ot011;
 pub mod ot012;
 
 pub use ot001::ot001;
-pub use ot002::ot002;
+// OT002 migrated to RuleDefinition (#71 P2). Legacy `ot002` function
+// deleted; the module is kept for `Ot002Rule` / `OT002_RULE` exports.
+pub use ot002::{OT002_RULE, Ot002Rule};
 pub use ot003::ot003;
 pub use ot004::ot004;
 pub use ot005::ot005;

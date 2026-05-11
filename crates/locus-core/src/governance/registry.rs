@@ -37,7 +37,10 @@ impl RuleRegistry {
     /// validation").
     pub fn standard() -> Self {
         let reg = Self {
-            rules: vec![&crate::paradigms::complexity_budget::rules::cx001::CX001_RULE],
+            rules: vec![
+                &crate::paradigms::complexity_budget::rules::cx001::CX001_RULE,
+                &crate::paradigms::one_truth::rules::ot002::OT002_RULE,
+            ],
         };
         debug_assert!(
             reg.validate().is_ok(),
@@ -347,7 +350,8 @@ mod tests {
         // rule's id starts with its paradigm prefix. Future migrations
         // (OT002, DG001, …) must keep this passing.
         let reg = RuleRegistry::standard();
-        reg.validate().expect("RuleRegistry::standard() must validate");
+        reg.validate()
+            .expect("RuleRegistry::standard() must validate");
     }
 
     #[test]
@@ -373,6 +377,31 @@ mod tests {
             .expect("CX ParadigmDefinition missing");
         let rule_ids: Vec<&str> = cx.rules().iter().map(|r| r.id().as_str()).collect();
         assert_eq!(rule_ids, vec!["CX001"]);
+    }
+
+    #[test]
+    fn rule_registry_contains_ot002_after_p2_migration() {
+        let reg = RuleRegistry::standard();
+        assert!(
+            reg.contains_code("OT002"),
+            "OT002 must be in RuleRegistry::standard() after P2-OT002"
+        );
+        let rule = reg.find(&RuleId::new("OT002")).expect("OT002 missing");
+        assert_eq!(rule.paradigm().as_str(), "OT");
+        assert_eq!(
+            rule.default_severity(),
+            crate::diagnostics::Severity::Warning
+        );
+    }
+
+    #[test]
+    fn ot_paradigm_def_lists_ot002_rule() {
+        let reg = ParadigmRegistry::standard();
+        let ot = reg
+            .find(&ParadigmId::new("OT"))
+            .expect("OT ParadigmDefinition missing");
+        let rule_ids: Vec<&str> = ot.rules().iter().map(|r| r.id().as_str()).collect();
+        assert_eq!(rule_ids, vec!["OT002"]);
     }
 
     #[test]
