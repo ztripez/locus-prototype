@@ -39,6 +39,23 @@ const MIN_RATIONALE_WORDS: usize = 5;
 /// elevation is straightforward — opting in IS the actionable signal.
 ///
 /// Spec: `docs/superpowers/specs/2026-05-09-claim-ownership-paradigm.md`.
+/// Extract `(doc_text, span, label)` from an `AirItem` if the item has a
+/// doc comment and is a type or function. Returns `None` for all other items
+/// or items without a doc comment.
+fn item_doc_info(item: &AirItem) -> Option<(&str, locus_air::AirSpan, String)> {
+    match item {
+        AirItem::Type(t) => t
+            .doc
+            .as_deref()
+            .map(|d| (d, t.span.clone(), format!("type `{}`", t.symbol))),
+        AirItem::Function(f) => f
+            .doc
+            .as_deref()
+            .map(|d| (d, f.span.clone(), format!("function `{}`", f.symbol))),
+        _ => None,
+    }
+}
+
 pub fn cl001(air: &AirWorkspace, section: &ClSection, mode: CheckMode) -> Vec<Diagnostic> {
     if !section.require_local_rationale {
         return Vec::new();
@@ -52,20 +69,8 @@ pub fn cl001(air: &AirWorkspace, section: &ClSection, mode: CheckMode) -> Vec<Di
                 continue;
             }
             for item in &file.items {
-                let (doc, span, label) = match item {
-                    AirItem::Type(t) => match &t.doc {
-                        Some(d) => (d.as_str(), t.span.clone(), format!("type `{}`", t.symbol)),
-                        None => continue,
-                    },
-                    AirItem::Function(f) => match &f.doc {
-                        Some(d) => (
-                            d.as_str(),
-                            f.span.clone(),
-                            format!("function `{}`", f.symbol),
-                        ),
-                        None => continue,
-                    },
-                    _ => continue,
+                let Some((doc, span, label)) = item_doc_info(item) else {
+                    continue;
                 };
                 let analysis = analyse_doc(doc);
                 if analysis.references.is_empty() {
@@ -103,11 +108,20 @@ fn cl001_diagnostic(
         why: vec![
             format!(
                 "doc text: `{}`",
-                doc.replace('\n', " ").trim().chars().take(120).collect::<String>(),
+                doc.replace('\n', " ")
+                    .trim()
+                    .chars()
+                    .take(120)
+                    .collect::<String>(),
             ),
             format!(
                 "matched references: {}",
-                analysis.references.iter().map(|r| format!("`{r}`")).collect::<Vec<_>>().join(", ")
+                analysis
+                    .references
+                    .iter()
+                    .map(|r| format!("`{r}`"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
             ),
             "external references are traceability, not durable local \
              rationale — readers shouldn't need to fetch the linked issue \
@@ -138,7 +152,20 @@ struct DocAnalysis {
 fn analyse_doc(doc: &str) -> DocAnalysis {
     let mut references: Vec<String> = Vec::new();
     let mut stripped = String::with_capacity(doc.len());
+    scan_doc_tokens(doc, &mut references, &mut stripped);
+    let non_reference_word_count = stripped
+        .split_whitespace()
+        .filter(|w| w.chars().any(|c| c.is_alphanumeric()))
+        .count();
+    DocAnalysis {
+        references,
+        non_reference_word_count,
+    }
+}
 
+/// Walk `doc` char by char, appending non-reference text to `stripped` and
+/// recognised reference tokens (`#NNN`, URLs) to `references`.
+fn scan_doc_tokens(doc: &str, references: &mut Vec<String>, stripped: &mut String) {
     let mut chars = doc.char_indices().peekable();
     let mut prev_char: Option<char> = None;
     while let Some(&(idx, ch)) = chars.peek() {
@@ -147,7 +174,9 @@ fn analyse_doc(doc: &str) -> DocAnalysis {
             chars.next();
             let digits_start = idx + ch.len_utf8();
             let mut digits_end = digits_start;
-            while let Some(&(_, c2)) = chars.peek() && c2.is_ascii_digit() {
+            while let Some(&(_, c2)) = chars.peek()
+                && c2.is_ascii_digit()
+            {
                 digits_end += c2.len_utf8();
                 chars.next();
             }
@@ -163,14 +192,22 @@ fn analyse_doc(doc: &str) -> DocAnalysis {
         if let Some(prefix_len) = url_prefix_len(&doc[idx..]) {
             // URL: `http://` or `https://` followed by non-whitespace.
             let remainder = &doc[idx..];
-            for _ in 0..remainder[..prefix_len].chars().count() { chars.next(); }
+            for _ in 0..remainder[..prefix_len].chars().count() {
+                chars.next();
+            }
             let mut url_end = idx + prefix_len;
             while let Some(&(_, c2)) = chars.peek() {
-                if c2.is_whitespace() { break; }
+                if c2.is_whitespace() {
+                    break;
+                }
                 url_end += c2.len_utf8();
                 chars.next();
             }
-            references.push(doc[idx..url_end].trim_end_matches(['.', ',', ')', '`']).to_string());
+            references.push(
+                doc[idx..url_end]
+                    .trim_end_matches(['.', ',', ')', '`'])
+                    .to_string(),
+            );
             prev_char = Some(' ');
             continue;
         }
@@ -178,19 +215,16 @@ fn analyse_doc(doc: &str) -> DocAnalysis {
         prev_char = Some(ch);
         chars.next();
     }
-
-    let non_reference_word_count = stripped
-        .split_whitespace()
-        .filter(|w| w.chars().any(|c| c.is_alphanumeric()))
-        .count();
-
-    DocAnalysis { references, non_reference_word_count }
 }
 
 fn url_prefix_len(s: &str) -> Option<usize> {
-    if s.starts_with("https://") { Some(8) }
-    else if s.starts_with("http://") { Some(7) }
-    else { None }
+    if s.starts_with("https://") {
+        Some(8)
+    } else if s.starts_with("http://") {
+        Some(7)
+    } else {
+        None
+    }
 }
 
 fn is_word_char(c: char) -> bool {

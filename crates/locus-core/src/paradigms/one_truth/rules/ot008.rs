@@ -58,12 +58,7 @@ pub fn ot008(air: &AirWorkspace, section: &OtSection, mode: CheckMode) -> Vec<Di
                         continue;
                     }
                     out.push(ot008_diagnostic(
-                        im,
-                        self_short,
-                        method,
-                        concept_id,
-                        confidence,
-                        severity,
+                        im, self_short, method, concept_id, confidence, severity,
                     ));
                 }
             }

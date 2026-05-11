@@ -94,7 +94,13 @@ pub fn ot003(air: &AirWorkspace, section: &OtSection, mode: CheckMode) -> Vec<Di
                 let AirItem::Function(f) = item else {
                     continue;
                 };
-                ot003_scan_function(f, &boundary_short_names, &accepted_converters, mode, &mut out);
+                ot003_scan_function(
+                    f,
+                    &boundary_short_names,
+                    &accepted_converters,
+                    mode,
+                    &mut out,
+                );
             }
         }
     }

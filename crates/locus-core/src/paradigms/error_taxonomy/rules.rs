@@ -99,7 +99,13 @@ pub fn er001(air: &AirWorkspace, _section: &ErSection, mode: CheckMode) -> Vec<D
             // One diagnostic per *extra* error type (so 3 error types → 2
             // diagnostics), matching OT001's "incumbent + duplicates" shape.
             for extra in &error_types[1..] {
-                out.push(er001_diagnostic(extra, &file.path, &incumbent.name, &all_names, mode));
+                out.push(er001_diagnostic(
+                    extra,
+                    &file.path,
+                    &incumbent.name,
+                    &all_names,
+                    mode,
+                ));
             }
         }
     }
@@ -217,14 +223,16 @@ fn er003_diagnostic(
             ty.name, variant.name, field.type_text,
         ),
         why: vec![
-            format!(
-                "module `{module_path}` matches domain pattern `{domain_pattern}`"
-            ),
+            format!("module `{module_path}` matches domain pattern `{domain_pattern}`"),
             format!("enum `{}` (`{}`)", ty.name, ty.symbol),
             format!(
                 "variant `{}` has field `{}: {}`",
                 variant.name,
-                if field.name.is_empty() { "_" } else { field.name.as_str() },
+                if field.name.is_empty() {
+                    "_"
+                } else {
+                    field.name.as_str()
+                },
                 field.type_text,
             ),
             format!(
@@ -270,8 +278,13 @@ fn er003_scan_enum(
                 continue;
             };
             out.push(er003_diagnostic(
-                ty, module_path, variant, field,
-                domain_pattern, boundary_pattern, mode,
+                ty,
+                module_path,
+                variant,
+                field,
+                domain_pattern,
+                boundary_pattern,
+                mode,
             ));
         }
     }
@@ -302,7 +315,14 @@ pub fn er003(air: &AirWorkspace, section: &ErSection, mode: CheckMode) -> Vec<Di
             };
             for item in &file.items {
                 let AirItem::Type(ty) = item else { continue };
-                er003_scan_enum(ty, module_path, domain_pattern, &section.boundary_error_patterns, mode, &mut out);
+                er003_scan_enum(
+                    ty,
+                    module_path,
+                    domain_pattern,
+                    &section.boundary_error_patterns,
+                    mode,
+                    &mut out,
+                );
             }
         }
     }
@@ -519,21 +539,37 @@ pub fn er007(air: &AirWorkspace, mode: CheckMode) -> Vec<Diagnostic> {
         for file in &pkg.files {
             for item in &file.items {
                 let AirItem::Type(ty) = item else { continue };
-                if ty.kind != locus_air::TypeKind::Enum { continue; }
-                if !has_error_suffix(&ty.name) { continue; }
+                if ty.kind != locus_air::TypeKind::Enum {
+                    continue;
+                }
+                if !has_error_suffix(&ty.name) {
+                    continue;
+                }
                 for variant in &ty.variants {
                     match first_seen.get(variant.name.as_str()) {
                         None => {
-                            first_seen.insert(variant.name.as_str(), Er007Incumbent {
-                                type_name: ty.name.as_str(),
-                                file_path: file.path.as_str(),
-                            });
+                            first_seen.insert(
+                                variant.name.as_str(),
+                                Er007Incumbent {
+                                    type_name: ty.name.as_str(),
+                                    file_path: file.path.as_str(),
+                                },
+                            );
                         }
                         Some(incumbent) => {
                             if incumbent.type_name == ty.name.as_str()
                                 && incumbent.file_path == file.path.as_str()
-                            { continue; }
-                            out.push(er007_diagnostic(ty, &file.path, variant, incumbent.type_name, incumbent.file_path, mode));
+                            {
+                                continue;
+                            }
+                            out.push(er007_diagnostic(
+                                ty,
+                                &file.path,
+                                variant,
+                                incumbent.type_name,
+                                incumbent.file_path,
+                                mode,
+                            ));
                         }
                     }
                 }

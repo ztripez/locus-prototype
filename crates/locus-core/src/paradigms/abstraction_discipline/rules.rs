@@ -75,6 +75,19 @@ fn count_trait_impls<'a>(
     HashMap<&'a str, ImplCount>,
     std::collections::HashSet<&'a str>,
 ) {
+    let (mut by_symbol, mut by_short, ambiguous_shorts) = init_impl_tables(traits);
+    populate_impl_counts(air, &mut by_symbol, &mut by_short, &ambiguous_shorts);
+    (by_symbol, by_short, ambiguous_shorts)
+}
+
+/// Build the initial (empty) count tables and ambiguous-short-name set.
+fn init_impl_tables(
+    traits: &[TraitDecl],
+) -> (
+    HashMap<&str, ImplCount>,
+    HashMap<&str, ImplCount>,
+    std::collections::HashSet<&str>,
+) {
     let mut by_symbol: HashMap<&str, ImplCount> = HashMap::new();
     let mut by_short: HashMap<&str, ImplCount> = HashMap::new();
     let mut short_name_seen: HashMap<&str, u32> = HashMap::new();
@@ -87,7 +100,16 @@ fn count_trait_impls<'a>(
         .into_iter()
         .filter_map(|(k, v)| (v > 1).then_some(k))
         .collect();
+    (by_symbol, by_short, ambiguous_shorts)
+}
 
+/// Walk every impl block in the workspace and increment the per-trait counts.
+fn populate_impl_counts<'a>(
+    air: &AirWorkspace,
+    by_symbol: &mut HashMap<&'a str, ImplCount>,
+    by_short: &mut HashMap<&'a str, ImplCount>,
+    ambiguous_shorts: &std::collections::HashSet<&'a str>,
+) {
     for pkg in &air.packages {
         for file in &pkg.files {
             for item in &file.items {
@@ -115,7 +137,6 @@ fn count_trait_impls<'a>(
             }
         }
     }
-    (by_symbol, by_short, ambiguous_shorts)
 }
 
 fn ab001_diagnostic(t: &TraitDecl, lone: &str, mode: CheckMode) -> Diagnostic {
@@ -257,6 +278,15 @@ fn ab002_diagnostic(
 /// — abstraction discipline is the spec's "examine and decide
 /// deliberately" paradigm, not a paradigm where un-configured means
 /// silent.
+/// Return `true` when `ty` is exempt from AB002 via any acceptance list.
+fn ab002_is_exempt(ty: &locus_air::AirType, section: &AbSection) -> bool {
+    let sym = ty.symbol.as_str();
+    let name = ty.name.as_str();
+    let pat_matches = |pat: &String| matches_pattern(pat, sym) || matches_pattern(pat, name);
+    section.accepted_single_impl_traits.iter().any(pat_matches)
+        || section.accepted_abstraction_names.iter().any(pat_matches)
+}
+
 pub fn ab002(air: &AirWorkspace, section: &AbSection, mode: CheckMode) -> Vec<Diagnostic> {
     if section.suspect_abstraction_patterns.is_empty() {
         // User explicitly emptied the list → silent. Same convention as
@@ -278,15 +308,7 @@ pub fn ab002(air: &AirWorkspace, section: &AbSection, mode: CheckMode) -> Vec<Di
                 else {
                     continue;
                 };
-                let exempted_by_single_impl = section
-                    .accepted_single_impl_traits
-                    .iter()
-                    .any(|pat| matches_pattern(pat, &ty.symbol) || matches_pattern(pat, &ty.name));
-                let exempted_by_name = section
-                    .accepted_abstraction_names
-                    .iter()
-                    .any(|pat| matches_pattern(pat, &ty.symbol) || matches_pattern(pat, &ty.name));
-                if exempted_by_single_impl || exempted_by_name {
+                if ab002_is_exempt(ty, section) {
                     continue;
                 }
                 let kind_word = match ty.kind {

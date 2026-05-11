@@ -66,6 +66,46 @@ fn cx001_why(
 /// dense modules via `paradigms.CX.overrides`, or replace the workspace
 /// default via `default_max_function_lines`. Add the prefix to
 /// `acknowledged_empty` to silence the paradigm entirely.
+/// Check a single file's functions against the CX001 budget.
+fn cx001_check_file(
+    file: &locus_air::AirFile,
+    module_path: &str,
+    section: &CxSection,
+    default_budget: u32,
+    mode: CheckMode,
+    out: &mut Vec<Diagnostic>,
+) {
+    let matched_override = section.matching_override(module_path);
+    let budget = matched_override
+        .map(|o| o.max_function_lines)
+        .unwrap_or(default_budget);
+    let narrowed = matched_override.is_some() || section.default_max_function_lines.is_some();
+    for item in &file.items {
+        let AirItem::Function(func) = item else {
+            continue;
+        };
+        if func.line_count <= budget {
+            continue;
+        }
+        let why = cx001_why(
+            &func.symbol,
+            func.line_count,
+            budget,
+            default_budget,
+            matched_override,
+            section,
+        );
+        out.push(cx001_diagnostic(
+            func,
+            budget,
+            matched_override,
+            narrowed,
+            why,
+            mode,
+        ));
+    }
+}
+
 pub fn cx001(air: &AirWorkspace, section: &CxSection, mode: CheckMode) -> Vec<Diagnostic> {
     let default_budget = section.effective_default();
     let mut out = Vec::new();
@@ -74,31 +114,7 @@ pub fn cx001(air: &AirWorkspace, section: &CxSection, mode: CheckMode) -> Vec<Di
             let Some(module_path) = file.module_path.as_deref() else {
                 continue;
             };
-            let matched_override = section.matching_override(module_path);
-            let budget = matched_override
-                .map(|o| o.max_function_lines)
-                .unwrap_or(default_budget);
-            // Advisory-tier elevation: only blocks under `--agent-strict`
-            // once the user has narrowed the rule for this call site.
-            let narrowed =
-                matched_override.is_some() || section.default_max_function_lines.is_some();
-            for item in &file.items {
-                let AirItem::Function(func) = item else {
-                    continue;
-                };
-                if func.line_count <= budget {
-                    continue;
-                }
-                let why = cx001_why(
-                    &func.symbol,
-                    func.line_count,
-                    budget,
-                    default_budget,
-                    matched_override,
-                    section,
-                );
-                out.push(cx001_diagnostic(func, budget, matched_override, narrowed, why, mode));
-            }
+            cx001_check_file(file, module_path, section, default_budget, mode, &mut out);
         }
     }
     out
@@ -184,6 +200,43 @@ fn cx002_why(
 /// modules (rule tables, large lockfile schemas), the user raises the
 /// budget via `paradigms.CX.module_overrides` or
 /// `paradigms.CX.default_max_module_lines`.
+/// Check a single file against the CX002 module-line budget.
+/// Returns `Some(Diagnostic)` when the file exceeds its budget.
+fn cx002_check_file(
+    file: &locus_air::AirFile,
+    module_path: &str,
+    section: &CxSection,
+    default_budget: u32,
+    mode: CheckMode,
+) -> Option<Diagnostic> {
+    let matched_override = section.matching_module_override(module_path);
+    let budget = matched_override
+        .map(|o| o.max_module_lines)
+        .unwrap_or(default_budget);
+    if file.line_count <= budget {
+        return None;
+    }
+    // See CX001 above for the advisory-tier elevation rationale.
+    let narrowed = matched_override.is_some() || section.default_max_module_lines.is_some();
+    let why = cx002_why(
+        &file.path,
+        file.line_count,
+        budget,
+        default_budget,
+        matched_override,
+        section,
+    );
+    Some(cx002_diagnostic(
+        file,
+        module_path,
+        budget,
+        matched_override,
+        narrowed,
+        why,
+        mode,
+    ))
+}
+
 pub fn cx002(air: &AirWorkspace, section: &CxSection, mode: CheckMode) -> Vec<Diagnostic> {
     let default_budget = section.effective_default_module();
     let mut out = Vec::new();
@@ -192,32 +245,9 @@ pub fn cx002(air: &AirWorkspace, section: &CxSection, mode: CheckMode) -> Vec<Di
             let Some(module_path) = file.module_path.as_deref() else {
                 continue;
             };
-            let matched_override = section.matching_module_override(module_path);
-            let budget = matched_override
-                .map(|o| o.max_module_lines)
-                .unwrap_or(default_budget);
-            if file.line_count <= budget {
-                continue;
+            if let Some(d) = cx002_check_file(file, module_path, section, default_budget, mode) {
+                out.push(d);
             }
-            // See CX001 above for the advisory-tier elevation rationale.
-            let narrowed = matched_override.is_some() || section.default_max_module_lines.is_some();
-            let why = cx002_why(
-                &file.path,
-                file.line_count,
-                budget,
-                default_budget,
-                matched_override,
-                section,
-            );
-            out.push(cx002_diagnostic(
-                file,
-                module_path,
-                budget,
-                matched_override,
-                narrowed,
-                why,
-                mode,
-            ));
         }
     }
     out
@@ -298,6 +328,39 @@ fn cx007_anchor_span(file: &locus_air::AirFile) -> AirSpan {
 /// paths covering test modules, so the rule is useful out of the box.
 /// Files without a `module_path` are skipped — we can't apply
 /// `exempt_paths` without one.
+fn cx007_diagnostic(
+    module_path: &str,
+    file_path: &str,
+    public_count: u32,
+    max_public_items: u32,
+    span: AirSpan,
+    mode: CheckMode,
+) -> Diagnostic {
+    Diagnostic {
+        rule_id: "CX007".to_string(),
+        severity: mode.elevate(Severity::Warning),
+        span,
+        concept: None,
+        message: format!(
+            "module `{module_path}` exposes {public_count} public items, budget {} \
+             — likely a kitchen-sink facade",
+            max_public_items
+        ),
+        why: vec![
+            format!("file `{file_path}`"),
+            format!("module path `{module_path}`"),
+            format!("public item count {public_count} > max_public_items {max_public_items}"),
+        ],
+        suggested_fix: Some(
+            "split the module into smaller, more focused units; or — if this \
+             facade is intentional (e.g. a public prelude) — exempt the \
+             module by adding its path pattern to `paradigms.CX.exempt_paths` \
+             in `locus.lock`, or raise `paradigms.CX.max_public_items`"
+                .into(),
+        ),
+    }
+}
+
 pub fn cx007(air: &AirWorkspace, section: &CxSection, mode: CheckMode) -> Vec<Diagnostic> {
     let mut out = Vec::new();
     for pkg in &air.packages {
@@ -317,32 +380,14 @@ pub fn cx007(air: &AirWorkspace, section: &CxSection, mode: CheckMode) -> Vec<Di
                 continue;
             }
             let span = cx007_anchor_span(file);
-            out.push(Diagnostic {
-                rule_id: "CX007".to_string(),
-                severity: mode.elevate(Severity::Warning),
+            out.push(cx007_diagnostic(
+                module_path,
+                &file.path,
+                public_count,
+                section.max_public_items,
                 span,
-                concept: None,
-                message: format!(
-                    "module `{module_path}` exposes {public_count} public items, budget {} \
-                     — likely a kitchen-sink facade",
-                    section.max_public_items
-                ),
-                why: vec![
-                    format!("file `{}`", file.path),
-                    format!("module path `{module_path}`"),
-                    format!(
-                        "public item count {public_count} > max_public_items {}",
-                        section.max_public_items
-                    ),
-                ],
-                suggested_fix: Some(
-                    "split the module into smaller, more focused units; or — if this \
-                     facade is intentional (e.g. a public prelude) — exempt the \
-                     module by adding its path pattern to `paradigms.CX.exempt_paths` \
-                     in `locus.lock`, or raise `paradigms.CX.max_public_items`"
-                        .into(),
-                ),
-            });
+                mode,
+            ));
         }
     }
     out
@@ -381,6 +426,46 @@ fn build_fan_out_index(air: &AirWorkspace) -> HashMap<String, u32> {
 /// runtime orchestrators); without that declaration, every fan-out is
 /// either accepted or noise, so we don't fire pre-onboarding. Mirrors the
 /// DG/MO un-onboarded UX.
+/// Check one file's functions against CX008 and append any diagnostics.
+fn cx008_check_file(
+    file: &locus_air::AirFile,
+    fan_out: &HashMap<String, u32>,
+    section: &CxSection,
+    mode: CheckMode,
+    out: &mut Vec<Diagnostic>,
+) {
+    let module_path = file.module_path.as_deref();
+    let is_orchestrator = module_path
+        .map(|mp| {
+            section
+                .orchestration_paths
+                .iter()
+                .any(|pat| matches_pattern(pat, mp))
+        })
+        .unwrap_or(false);
+    if is_orchestrator {
+        return;
+    }
+    for item in &file.items {
+        let AirItem::Function(func) = item else {
+            continue;
+        };
+        let Some(&count) = fan_out.get(func.symbol.as_str()) else {
+            continue;
+        };
+        if count <= section.max_fan_out {
+            continue;
+        }
+        out.push(cx008_diagnostic(
+            func,
+            count,
+            module_path,
+            section.max_fan_out,
+            mode,
+        ));
+    }
+}
+
 pub fn cx008(air: &AirWorkspace, section: &CxSection, mode: CheckMode) -> Vec<Diagnostic> {
     if section.orchestration_paths.is_empty() {
         return Vec::new();
@@ -389,30 +474,7 @@ pub fn cx008(air: &AirWorkspace, section: &CxSection, mode: CheckMode) -> Vec<Di
     let mut out = Vec::new();
     for pkg in &air.packages {
         for file in &pkg.files {
-            let module_path = file.module_path.as_deref();
-            for item in &file.items {
-                let AirItem::Function(func) = item else {
-                    continue;
-                };
-                let Some(&count) = fan_out.get(func.symbol.as_str()) else {
-                    continue;
-                };
-                if count <= section.max_fan_out {
-                    continue;
-                }
-                let exempt = module_path
-                    .map(|mp| {
-                        section
-                            .orchestration_paths
-                            .iter()
-                            .any(|pat| matches_pattern(pat, mp))
-                    })
-                    .unwrap_or(false);
-                if exempt {
-                    continue;
-                }
-                out.push(cx008_diagnostic(func, count, module_path, section.max_fan_out, mode));
-            }
+            cx008_check_file(file, &fan_out, section, mode, &mut out);
         }
     }
     out

@@ -121,7 +121,11 @@ fn scan_stringy_fns(
                 return None;
             }
             let last = cs.callee.rsplit("::").next().unwrap_or(&cs.callee);
-            if stringify_callees.contains(&last) { Some(cs) } else { None }
+            if stringify_callees.contains(&last) {
+                Some(cs)
+            } else {
+                None
+            }
         });
         if let Some(cs) = hit {
             out.push(diagnostic_for_fl013(func, cs, module_path, mode));

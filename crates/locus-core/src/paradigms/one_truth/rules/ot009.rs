@@ -91,7 +91,9 @@ pub fn ot009(air: &AirWorkspace, section: &OtSection, mode: CheckMode) -> Vec<Di
                 if file.path == owner_file {
                     continue; // validator inside the canonical's own module is fine
                 }
-                out.push(ot009_diagnostic(f, prefix, concept_id, owner_file, confidence, severity));
+                out.push(ot009_diagnostic(
+                    f, prefix, concept_id, owner_file, confidence, severity,
+                ));
             }
         }
     }
@@ -117,9 +119,7 @@ fn ot009_diagnostic(
             f.symbol
         ),
         why: vec![
-            format!(
-                "function name starts with `{prefix}` (validation/normalization shape)"
-            ),
+            format!("function name starts with `{prefix}` (validation/normalization shape)"),
             format!("signature references canonical for `{concept_id}`"),
             format!("owner module: `{owner_file}`"),
             format!("inference confidence: {confidence:.2}"),

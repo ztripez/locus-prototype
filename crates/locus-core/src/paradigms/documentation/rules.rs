@@ -40,7 +40,10 @@ fn dc001_diagnostic_for_type(
         severity: mode.elevate(Severity::Warning),
         span: ty.span.clone(),
         concept: None,
-        message: format!("public type `{}` in `{module_label}` has no doc comment", ty.name),
+        message: format!(
+            "public type `{}` in `{module_label}` has no doc comment",
+            ty.name
+        ),
         why: vec![
             format!("type `{}` (`{}`)", ty.name, ty.symbol),
             "visibility is Public".into(),
@@ -130,15 +133,15 @@ pub fn dc001(air: &AirWorkspace, section: &DcSection, mode: CheckMode) -> Vec<Di
             let module_label = module_path.unwrap_or(&file.path);
             for item in &file.items {
                 match item {
-                    AirItem::Type(ty) => {
-                        if ty.visibility == Visibility::Public && ty.doc.is_none() {
-                            out.push(dc001_diagnostic_for_type(ty, module_label, mode));
-                        }
+                    AirItem::Type(ty)
+                        if ty.visibility == Visibility::Public && ty.doc.is_none() =>
+                    {
+                        out.push(dc001_diagnostic_for_type(ty, module_label, mode));
                     }
-                    AirItem::Function(func) => {
-                        if func.visibility == Visibility::Public && func.doc.is_none() {
-                            out.push(dc001_diagnostic_for_fn(func, module_label, mode));
-                        }
+                    AirItem::Function(func)
+                        if func.visibility == Visibility::Public && func.doc.is_none() =>
+                    {
+                        out.push(dc001_diagnostic_for_fn(func, module_label, mode));
                     }
                     _ => {}
                 }
@@ -148,6 +151,7 @@ pub fn dc001(air: &AirWorkspace, section: &DcSection, mode: CheckMode) -> Vec<Di
     out
 }
 
+#[allow(clippy::too_many_arguments)]
 fn dc002_diagnostic(
     kind_label: &str,
     name: &str,
@@ -214,7 +218,13 @@ pub fn dc002(air: &AirWorkspace, section: &DcSection, mode: CheckMode) -> Vec<Di
         for file in &pkg.files {
             let module_label = file.module_path.as_deref().unwrap_or(&file.path);
             for item in &file.items {
-                dc002_check_item(item, module_label, &section.forbidden_doc_phrases, mode, &mut out);
+                dc002_check_item(
+                    item,
+                    module_label,
+                    &section.forbidden_doc_phrases,
+                    mode,
+                    &mut out,
+                );
             }
         }
     }
@@ -229,26 +239,57 @@ fn dc002_check_item(
     out: &mut Vec<Diagnostic>,
 ) {
     let (kind_label, name, symbol, doc, span, vis) = match item {
-        locus_air::AirItem::Type(ty) => ("type", &ty.name, &ty.symbol, ty.doc.as_deref(), ty.span.clone(), ty.visibility),
-        locus_air::AirItem::Function(func) => ("function", &func.name, &func.symbol, func.doc.as_deref(), func.span.clone(), func.visibility),
+        locus_air::AirItem::Type(ty) => (
+            "type",
+            &ty.name,
+            &ty.symbol,
+            ty.doc.as_deref(),
+            ty.span.clone(),
+            ty.visibility,
+        ),
+        locus_air::AirItem::Function(func) => (
+            "function",
+            &func.name,
+            &func.symbol,
+            func.doc.as_deref(),
+            func.span.clone(),
+            func.visibility,
+        ),
         _ => return,
     };
-    if vis != Visibility::Public { return; }
+    if vis != Visibility::Public {
+        return;
+    }
     let Some(doc_text) = doc else { return };
     let doc_lower = doc_text.to_lowercase();
     for forbidden in forbidden_phrases {
-        let Some(matched_alias) = matched_phrasing(&doc_lower, forbidden) else { continue };
-        let Some(severity) = Severity::from_confidence(forbidden.confidence, mode) else { continue };
+        let Some(matched_alias) = matched_phrasing(&doc_lower, forbidden) else {
+            continue;
+        };
+        let Some(severity) = Severity::from_confidence(forbidden.confidence, mode) else {
+            continue;
+        };
         let primary = &forbidden.phrase;
         let alias_note = if matched_alias == *primary {
             String::new()
         } else {
             format!(" (alias of `{primary}`)")
         };
-        out.push(dc002_diagnostic(kind_label, name, symbol, module_label, &matched_alias, &alias_note, forbidden.confidence, span.clone(), severity));
+        out.push(dc002_diagnostic(
+            kind_label,
+            name,
+            symbol,
+            module_label,
+            &matched_alias,
+            &alias_note,
+            forbidden.confidence,
+            span.clone(),
+            severity,
+        ));
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn dc004_diagnostic(
     kind_label: &str,
     name: &str,
@@ -322,7 +363,13 @@ pub fn dc004(air: &AirWorkspace, section: &DcSection, mode: CheckMode) -> Vec<Di
         for file in &pkg.files {
             let module_label = file.module_path.as_deref().unwrap_or(&file.path);
             for item in &file.items {
-                dc004_check_item(item, module_label, &section.unowned_marker_patterns, mode, &mut out);
+                dc004_check_item(
+                    item,
+                    module_label,
+                    &section.unowned_marker_patterns,
+                    mode,
+                    &mut out,
+                );
             }
         }
     }
@@ -337,15 +384,40 @@ fn dc004_check_item(
     out: &mut Vec<Diagnostic>,
 ) {
     let (kind_label, name, symbol, doc, span, vis) = match item {
-        locus_air::AirItem::Type(ty) => ("type", &ty.name, &ty.symbol, ty.doc.as_deref(), ty.span.clone(), ty.visibility),
-        locus_air::AirItem::Function(func) => ("function", &func.name, &func.symbol, func.doc.as_deref(), func.span.clone(), func.visibility),
+        locus_air::AirItem::Type(ty) => (
+            "type",
+            &ty.name,
+            &ty.symbol,
+            ty.doc.as_deref(),
+            ty.span.clone(),
+            ty.visibility,
+        ),
+        locus_air::AirItem::Function(func) => (
+            "function",
+            &func.name,
+            &func.symbol,
+            func.doc.as_deref(),
+            func.span.clone(),
+            func.visibility,
+        ),
         _ => return,
     };
-    if vis != Visibility::Public { return; }
+    if vis != Visibility::Public {
+        return;
+    }
     let Some(doc_text) = doc else { return };
     for marker in unowned_marker_patterns {
         for occurrence in find_unowned_marker_occurrences(doc_text, marker) {
-            out.push(dc004_diagnostic(kind_label, name, symbol, module_label, marker, &occurrence, span.clone(), mode));
+            out.push(dc004_diagnostic(
+                kind_label,
+                name,
+                symbol,
+                module_label,
+                marker,
+                &occurrence,
+                span.clone(),
+                mode,
+            ));
         }
     }
 }

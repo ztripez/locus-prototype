@@ -17,9 +17,9 @@ use super::helpers::{file_of_symbol, matches_symbol_pattern};
 use crate::diagnostics::{CheckMode, Diagnostic, Severity};
 
 /// Build canonical short-name index: `short → (full_symbol, owner_file, concept_id)`.
-fn build_ot004_canonicals<'a>(
+fn build_ot004_canonicals(
     air: &AirWorkspace,
-    section: &'a OtSection,
+    section: &OtSection,
 ) -> BTreeMap<String, (String, String, String)> {
     let mut canonicals: BTreeMap<String, (String, String, String)> = BTreeMap::new();
     for (concept_id, entry) in &section.concepts {
@@ -111,7 +111,15 @@ pub fn ot004(air: &AirWorkspace, section: &OtSection, mode: CheckMode) -> Vec<Di
                 let AirItem::TruthAction(a) = item else {
                     continue;
                 };
-                ot004_check_action(a, &file.path, &canonicals, &accepted_converters, section, mode, &mut out);
+                ot004_check_action(
+                    a,
+                    &file.path,
+                    &canonicals,
+                    &accepted_converters,
+                    section,
+                    mode,
+                    &mut out,
+                );
             }
         }
     }

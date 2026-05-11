@@ -21,11 +21,7 @@ use locus_air::{
 use super::lockfile_schema::{PaSection, matches_pattern};
 use crate::diagnostics::{CheckMode, Diagnostic, Severity};
 
-fn pa001_diagnostic(
-    ty: &locus_air::AirType,
-    imp: &AirImplBlock,
-    mode: CheckMode,
-) -> Diagnostic {
+fn pa001_diagnostic(ty: &locus_air::AirType, imp: &AirImplBlock, mode: CheckMode) -> Diagnostic {
     Diagnostic {
         rule_id: "PA001".to_string(),
         severity: mode.elevate(Severity::Warning),
@@ -72,41 +68,45 @@ fn pa001_diagnostic(
 ///   `accepted_colocated_traits`.
 ///
 /// Severity: Warning by default; elevated to Fatal under `--agent-strict`.
+/// Check a single trait type for PA001 (co-located port+adapter).
+/// Returns `Some(Diagnostic)` when the rule fires.
+fn pa001_check_trait<'a>(
+    ty: &'a locus_air::AirType,
+    trait_to_impls: &'a BTreeMap<&str, Vec<&'a AirImplBlock>>,
+    section: &PaSection,
+    mode: CheckMode,
+) -> Option<Diagnostic> {
+    if ty.kind != TypeKind::Trait {
+        return None;
+    }
+    let impls = trait_to_impls.get(ty.name.as_str())?;
+    if impls.len() != 1 {
+        return None;
+    }
+    let imp = impls[0];
+    if imp.span.file != ty.span.file {
+        return None;
+    }
+    let exempted = section
+        .accepted_colocated_traits
+        .iter()
+        .any(|pat| matches_pattern(pat, &ty.symbol) || matches_pattern(pat, &ty.name));
+    if exempted {
+        return None;
+    }
+    Some(pa001_diagnostic(ty, imp, mode))
+}
+
 pub fn pa001(air: &AirWorkspace, section: &PaSection, mode: CheckMode) -> Vec<Diagnostic> {
     let trait_to_impls = build_trait_to_impls(air);
-
     let mut out = Vec::new();
     for pkg in &air.packages {
         for file in &pkg.files {
             for item in &file.items {
-                let AirItem::Type(ty) = item else {
-                    continue;
-                };
-                if ty.kind != TypeKind::Trait {
-                    continue;
+                let AirItem::Type(ty) = item else { continue };
+                if let Some(d) = pa001_check_trait(ty, &trait_to_impls, section, mode) {
+                    out.push(d);
                 }
-
-                let impls = match trait_to_impls.get(ty.name.as_str()) {
-                    Some(v) => v,
-                    None => continue, // zero impls — intentionally-uninhabited
-                };
-                if impls.len() != 1 {
-                    continue; // zero (handled above) or 2+ (already split)
-                }
-                let imp = impls[0];
-                if imp.span.file != ty.span.file {
-                    continue; // adapter already lives in a different file
-                }
-
-                if section
-                    .accepted_colocated_traits
-                    .iter()
-                    .any(|pat| matches_pattern(pat, &ty.symbol) || matches_pattern(pat, &ty.name))
-                {
-                    continue;
-                }
-
-                out.push(pa001_diagnostic(ty, imp, mode));
             }
         }
     }
@@ -402,6 +402,47 @@ fn pa004_diagnostic(
 /// Silent when `adapter_type_patterns` is empty. Defaults populate
 /// `accepted_construction_paths` so the user only needs to opt in by listing
 /// adapter types.
+/// Check a single file's Construct actions for PA004. Appends diagnostics.
+fn pa004_check_file(
+    file: &locus_air::AirFile,
+    module_path: &str,
+    section: &PaSection,
+    mode: CheckMode,
+    out: &mut Vec<Diagnostic>,
+) {
+    let module_label = if module_path.is_empty() {
+        "(unknown module)"
+    } else {
+        module_path
+    };
+    for item in &file.items {
+        let AirItem::TruthAction(a) = item else {
+            continue;
+        };
+        if a.action != ActionKind::Construct {
+            continue;
+        }
+        let Some(adapter_pattern) = section
+            .adapter_type_patterns
+            .iter()
+            .find(|pat| matches_pattern(pat, &a.target))
+        else {
+            continue;
+        };
+        let function_label = a
+            .function
+            .as_deref()
+            .unwrap_or("(no enclosing function recorded)");
+        out.push(pa004_diagnostic(
+            a,
+            module_label,
+            function_label,
+            adapter_pattern,
+            mode,
+        ));
+    }
+}
+
 pub fn pa004(air: &AirWorkspace, section: &PaSection, mode: CheckMode) -> Vec<Diagnostic> {
     if section.adapter_type_patterns.is_empty() {
         return Vec::new();
@@ -410,46 +451,14 @@ pub fn pa004(air: &AirWorkspace, section: &PaSection, mode: CheckMode) -> Vec<Di
     for pkg in &air.packages {
         for file in &pkg.files {
             let module_path = file.module_path.as_deref().unwrap_or("");
-            // If the file itself is an accepted construction path, skip
-            // every action it contains.
             if section
                 .accepted_construction_paths
                 .iter()
                 .any(|pat| matches_pattern(pat, module_path))
             {
-                continue;
+                continue; // file is itself an accepted construction path
             }
-            for item in &file.items {
-                let AirItem::TruthAction(a) = item else {
-                    continue;
-                };
-                if a.action != ActionKind::Construct {
-                    continue;
-                }
-                let Some(adapter_pattern) = section
-                    .adapter_type_patterns
-                    .iter()
-                    .find(|pat| matches_pattern(pat, &a.target))
-                else {
-                    continue;
-                };
-                let function_label = a
-                    .function
-                    .as_deref()
-                    .unwrap_or("(no enclosing function recorded)");
-                let module_label = if module_path.is_empty() {
-                    "(unknown module)"
-                } else {
-                    module_path
-                };
-                out.push(pa004_diagnostic(
-                    a,
-                    module_label,
-                    function_label,
-                    adapter_pattern,
-                    mode,
-                ));
-            }
+            pa004_check_file(file, module_path, section, mode, &mut out);
         }
     }
     out

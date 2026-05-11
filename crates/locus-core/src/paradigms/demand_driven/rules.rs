@@ -56,8 +56,7 @@ fn count_da001_impls<'a>(
     air: &AirWorkspace,
     traits: &'a BTreeMap<String, &AirType>,
 ) -> BTreeMap<&'a str, u32> {
-    let mut impl_counts: BTreeMap<&str, u32> =
-        traits.keys().map(|k| (k.as_str(), 0u32)).collect();
+    let mut impl_counts: BTreeMap<&str, u32> = traits.keys().map(|k| (k.as_str(), 0u32)).collect();
     for pkg in &air.packages {
         for file in &pkg.files {
             for item in &file.items {
@@ -154,24 +153,6 @@ fn last_segment(path: &str) -> &str {
     path.rsplit("::").next().unwrap_or(path)
 }
 
-/// DA002 — single-construct factory function.
-///
-/// For every `AirItem::Function` whose `name` matches any pattern in
-/// `section.factory_name_patterns`, count the `AirItem::TruthAction`
-/// entries with `action == Construct` and `function == Some(func.symbol)`.
-/// Fires when the count is exactly 1: a `create_*` / `make_*` /
-/// `build_*` / `*_factory` that only ever constructs one type is just a
-/// renamed constructor — the factory abstraction earned no variation.
-///
-/// Zero-construct factories (the function's body has no `Construct`
-/// truth-action — e.g. it's a façade that delegates) and multi-construct
-/// factories (real variation, justified) are both quiet.
-///
-/// Severity: Warning by default; Fatal under `--agent-strict`.
-///
-/// Stays silent when `factory_name_patterns` is empty, when
-/// `section.enabled == false`, or when the workspace has no functions.
-
 /// Build a per-function-symbol → `Da002ConstructStats` index from all
 /// `Construct` truth-actions in the workspace. Functions with no `Construct`
 /// actions are absent from the map.
@@ -200,6 +181,23 @@ fn build_da002_construct_index(air: &AirWorkspace) -> BTreeMap<&str, Da002Constr
     by_fn
 }
 
+/// DA002 — single-construct factory function.
+///
+/// For every `AirItem::Function` whose `name` matches any pattern in
+/// `section.factory_name_patterns`, count the `AirItem::TruthAction`
+/// entries with `action == Construct` and `function == Some(func.symbol)`.
+/// Fires when the count is exactly 1: a `create_*` / `make_*` /
+/// `build_*` / `*_factory` that only ever constructs one type is just a
+/// renamed constructor — the factory abstraction earned no variation.
+///
+/// Zero-construct factories (the function's body has no `Construct`
+/// truth-action — e.g. it's a façade that delegates) and multi-construct
+/// factories (real variation, justified) are both quiet.
+///
+/// Severity: Warning by default; Fatal under `--agent-strict`.
+///
+/// Stays silent when `factory_name_patterns` is empty, when
+/// `section.enabled == false`, or when the workspace has no functions.
 pub fn da002(air: &AirWorkspace, section: &DaSection, mode: CheckMode) -> Vec<Diagnostic> {
     if !section.enabled || section.factory_name_patterns.is_empty() {
         return Vec::new();
@@ -227,7 +225,12 @@ pub fn da002(air: &AirWorkspace, section: &DaSection, mode: CheckMode) -> Vec<Di
                 if stats.count != 1 {
                     continue;
                 }
-                out.push(diagnostic_da002(func, matched_pattern, &stats.first_target, mode));
+                out.push(diagnostic_da002(
+                    func,
+                    matched_pattern,
+                    &stats.first_target,
+                    mode,
+                ));
             }
         }
     }
@@ -279,7 +282,12 @@ fn diagnostic_da002(
     }
 }
 
-fn da007_diagnostic(ty: &AirType, matched_pattern: &str, only_variant: &str, mode: CheckMode) -> Diagnostic {
+fn da007_diagnostic(
+    ty: &AirType,
+    matched_pattern: &str,
+    only_variant: &str,
+    mode: CheckMode,
+) -> Diagnostic {
     Diagnostic {
         rule_id: "DA007".to_string(),
         severity: mode.elevate(Severity::Warning),

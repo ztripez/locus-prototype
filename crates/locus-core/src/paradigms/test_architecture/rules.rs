@@ -188,7 +188,13 @@ pub fn ta002(air: &AirWorkspace, section: &TaSection, mode: CheckMode) -> Vec<Di
                 else {
                     continue;
                 };
-                out.push(ta002_diagnostic(ty, module_path, test_pattern, name_pattern, mode));
+                out.push(ta002_diagnostic(
+                    ty,
+                    module_path,
+                    test_pattern,
+                    name_pattern,
+                    mode,
+                ));
             }
         }
     }
@@ -257,6 +263,42 @@ fn ta003_diagnostic(
 /// domain truth.
 ///
 /// Severity: Warning by default; Fatal under `--agent-strict`.
+/// Check one struct type for the TA003 shape-shadow signal.
+/// Returns `Some(Diagnostic)` when both name and field-shape gates trip.
+fn ta003_check_type(
+    ty: &locus_air::AirType,
+    module_path: &str,
+    test_pattern: &str,
+    section: &TaSection,
+    mode: CheckMode,
+) -> Option<Diagnostic> {
+    if ty.kind != TypeKind::Struct {
+        return None;
+    }
+    let name_pattern = section
+        .canonical_name_patterns
+        .iter()
+        .find(|pat| name_contains(pat, &ty.name))?;
+    let test_field_names: BTreeSet<&str> = ty.fields.iter().map(|f| f.name.as_str()).collect();
+    if test_field_names.is_empty() {
+        return None;
+    }
+    let (canonical_set, overlap) =
+        best_jaccard_match(&test_field_names, &section.canonical_field_sets)?;
+    if overlap < 0.5 {
+        return None;
+    }
+    Some(ta003_diagnostic(
+        ty,
+        module_path,
+        test_pattern,
+        name_pattern,
+        overlap,
+        canonical_set,
+        mode,
+    ))
+}
+
 pub fn ta003(air: &AirWorkspace, section: &TaSection, mode: CheckMode) -> Vec<Diagnostic> {
     if section.test_paths.is_empty()
         || section.canonical_name_patterns.is_empty()
@@ -278,41 +320,10 @@ pub fn ta003(air: &AirWorkspace, section: &TaSection, mode: CheckMode) -> Vec<Di
                 continue;
             };
             for item in &file.items {
-                let AirItem::Type(ty) = item else {
-                    continue;
-                };
-                if ty.kind != TypeKind::Struct {
-                    continue;
+                let AirItem::Type(ty) = item else { continue };
+                if let Some(d) = ta003_check_type(ty, module_path, test_pattern, section, mode) {
+                    out.push(d);
                 }
-                let Some(name_pattern) = section
-                    .canonical_name_patterns
-                    .iter()
-                    .find(|pat| name_contains(pat, &ty.name))
-                else {
-                    continue;
-                };
-                let test_field_names: BTreeSet<&str> =
-                    ty.fields.iter().map(|f| f.name.as_str()).collect();
-                if test_field_names.is_empty() {
-                    continue;
-                }
-                let Some((canonical_set, overlap)) =
-                    best_jaccard_match(&test_field_names, &section.canonical_field_sets)
-                else {
-                    continue;
-                };
-                if overlap < 0.5 {
-                    continue;
-                }
-                out.push(ta003_diagnostic(
-                    ty,
-                    module_path,
-                    test_pattern,
-                    name_pattern,
-                    overlap,
-                    canonical_set,
-                    mode,
-                ));
             }
         }
     }
@@ -376,6 +387,32 @@ fn ta004_diagnostic(
 /// they support — that's the path that drifts.
 ///
 /// Severity: Warning by default; Fatal under `--agent-strict`.
+/// Check a single impl block to see if it matches TA004 criteria.
+fn ta004_check_impl<'a>(
+    imp: &'a locus_air::AirImplBlock,
+    module_path: &str,
+    test_pattern: &str,
+    section: &'a TaSection,
+    mode: CheckMode,
+) -> Option<Diagnostic> {
+    let trait_path = imp.interface.as_deref()?;
+    let trait_short = trait_path.rsplit("::").next().unwrap_or(trait_path);
+    let port_pattern = section.port_trait_patterns.iter().find(|pat| {
+        matches_pattern(pat, trait_path)
+            || matches_pattern(pat, trait_short)
+            || name_matches(pat, trait_path)
+            || name_matches(pat, trait_short)
+    })?;
+    Some(ta004_diagnostic(
+        imp,
+        module_path,
+        test_pattern,
+        trait_path,
+        port_pattern,
+        mode,
+    ))
+}
+
 pub fn ta004(air: &AirWorkspace, section: &TaSection, mode: CheckMode) -> Vec<Diagnostic> {
     if section.test_paths.is_empty() || section.port_trait_patterns.is_empty() {
         return Vec::new();
@@ -401,29 +438,10 @@ pub fn ta004(air: &AirWorkspace, section: &TaSection, mode: CheckMode) -> Vec<Di
                 continue;
             }
             for item in &file.items {
-                let AirItem::Impl(imp) = item else {
-                    continue;
-                };
-                let Some(trait_path) = imp.interface.as_deref() else {
-                    continue;
-                };
-                let trait_short = trait_path.rsplit("::").next().unwrap_or(trait_path);
-                let Some(port_pattern) = section.port_trait_patterns.iter().find(|pat| {
-                    matches_pattern(pat, trait_path)
-                        || matches_pattern(pat, trait_short)
-                        || name_matches(pat, trait_path)
-                        || name_matches(pat, trait_short)
-                }) else {
-                    continue;
-                };
-                out.push(ta004_diagnostic(
-                    imp,
-                    module_path,
-                    test_pattern,
-                    trait_path,
-                    port_pattern,
-                    mode,
-                ));
+                let AirItem::Impl(imp) = item else { continue };
+                if let Some(d) = ta004_check_impl(imp, module_path, test_pattern, section, mode) {
+                    out.push(d);
+                }
             }
         }
     }

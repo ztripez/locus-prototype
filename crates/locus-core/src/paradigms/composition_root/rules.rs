@@ -32,6 +32,49 @@ use crate::diagnostics::{CheckMode, Diagnostic, Severity};
 ///
 /// Silent when `composition_root_paths` is empty: we wait for the user to
 /// declare where their roots live before flagging anything.
+/// Check a single non-root file's items for service constructions outside roots.
+fn cr001_check_file(
+    file: &locus_air::AirFile,
+    module_path: &str,
+    suffixes: &[String],
+    mode: CheckMode,
+    out: &mut Vec<Diagnostic>,
+) {
+    let module_label = if module_path.is_empty() {
+        "(unknown module)"
+    } else {
+        module_path
+    };
+    for item in &file.items {
+        let AirItem::TruthAction(a) = item else {
+            continue;
+        };
+        if a.action != ActionKind::Construct {
+            continue;
+        }
+        let short = a
+            .target
+            .rsplit("::")
+            .next()
+            .unwrap_or(a.target.as_str())
+            .trim();
+        let Some(matched_suffix) = suffixes.iter().find(|s| short.ends_with(s.as_str())) else {
+            continue;
+        };
+        let function_label = a
+            .function
+            .as_deref()
+            .unwrap_or("(no enclosing function recorded)");
+        out.push(cr001_diagnostic(
+            a,
+            module_label,
+            matched_suffix,
+            function_label,
+            mode,
+        ));
+    }
+}
+
 pub fn cr001(air: &AirWorkspace, section: &CrSection, mode: CheckMode) -> Vec<Diagnostic> {
     if section.composition_root_paths.is_empty() {
         return Vec::new();
@@ -55,30 +98,7 @@ pub fn cr001(air: &AirWorkspace, section: &CrSection, mode: CheckMode) -> Vec<Di
             {
                 continue; // file is itself a composition root
             }
-            for item in &file.items {
-                let AirItem::TruthAction(a) = item else {
-                    continue;
-                };
-                if a.action != ActionKind::Construct {
-                    continue;
-                }
-                let short = a
-                    .target
-                    .rsplit("::")
-                    .next()
-                    .unwrap_or(a.target.as_str())
-                    .trim();
-                let Some(matched_suffix) = suffixes.iter().find(|s| short.ends_with(s.as_str()))
-                else {
-                    continue;
-                };
-                let function_label = a
-                    .function
-                    .as_deref()
-                    .unwrap_or("(no enclosing function recorded)");
-                let module_label = if module_path.is_empty() { "(unknown module)" } else { module_path };
-                out.push(cr001_diagnostic(a, module_label, matched_suffix, function_label, mode));
-            }
+            cr001_check_file(file, module_path, &suffixes, mode, &mut out);
         }
     }
     out
@@ -99,6 +119,26 @@ pub fn cr001(air: &AirWorkspace, section: &CrSection, mode: CheckMode) -> Vec<Di
 ///
 /// Silent when `composition_root_paths` is empty (we have no idea which
 /// functions are roots in the first place).
+/// Count `Construct` actions per enclosing function in a composition-root file.
+fn cr002_count_constructs(file: &locus_air::AirFile) -> BTreeMap<String, (u32, AirSpan)> {
+    let mut counts: BTreeMap<String, (u32, AirSpan)> = BTreeMap::new();
+    for item in &file.items {
+        let AirItem::TruthAction(a) = item else {
+            continue;
+        };
+        if a.action != ActionKind::Construct {
+            continue;
+        }
+        let func = a
+            .function
+            .clone()
+            .unwrap_or_else(|| "(no enclosing function recorded)".to_string());
+        let entry = counts.entry(func).or_insert((0, a.span.clone()));
+        entry.0 += 1;
+    }
+    counts
+}
+
 pub fn cr002(air: &AirWorkspace, section: &CrSection, mode: CheckMode) -> Vec<Diagnostic> {
     if section.composition_root_paths.is_empty() {
         return Vec::new();
@@ -120,31 +160,19 @@ pub fn cr002(air: &AirWorkspace, section: &CrSection, mode: CheckMode) -> Vec<Di
             {
                 continue;
             }
-
-            // Group Construct actions by enclosing function. Use a
-            // `BTreeMap` keyed by (function-name, first-span-file) so output
-            // ordering is deterministic.
-            let mut counts: BTreeMap<String, (u32, AirSpan)> = BTreeMap::new();
-            for item in &file.items {
-                let AirItem::TruthAction(a) = item else {
-                    continue;
-                };
-                if a.action != ActionKind::Construct {
-                    continue;
-                }
-                let func = a
-                    .function
-                    .clone()
-                    .unwrap_or_else(|| "(no enclosing function recorded)".to_string());
-                let entry = counts.entry(func).or_insert((0, a.span.clone()));
-                entry.0 += 1;
-            }
-
+            let counts = cr002_count_constructs(file);
             for (func, (count, span)) in counts {
                 if count < section.wiring_density_threshold {
                     continue;
                 }
-                out.push(cr002_diagnostic(&func, module_path, count, span, section.wiring_density_threshold, mode));
+                out.push(cr002_diagnostic(
+                    &func,
+                    module_path,
+                    count,
+                    span,
+                    section.wiring_density_threshold,
+                    mode,
+                ));
             }
         }
     }

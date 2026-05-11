@@ -51,12 +51,22 @@ pub fn rm001(air: &AirWorkspace, section: &RmSection, mode: CheckMode) -> Vec<Di
     let cap = section.effective_default();
     let (function_index, module_path_for_file) = build_workspace_indexes(air);
     let groups = build_rm001_groups(air);
-    emit_rm001_diagnostics(groups, &function_index, &module_path_for_file, section, cap, mode)
+    emit_rm001_diagnostics(
+        groups,
+        &function_index,
+        &module_path_for_file,
+        section,
+        cap,
+        mode,
+    )
 }
 
 fn build_workspace_indexes(
     air: &AirWorkspace,
-) -> (BTreeMap<String, (AirSpan, String)>, BTreeMap<String, String>) {
+) -> (
+    BTreeMap<String, (AirSpan, String)>,
+    BTreeMap<String, String>,
+) {
     let mut function_index: BTreeMap<String, (AirSpan, String)> = BTreeMap::new();
     let mut module_path_for_file: BTreeMap<String, String> = BTreeMap::new();
     for pkg in &air.packages {
@@ -81,12 +91,20 @@ fn build_rm001_groups(air: &AirWorkspace) -> BTreeMap<String, Rm001Group<'_>> {
     for pkg in &air.packages {
         for file in &pkg.files {
             for item in &file.items {
-                let AirItem::TruthAction(a) = item else { continue };
-                let Some(fn_sym) = a.function.as_deref() else { continue };
+                let AirItem::TruthAction(a) = item else {
+                    continue;
+                };
+                let Some(fn_sym) = a.function.as_deref() else {
+                    continue;
+                };
                 let g = groups.entry(fn_sym.to_string()).or_default();
-                if !g.kinds.contains(&a.action) { g.kinds.push(a.action); }
+                if !g.kinds.contains(&a.action) {
+                    g.kinds.push(a.action);
+                }
                 g.actions.push(a);
-                if g.first_file.is_none() { g.first_file = Some(file.path.clone()); }
+                if g.first_file.is_none() {
+                    g.first_file = Some(file.path.clone());
+                }
             }
         }
     }
@@ -103,17 +121,35 @@ fn emit_rm001_diagnostics(
 ) -> Vec<Diagnostic> {
     let mut out = Vec::new();
     for (fn_sym, group) in groups {
-        if (group.kinds.len() as u32) <= cap { continue; }
+        if (group.kinds.len() as u32) <= cap {
+            continue;
+        }
         let anchored = function_index.contains_key(&fn_sym);
         let (span, file_path) = resolve_rm001_span(&fn_sym, &group, function_index);
         if let Some(mp) = module_path_for_file.get(&file_path)
-            && section.exempt_paths.iter().any(|pat| matches_pattern(pat, mp))
-        { continue; }
+            && section
+                .exempt_paths
+                .iter()
+                .any(|pat| matches_pattern(pat, mp))
+        {
+            continue;
+        }
         let mut kinds_sorted: Vec<ActionKind> = group.kinds.clone();
         kinds_sorted.sort_by_key(format_kind);
-        let kinds_label = kinds_sorted.iter().map(format_kind).collect::<Vec<_>>().join(", ");
+        let kinds_label = kinds_sorted
+            .iter()
+            .map(format_kind)
+            .collect::<Vec<_>>()
+            .join(", ");
         let why = build_rm001_why(&kinds_sorted, &kinds_label, &group.actions, anchored);
-        out.push(rm001_diagnostic(&fn_sym, &kinds_sorted, &kinds_label, why, span, mode));
+        out.push(rm001_diagnostic(
+            &fn_sym,
+            &kinds_sorted,
+            &kinds_label,
+            why,
+            span,
+            mode,
+        ));
     }
     out
 }
@@ -126,10 +162,16 @@ fn resolve_rm001_span<'a>(
     match function_index.get(fn_sym) {
         Some((span, fp)) => (span.clone(), fp.clone()),
         None => {
-            let first = group.actions.first().expect("group has at least one action");
+            let first = group
+                .actions
+                .first()
+                .expect("group has at least one action");
             (
                 first.span.clone(),
-                group.first_file.clone().unwrap_or_else(|| first.span.file.clone()),
+                group
+                    .first_file
+                    .clone()
+                    .unwrap_or_else(|| first.span.file.clone()),
             )
         }
     }
@@ -412,20 +454,35 @@ fn density_rule(
     for pkg in &air.packages {
         for file in &pkg.files {
             for item in &file.items {
-                let AirItem::TruthAction(a) = item else { continue };
-                if !matches!(a.action, ActionKind::StringCompare | ActionKind::DiscriminatedMatch) {
+                let AirItem::TruthAction(a) = item else {
+                    continue;
+                };
+                if !matches!(
+                    a.action,
+                    ActionKind::StringCompare | ActionKind::DiscriminatedMatch
+                ) {
                     continue;
                 }
-                let Some(fn_sym) = a.function.as_deref() else { continue };
+                let Some(fn_sym) = a.function.as_deref() else {
+                    continue;
+                };
                 groups.entry(fn_sym.to_string()).or_default().push(a);
             }
         }
     }
-    emit_density_diagnostics(groups, &function_index, &module_path_for_file, paths, cap, role, mode)
+    emit_density_diagnostics(
+        groups,
+        &function_index,
+        &module_path_for_file,
+        paths,
+        cap,
+        role,
+        mode,
+    )
 }
 
-fn emit_density_diagnostics<'a>(
-    groups: BTreeMap<String, Vec<&'a AirTruthAction>>,
+fn emit_density_diagnostics(
+    groups: BTreeMap<String, Vec<&AirTruthAction>>,
     function_index: &BTreeMap<String, (AirSpan, String)>,
     module_path_for_file: &BTreeMap<String, String>,
     paths: &[String],
@@ -436,14 +493,32 @@ fn emit_density_diagnostics<'a>(
     let mut out = Vec::new();
     for (fn_sym, actions) in groups {
         let count = actions.len() as u32;
-        if count <= cap { continue; }
-        let Some((fn_span, file_path)) = function_index.get(&fn_sym) else { continue };
-        let Some(module_path) = module_path_for_file.get(file_path) else { continue };
-        let Some(matched_pattern) = paths.iter().find(|pat| matches_pattern(pat, module_path)).cloned() else {
+        if count <= cap {
+            continue;
+        }
+        let Some((fn_span, file_path)) = function_index.get(&fn_sym) else {
+            continue;
+        };
+        let Some(module_path) = module_path_for_file.get(file_path) else {
+            continue;
+        };
+        let Some(matched_pattern) = paths
+            .iter()
+            .find(|pat| matches_pattern(pat, module_path))
+            .cloned()
+        else {
             continue;
         };
         let why = build_density_why(module_path, &matched_pattern, count, cap, &actions, role);
-        out.push(density_diagnostic(&fn_sym, fn_span, module_path, count, role, why, mode));
+        out.push(density_diagnostic(
+            &fn_sym,
+            fn_span,
+            module_path,
+            count,
+            role,
+            why,
+            mode,
+        ));
     }
     out
 }

@@ -158,7 +158,10 @@ fn fo004_diagnostic(
             ty.name, field.name, field.type_text, feature.name,
         ),
         why: vec![
-            format!("type `{}` lives in shared module `{module_path}`", ty.symbol),
+            format!(
+                "type `{}` lives in shared module `{module_path}`",
+                ty.symbol
+            ),
             format!("field `{}` has type text `{}`", field.name, field.type_text),
             format!(
                 "path token `{token}` matches feature `{}`'s module pattern `{}`",
@@ -217,7 +220,12 @@ pub fn fo004(air: &AirWorkspace, section: &FoSection, mode: CheckMode) -> Vec<Di
                             .find(|f| matches_pattern(&f.module, token))
                         {
                             out.push(fo004_diagnostic(
-                                ty, module_path, field, token, feature, mode,
+                                ty,
+                                module_path,
+                                field,
+                                token,
+                                feature,
+                                mode,
                             ));
                             // Each (field, feature) pair fires at most once.
                             break;

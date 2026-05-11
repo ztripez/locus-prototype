@@ -44,6 +44,7 @@ fn mo001_why(
     why
 }
 
+#[allow(clippy::too_many_arguments)]
 fn mo001_diagnostic(
     module_path: &str,
     count: u32,
@@ -62,7 +63,14 @@ fn mo001_diagnostic(
         message: format!(
             "module `{module_path}` has {count} public top-level types (budget {budget})"
         ),
-        why: mo001_why(module_path, count, budget, default_budget, matched_override, section),
+        why: mo001_why(
+            module_path,
+            count,
+            budget,
+            default_budget,
+            matched_override,
+            section,
+        ),
         suggested_fix: Some(
             "split the module into submodules each owning one architectural role, \
              or — if this density is intended (e.g. an API surface) — raise the \
@@ -114,8 +122,14 @@ pub fn mo001(air: &AirWorkspace, section: &MoSection, mode: CheckMode) -> Vec<Di
                 })
                 .unwrap_or_else(|| locus_air::AirSpan::new(file.path.clone(), 1, 1));
             out.push(mo001_diagnostic(
-                module_path, count, budget, default_budget, span,
-                matched_override, section, mode,
+                module_path,
+                count,
+                budget,
+                default_budget,
+                span,
+                matched_override,
+                section,
+                mode,
             ));
         }
     }
@@ -292,7 +306,14 @@ pub fn mo002(air: &AirWorkspace, section: &MoSection, mode: CheckMode) -> Vec<Di
             }
             let span = file_anchor_span(file);
             let role_list = roles.join(", ");
-            out.push(mo002_diagnostic(module_path, count, threshold, &role_list, span, mode));
+            out.push(mo002_diagnostic(
+                module_path,
+                count,
+                threshold,
+                &role_list,
+                span,
+                mode,
+            ));
         }
     }
     out
@@ -429,7 +450,12 @@ pub fn mo004(air: &AirWorkspace, section: &MoSection, mode: CheckMode) -> Vec<Di
             let Some(handler) = handler else {
                 continue;
             };
-            out.push(mo004_diagnostic(module_path, handler, &handler_patterns, mode));
+            out.push(mo004_diagnostic(
+                module_path,
+                handler,
+                &handler_patterns,
+                mode,
+            ));
         }
     }
     out
@@ -623,78 +649,82 @@ fn is_composition_host_struct(type_item: &locus_air::AirType, same_file_items: &
 ///
 /// Returns `None` when the item is permitted; returns `Some(reason)` when
 /// it is a forbidden declaration that MO005 should flag.
+/// Classify a `Type` item in an entrypoint module.
+fn classify_type_item(
+    t: &locus_air::AirType,
+    same_file_items: &[AirItem],
+    kind: EntrypointKind,
+) -> Option<String> {
+    // The composition-host exception applies only in mod.rs files.
+    if kind == EntrypointKind::Mod && is_composition_host_struct(t, same_file_items) {
+        return None;
+    }
+    let kind_str = match t.kind {
+        locus_air::TypeKind::Struct => "struct",
+        locus_air::TypeKind::Enum => "enum",
+        locus_air::TypeKind::Trait => "trait",
+        locus_air::TypeKind::Alias => "type alias",
+        locus_air::TypeKind::Union => "union",
+    };
+    Some(format!(
+        "{kind_str} `{}` declared in entrypoint module — move to a sibling module",
+        t.name
+    ))
+}
+
+/// Classify an `Impl` item in an entrypoint module.
+fn classify_impl_item(
+    i: &locus_air::AirImplBlock,
+    same_file_items: &[AirItem],
+    kind: EntrypointKind,
+) -> Option<String> {
+    // Allow the composition-host impl in mod.rs only.
+    if kind == EntrypointKind::Mod && is_composition_host_impl(i, same_file_items) {
+        return None;
+    }
+    let target = &i.target_type;
+    Some(format!(
+        "impl block for `{target}` in entrypoint module — move to the module that owns `{target}`"
+    ))
+}
+
+/// Classify a `Function` item in an entrypoint module.
+fn classify_function_item(f: &locus_air::AirFunction) -> Option<String> {
+    let is_permitted_name = ENTRYPOINT_FN_NAMES.contains(&f.name.as_str());
+    let within_budget = f.line_count <= MO005_THIN_FN_MAX_LINES;
+    if is_permitted_name && within_budget {
+        return None; // thin composition-glue function: allowed
+    }
+    if is_permitted_name {
+        Some(format!(
+            "function `{}` in entrypoint module spans {} lines (budget {}); \
+             move its body into a dedicated module",
+            f.name, f.line_count, MO005_THIN_FN_MAX_LINES
+        ))
+    } else {
+        Some(format!(
+            "function `{}` in entrypoint module is not composition glue; \
+             move it to a sibling module (e.g. `commands/`, `routes/`, \
+             `handlers/`)",
+            f.name
+        ))
+    }
+}
+
 fn mo005_classify_item(
     item: &AirItem,
     same_file_items: &[AirItem],
     kind: EntrypointKind,
 ) -> Option<String> {
     match item {
-        AirItem::Type(t) => {
-            // The composition-host exception (unit struct paired with thin
-            // impl Paradigm) applies only in mod.rs files — it is a
-            // directory-module convention, not a binary-entrypoint convention.
-            if kind == EntrypointKind::Mod && is_composition_host_struct(t, same_file_items) {
-                return None;
-            }
-            let kind_str = match t.kind {
-                locus_air::TypeKind::Struct => "struct",
-                locus_air::TypeKind::Enum => "enum",
-                locus_air::TypeKind::Trait => "trait",
-                locus_air::TypeKind::Alias => "type alias",
-                locus_air::TypeKind::Union => "union",
-            };
-            Some(format!(
-                "{kind_str} `{}` declared in entrypoint module — move to a sibling module",
-                t.name
-            ))
-        }
-        AirItem::Impl(i) => {
-            // Allow the composition-host impl: `impl Paradigm for LocalUnitStruct`
-            // in a mod.rs, where all methods are thin (impl block ≤120 lines).
-            // This exception does NOT apply to main.rs — the binary entrypoint
-            // must have zero impl blocks.
-            if kind == EntrypointKind::Mod && is_composition_host_impl(i, same_file_items) {
-                return None;
-            }
-            let target = &i.target_type;
-            Some(format!(
-                "impl block for `{target}` in entrypoint module — move to the module that owns `{target}`"
-            ))
-        }
-        AirItem::Function(f) => {
-            let is_permitted_name = ENTRYPOINT_FN_NAMES.contains(&f.name.as_str());
-            let within_budget = f.line_count <= MO005_THIN_FN_MAX_LINES;
-            if is_permitted_name && within_budget {
-                // Thin composition-glue function: allowed.
-                return None;
-            }
-            if is_permitted_name {
-                // Named correctly but too large — this is itself a smell.
-                Some(format!(
-                    "function `{}` in entrypoint module spans {} lines (budget {}); \
-                     move its body into a dedicated module",
-                    f.name, f.line_count, MO005_THIN_FN_MAX_LINES
-                ))
-            } else {
-                // Non-permitted name — regardless of line count this is a
-                // domain/business function that belongs elsewhere.
-                Some(format!(
-                    "function `{}` in entrypoint module is not composition glue; \
-                     move it to a sibling module (e.g. `commands/`, `routes/`, \
-                     `handlers/`)",
-                    f.name
-                ))
-            }
-        }
-        AirItem::Conversion(c) => {
-            // Converter / From/TryFrom impls in an entrypoint are unlikely;
-            // flag them as misplaced.
-            Some(format!(
-                "converter `{}` declared in entrypoint module — move to a `convert.rs` \
-                 or the owning domain module",
-                c.symbol
-            ))
-        }
+        AirItem::Type(t) => classify_type_item(t, same_file_items, kind),
+        AirItem::Impl(i) => classify_impl_item(i, same_file_items, kind),
+        AirItem::Function(f) => classify_function_item(f),
+        AirItem::Conversion(c) => Some(format!(
+            "converter `{}` declared in entrypoint module — move to a `convert.rs` \
+             or the owning domain module",
+            c.symbol
+        )),
         // All other item kinds — imports, hints, facts, call-sites, etc.
         // — are passive observations, not declarations. Permitted.
         _ => None,
@@ -742,6 +772,54 @@ fn mo005_classify_item(
 ///
 /// No lockfile configuration in the first pass — exemption via the standard
 /// `// locus: allow MO005` source-hint.
+/// Emit MO005 diagnostics for forbidden items in a single entrypoint file.
+fn mo005_check_file(
+    file: &locus_air::AirFile,
+    module_path: &str,
+    ep_kind: EntrypointKind,
+    file_label: &str,
+    mode: CheckMode,
+    out: &mut Vec<Diagnostic>,
+) {
+    for item in &file.items {
+        let Some(reason) = mo005_classify_item(item, &file.items, ep_kind) else {
+            continue;
+        };
+        let span = match item {
+            AirItem::Type(t) => t.span.clone(),
+            AirItem::Function(f) => f.span.clone(),
+            AirItem::Impl(i) => i.span.clone(),
+            AirItem::Conversion(c) => c.span.clone(),
+            _ => AirSpan::new(file.path.clone(), 1, 1),
+        };
+        out.push(Diagnostic {
+            rule_id: "MO005".to_string(),
+            severity: mode.elevate(Severity::Warning),
+            span,
+            concept: None,
+            message: format!("MO005: {reason}"),
+            why: vec![
+                format!(
+                    "`{file_label}` (module `{module_path}`) is an entrypoint \
+                     module — it must be a composition surface, not an ownership site"
+                ),
+                "entrypoint modules are composition surfaces — they wire \
+                 modules together via `mod` declarations, imports, and thin \
+                 `main`/`run`/`init` functions. Substantial declarations \
+                 belong in dedicated sibling modules."
+                    .into(),
+            ],
+            suggested_fix: Some(
+                "move this declaration into a dedicated sibling module \
+                 (e.g. `cli.rs` for the root arg struct, `commands/` for \
+                 command implementations). Entrypoint should contain only \
+                 `mod` decls, imports, and a thin `main` or `run` function."
+                    .into(),
+            ),
+        });
+    }
+}
+
 pub fn mo005(air: &AirWorkspace, mode: CheckMode) -> Vec<Diagnostic> {
     let mut out = Vec::new();
     for pkg in &air.packages {
@@ -752,49 +830,12 @@ pub fn mo005(air: &AirWorkspace, mode: CheckMode) -> Vec<Diagnostic> {
             let Some(ep_kind) = entrypoint_kind(module_path, &file.path) else {
                 continue;
             };
-            // Compute a human-readable entrypoint label for the diagnostic.
-            // Prefer the file basename (e.g. "main.rs") so the message
-            // remains clear even when the module_path is flat (crate root).
+            // Prefer the file basename (e.g. "main.rs") for the diagnostic.
             let file_label = std::path::Path::new(&file.path)
                 .file_name()
                 .and_then(|s| s.to_str())
                 .unwrap_or(&file.path);
-            for item in &file.items {
-                if let Some(reason) = mo005_classify_item(item, &file.items, ep_kind) {
-                    let span = match item {
-                        AirItem::Type(t) => t.span.clone(),
-                        AirItem::Function(f) => f.span.clone(),
-                        AirItem::Impl(i) => i.span.clone(),
-                        AirItem::Conversion(c) => c.span.clone(),
-                        _ => AirSpan::new(file.path.clone(), 1, 1),
-                    };
-                    out.push(Diagnostic {
-                        rule_id: "MO005".to_string(),
-                        severity: mode.elevate(Severity::Warning),
-                        span,
-                        concept: None,
-                        message: format!("MO005: {reason}"),
-                        why: vec![
-                            format!(
-                                "`{file_label}` (module `{module_path}`) is an entrypoint \
-                                 module — it must be a composition surface, not an ownership site"
-                            ),
-                            "entrypoint modules are composition surfaces — they wire \
-                             modules together via `mod` declarations, imports, and thin \
-                             `main`/`run`/`init` functions. Substantial declarations \
-                             belong in dedicated sibling modules."
-                                .into(),
-                        ],
-                        suggested_fix: Some(
-                            "move this declaration into a dedicated sibling module \
-                             (e.g. `cli.rs` for the root arg struct, `commands/` for \
-                             command implementations). Entrypoint should contain only \
-                             `mod` decls, imports, and a thin `main` or `run` function."
-                                .into(),
-                        ),
-                    });
-                }
-            }
+            mo005_check_file(file, module_path, ep_kind, file_label, mode, &mut out);
         }
     }
     out

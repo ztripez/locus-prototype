@@ -356,7 +356,12 @@ pub fn bo004(air: &AirWorkspace, section: &BoSection, mode: CheckMode) -> Vec<Di
                         continue;
                     };
                     out.push(bo004_diagnostic(
-                        ty, module_path, canonical_pattern, derive, forbidden, mode,
+                        ty,
+                        module_path,
+                        canonical_pattern,
+                        derive,
+                        forbidden,
+                        mode,
                     ));
                     break; // one diagnostic per type
                 }
@@ -463,7 +468,14 @@ pub fn bo005(air: &AirWorkspace, section: &BoSection, mode: CheckMode) -> Vec<Di
         else {
             continue;
         };
-        out.push(bo005_diagnostic(fact, symbol, module_path, fn_span, domain_pattern, mode));
+        out.push(bo005_diagnostic(
+            fact,
+            symbol,
+            module_path,
+            fn_span,
+            domain_pattern,
+            mode,
+        ));
     }
     out
 }

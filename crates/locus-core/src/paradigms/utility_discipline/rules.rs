@@ -233,6 +233,31 @@ fn ut003_diagnostic(
 /// Severity: Warning by default; `--agent-strict` elevates to Fatal. The
 /// rule goes silent when `generic_utility_patterns` is empty — UT003 is
 /// gated on the user explicitly opting in to the generic-naming check.
+/// Anchor a UT003 diagnostic at the file's first item, or line 1 as fallback.
+fn ut003_anchor_span(file: &locus_air::AirFile) -> locus_air::AirSpan {
+    file.items
+        .iter()
+        .map(|item| match item {
+            AirItem::Type(t) => t.span.clone(),
+            AirItem::Function(f) => f.span.clone(),
+            AirItem::Import(i) => i.span.clone(),
+            AirItem::Impl(i) => i.span.clone(),
+            AirItem::Conversion(c) => c.span.clone(),
+            AirItem::TruthAction(a) => a.span.clone(),
+            AirItem::Usage(u) => u.span.clone(),
+            AirItem::CallSite(c) => c.span.clone(),
+            AirItem::SilentDiscard(d) => d.span.clone(),
+            AirItem::PartialResultMatch(p) => p.span.clone(),
+            AirItem::MatchArm(a) => a.span.clone(),
+            AirItem::ClosureMethodCall(c) => c.span.clone(),
+            AirItem::FallbackCall(c) => c.span.clone(),
+            AirItem::RetryLoop(l) => l.span.clone(),
+            AirItem::ScrutineeLiteral(l) => l.span.clone(),
+        })
+        .next()
+        .unwrap_or_else(|| locus_air::AirSpan::new(file.path.clone(), 1, 1))
+}
+
 pub fn ut003(air: &AirWorkspace, section: &UtSection, mode: CheckMode) -> Vec<Diagnostic> {
     if section.generic_utility_patterns.is_empty() {
         return Vec::new();
@@ -257,29 +282,7 @@ pub fn ut003(air: &AirWorkspace, section: &UtSection, mode: CheckMode) -> Vec<Di
             {
                 continue;
             }
-            // Anchor at the file's first item, falling back to line 1.
-            let span = file
-                .items
-                .iter()
-                .map(|item| match item {
-                    AirItem::Type(t) => t.span.clone(),
-                    AirItem::Function(f) => f.span.clone(),
-                    AirItem::Import(i) => i.span.clone(),
-                    AirItem::Impl(i) => i.span.clone(),
-                    AirItem::Conversion(c) => c.span.clone(),
-                    AirItem::TruthAction(a) => a.span.clone(),
-                    AirItem::Usage(u) => u.span.clone(),
-                    AirItem::CallSite(c) => c.span.clone(),
-                    AirItem::SilentDiscard(d) => d.span.clone(),
-                    AirItem::PartialResultMatch(p) => p.span.clone(),
-                    AirItem::MatchArm(a) => a.span.clone(),
-                    AirItem::ClosureMethodCall(c) => c.span.clone(),
-                    AirItem::FallbackCall(c) => c.span.clone(),
-                    AirItem::RetryLoop(l) => l.span.clone(),
-                    AirItem::ScrutineeLiteral(l) => l.span.clone(),
-                })
-                .next()
-                .unwrap_or_else(|| locus_air::AirSpan::new(file.path.clone(), 1, 1));
+            let span = ut003_anchor_span(file);
             out.push(ut003_diagnostic(module_path, matched_pattern, span, mode));
         }
     }
@@ -303,9 +306,7 @@ fn ut004_diagnostic(
             action.target
         ),
         why: vec![
-            format!(
-                "module `{module_path}` matches utility_paths pattern `{utility_pattern}`"
-            ),
+            format!("module `{module_path}` matches utility_paths pattern `{utility_pattern}`"),
             format!(
                 "found `{:?}` action targeting `{}`",
                 action.action, action.target
@@ -342,6 +343,27 @@ fn ut004_diagnostic(
 /// the file actually carries Validate/Normalize actions. Specifically,
 /// the rule short-circuits when `utility_paths` is empty — same convention
 /// as UT001/UT002.
+/// Check a single truth-action for UT004 eligibility. Returns the label
+/// string when the action should fire, `None` otherwise.
+fn ut004_action_label(
+    action: &locus_air::AirTruthAction,
+    section: &UtSection,
+) -> Option<&'static str> {
+    let target_is_canonical = section
+        .canonical_construct_patterns
+        .iter()
+        .any(|p| matches_pattern(p, &action.target));
+    if !target_is_canonical {
+        return None;
+    }
+    match action.action {
+        ActionKind::Validate => Some("validation of a canonical concept"),
+        ActionKind::Normalize => Some("normalization of a canonical concept"),
+        ActionKind::Construct => Some("construction of a canonical concept"),
+        _ => None,
+    }
+}
+
 pub fn ut004(air: &AirWorkspace, section: &UtSection, mode: CheckMode) -> Vec<Diagnostic> {
     if section.utility_paths.is_empty() {
         return Vec::new();
@@ -359,32 +381,20 @@ pub fn ut004(air: &AirWorkspace, section: &UtSection, mode: CheckMode) -> Vec<Di
             else {
                 continue;
             };
-            // UT004 only fires on actions whose `target` matches one of the
-            // user's `canonical_construct_patterns` — i.e. the file is doing
-            // *concept-aware* logic, not just generic helper work. UT005
-            // fires on the broader "any Validate/Normalize" shape so it can
-            // catch validation that hasn't been canonicalized yet. The two
-            // rules deliberately don't overlap on the same action: an
-            // action either targets a known concept (UT004) or it doesn't
-            // (UT005's territory).
             for item in &file.items {
                 let AirItem::TruthAction(action) = item else {
                     continue;
                 };
-                let target_is_canonical = section
-                    .canonical_construct_patterns
-                    .iter()
-                    .any(|p| matches_pattern(p, &action.target));
-                if !target_is_canonical {
+                let Some(label) = ut004_action_label(action, section) else {
                     continue;
-                }
-                let label = match action.action {
-                    ActionKind::Validate => "validation of a canonical concept",
-                    ActionKind::Normalize => "normalization of a canonical concept",
-                    ActionKind::Construct => "construction of a canonical concept",
-                    _ => continue,
                 };
-                out.push(ut004_diagnostic(action, module_path, utility_pattern, label, mode));
+                out.push(ut004_diagnostic(
+                    action,
+                    module_path,
+                    utility_pattern,
+                    label,
+                    mode,
+                ));
             }
         }
     }
@@ -408,9 +418,7 @@ fn ut005_diagnostic(
             action.target
         ),
         why: vec![
-            format!(
-                "module `{module_path}` matches utility_paths pattern `{utility_pattern}`"
-            ),
+            format!("module `{module_path}` matches utility_paths pattern `{utility_pattern}`"),
             format!(
                 "found `{:?}` action targeting `{}`",
                 action.action, action.target
@@ -442,6 +450,29 @@ fn ut005_diagnostic(
 /// Severity: Warning by default; `--agent-strict` elevates to Fatal.
 ///
 /// Lockfile-driven silence: stays silent when `utility_paths` is empty.
+/// Check a single truth-action for UT005 eligibility. Returns the label
+/// string when the action should fire, `None` otherwise.
+fn ut005_action_label(
+    action: &locus_air::AirTruthAction,
+    section: &UtSection,
+) -> Option<&'static str> {
+    let label = match action.action {
+        ActionKind::Validate => "validation",
+        ActionKind::Normalize => "normalization",
+        _ => return None,
+    };
+    // UT004 owns the canonical-target case; UT005 covers the non-canonical residual.
+    let target_is_canonical = section
+        .canonical_construct_patterns
+        .iter()
+        .any(|p| matches_pattern(p, &action.target));
+    if target_is_canonical {
+        None
+    } else {
+        Some(label)
+    }
+}
+
 pub fn ut005(air: &AirWorkspace, section: &UtSection, mode: CheckMode) -> Vec<Diagnostic> {
     if section.utility_paths.is_empty() {
         return Vec::new();
@@ -463,25 +494,16 @@ pub fn ut005(air: &AirWorkspace, section: &UtSection, mode: CheckMode) -> Vec<Di
                 let AirItem::TruthAction(action) = item else {
                     continue;
                 };
-                let label = match action.action {
-                    ActionKind::Validate => "validation",
-                    ActionKind::Normalize => "normalization",
-                    _ => continue,
-                };
-                // UT004 owns the canonical-target case; UT005 covers the
-                // non-canonical residual so the two rules don't double-fire
-                // on the same action. If the user hasn't populated
-                // `canonical_construct_patterns`, the canonical check is
-                // vacuously false — UT005 fires on every Validate/Normalize
-                // (the broadest posture, matching the rule's intent).
-                let target_is_canonical = section
-                    .canonical_construct_patterns
-                    .iter()
-                    .any(|p| matches_pattern(p, &action.target));
-                if target_is_canonical {
+                let Some(label) = ut005_action_label(action, section) else {
                     continue;
-                }
-                out.push(ut005_diagnostic(action, module_path, utility_pattern, label, mode));
+                };
+                out.push(ut005_diagnostic(
+                    action,
+                    module_path,
+                    utility_pattern,
+                    label,
+                    mode,
+                ));
             }
         }
     }
