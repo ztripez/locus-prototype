@@ -54,6 +54,7 @@ impl RuleDefinition for Dg001Rule {
     }
 }
 
+// locus: allow OT009 — helper scoped to DG001 rule; not a canonical-type owner
 fn check_file(
     file: &locus_air::AirFile,
     module_path: &str,
