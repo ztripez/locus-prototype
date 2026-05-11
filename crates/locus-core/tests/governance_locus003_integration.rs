@@ -62,10 +62,7 @@ fn registered_rule_dg001_does_not_produce_locus003() {
         .iter()
         .filter(|d| d.rule_id == "DG001")
         .collect();
-    assert!(
-        !dg001.is_empty(),
-        "DG001 diagnostic must still be present"
-    );
+    assert!(!dg001.is_empty(), "DG001 diagnostic must still be present");
 }
 
 #[test]
@@ -158,8 +155,15 @@ fn locus003_deduplicates_by_rule_code() {
     let out = governance::run(&air, &lf, CheckMode::Human);
 
     // DG002 fires twice (one per edge in the cycle)
-    let dg002_count = out.diagnostics.iter().filter(|d| d.rule_id == "DG002").count();
-    assert!(dg002_count >= 2, "expected ≥2 DG002 diagnostics; got {dg002_count}");
+    let dg002_count = out
+        .diagnostics
+        .iter()
+        .filter(|d| d.rule_id == "DG002")
+        .count();
+    assert!(
+        dg002_count >= 2,
+        "expected ≥2 DG002 diagnostics; got {dg002_count}"
+    );
 
     // But LOCUS003 for DG002 appears exactly once
     let locus003_for_dg002 = out
@@ -168,8 +172,7 @@ fn locus003_deduplicates_by_rule_code() {
         .filter(|d| d.rule_id == "LOCUS003" && d.message.contains("DG002"))
         .count();
     assert_eq!(
-        locus003_for_dg002,
-        1,
+        locus003_for_dg002, 1,
         "DG002 should produce exactly one LOCUS003 regardless of instance count; got {locus003_for_dg002}"
     );
 }

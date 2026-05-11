@@ -351,9 +351,13 @@ mod tests {
     fn registry_integrity_policy_is_before_pass_through() {
         let reg = PolicyRegistry::standard();
         let ids: Vec<&str> = reg.iter().map(|p| p.id().as_str()).collect();
-        let ri_pos = ids.iter().position(|&id| id == "registry-integrity")
+        let ri_pos = ids
+            .iter()
+            .position(|&id| id == "registry-integrity")
             .expect("RegistryIntegrityPolicy must be in PolicyRegistry::standard()");
-        let pt_pos = ids.iter().position(|&id| id == "default-pass-through")
+        let pt_pos = ids
+            .iter()
+            .position(|&id| id == "default-pass-through")
             .expect("DefaultPassThroughPolicy must be in PolicyRegistry::standard()");
         assert!(
             ri_pos < pt_pos,

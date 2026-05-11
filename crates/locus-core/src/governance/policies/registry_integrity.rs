@@ -227,8 +227,7 @@ mod tests {
         assert_eq!(d.status, DecisionStatus::KnownTransitionDebt);
         assert_eq!(d.severity, Severity::Advisory);
         assert_eq!(
-            d.finding_id,
-            out.new_findings[0].id,
+            d.finding_id, out.new_findings[0].id,
             "decision must target the emitted LOCUS003 finding"
         );
     }
