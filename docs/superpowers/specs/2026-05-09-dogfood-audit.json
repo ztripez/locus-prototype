@@ -24,7 +24,7 @@
   ],
   "totals": {
     "active_fatals": 0,
-    "active_warnings": 143,
+    "active_warnings": 103,
     "accepted_debt_entries": 16,
     "accepted_debt_entries_definition": "lockfile.exceptions (14) + paradigms.MO.overrides (2); each entry carries expires + reason; MO overrides carry full debt metadata",
     "policy_suppressions": 148,
@@ -32,10 +32,14 @@
     "policy_suppressions_no_debt_metadata": 13,
     "policy_suppressions_no_debt_metadata_definition": "subset of policy_suppressions whose responsible lockfile field has no debt-metadata schema today: 12 acknowledged_empty + 1 CX.exempt_paths-covered hit; tracked in follow-up issues #49 and #48",
     "severity_tier_demotions": 133,
-    "remaining_warning_debt": 143,
-    "remaining_warning_debt_definition": "current after_warning total at target (113 CX001 + 30 CX002); equals sum of per-rule after_warning fields",
+    "remaining_warning_debt": 103,
+    "remaining_warning_debt_definition": "current after_warning total post-refactor sweep (64 CX001 + 39 CX002); down from 143 at audit time (113 CX001 + 30 CX002); equals sum of per-rule after_warning fields",
     "post_baseline_drift": 10,
-    "post_baseline_drift_definition": "warnings appearing at target that did not exist at pre_36 baseline (+7 CX001, +3 CX002 from source code added on main after PR #39 merge)"
+    "post_baseline_drift_definition": "warnings appearing at audit target that did not exist at pre_36 baseline (+7 CX001, +3 CX002 from source code added on main after PR #39 merge); this is the audit-time fact, preserved unchanged",
+    "post_audit_refactor_delta": -40,
+    "post_audit_refactor_delta_definition": "change in total warnings between audit time (143: 113 CX001 + 30 CX002) and post-refactor (103: 64 CX001 + 39 CX002) = -40; matches the per-rule post_audit_refactor_delta sum (CX001 -49 + CX002 +9); no module_overrides, no budget raises, no source hints introduced",
+    "net_delta_vs_pre_36": -30,
+    "net_delta_vs_pre_36_definition": "current warnings (103) vs pre_36 baseline (133: 106 CX001 + 27 CX002) = -30; reverses the +10 post_baseline_drift accumulated by source growth between PR #39 and the audit target ref"
   },
   "rules": [
     {
@@ -43,8 +47,9 @@
       "description": "per-function line budget (default 50)",
       "before_diagnostics": 106,
       "after_fatal": 0,
-      "after_warning": 113,
+      "after_warning": 64,
       "post_baseline_drift": 7,
+      "post_audit_refactor_delta": -49,
       "resolved_by_code": 0,
       "resolved_by_deletion": 0,
       "resolved_by_symbol_move": 0,
@@ -61,7 +66,7 @@
       "proposed_but_not_landed": 0,
       "unknown": 0,
       "verdict": "not_remediated_remaining_warning_debt",
-      "notes": "PR #36 demoted CX001 from strict-immediate Fatal to Advisory. All 106 pre-baseline hits remain as warnings. Source drift added 7 more hits between pre_36 and target (106 → 113), leaving 113 active warnings at target.",
+      "notes": "PR #36 demoted CX001 from strict-immediate Fatal to Advisory. All 106 pre-baseline hits remain as warnings. Source drift added 7 more hits between pre_36 and audit target (106 → 113), leaving 113 active warnings at audit time. Umbrella #51 refactor sweep (PRs #56, #64, #65, #66, #70) reduced CX001 from 113 → 64 via real code splits across visitor, paradigm rules, and CLI handlers — no budget raises, no module_overrides, no source hints. post_audit_refactor_delta: -49.",
       "responsible_policy": [
         {
           "field": "rule_severity_tier",
@@ -77,8 +82,9 @@
       "description": "per-module line budget (default 400)",
       "before_diagnostics": 27,
       "after_fatal": 0,
-      "after_warning": 30,
+      "after_warning": 39,
       "post_baseline_drift": 3,
+      "post_audit_refactor_delta": 9,
       "resolved_by_code": 0,
       "resolved_by_deletion": 0,
       "resolved_by_symbol_move": 0,
@@ -95,7 +101,7 @@
       "proposed_but_not_landed": 0,
       "unknown": 0,
       "verdict": "not_remediated_remaining_warning_debt",
-      "notes": "PR #36 demoted CX002 from strict-immediate Fatal to Advisory. All 27 pre-baseline hits remain as warnings. Source drift added 3 more hits between pre_36 and target (27 → 30), leaving 30 active warnings at target.",
+      "notes": "PR #36 demoted CX002 from strict-immediate Fatal to Advisory. All 27 pre-baseline hits remain as warnings. Source drift added 3 more hits between pre_36 and audit target (27 → 30), leaving 30 active warnings at audit time. PR #57's test extraction (splitting inline mod tests into rules_tests.rs files) introduced 9 new CX002 hits as new files exceeded 400-line budget — accepted advisory debt per the audit's prior framing. post_audit_refactor_delta: +9. Current count: 39.",
       "responsible_policy": [
         {
           "field": "rule_severity_tier",

@@ -6,16 +6,16 @@
 
 ---
 
-## Honest project status (snapshot 2026-05-09)
+## Honest project status (snapshot 2026-05-09, updated 2026-05-11)
 
 - **Active fatals (under `--agent-strict`):** 0
-- **Remaining warning debt:** 143 (113 CX001 + 30 CX002, all advisory tier; not blocking)
+- **Remaining warning debt:** 103 (64 CX001 + 39 CX002, all advisory tier; not blocking). Down from 143 at audit time after umbrella #51's refactor-first sweep.
 - **Accepted debt (with metadata):** 16 entries — 14 lockfile exceptions + 2 MO overrides; all carry `expires` + `reason`
 - **Policy suppressions (no debt metadata):** 13 — `acknowledged_empty` ×12 silencing LOCUS002 + `CX.exempt_paths` ×1 covering CX007. Tracked as schema gaps in follow-up issues.
-- **Severity-tier demotions:** 133 — CX001 ×106 + CX002 ×27 demoted by PR #36; blocking status disappeared but diagnostics remained as warnings
-- **Post-baseline drift:** +10 — 7 new CX001 + 3 new CX002 hits added between PR #39 merge and current main, from source code growth on main
+- **Severity-tier demotions:** 133 — CX001 ×106 + CX002 ×27 demoted by PR #36; blocking status disappeared but diagnostics remained as warnings (unchanged historical fact)
+- **Post-audit refactor delta:** CX001 dropped 49 hits (113 → 64) via real code splits; CX002 rose 9 hits (30 → 39) from PR #57's test extraction producing new `rules_tests.rs` files. Net post-refactor change: -40. Net delta vs pre_36 baseline: -30 (refactor sweep reversed earlier source-drift accumulation).
 
-The "exit 0 under strict" claim is structurally honest: zero Fatal under current policy. It is *not* a "zero diagnostics" claim — 143 warnings remain visible. Policy Guard (PR #46) prevents future widening.
+The "exit 0 under strict" claim is structurally honest: zero Fatal under current policy. It is *not* a "zero diagnostics" claim — 103 warnings remain visible. Policy Guard (PR #46) prevents future widening.
 
 ---
 
@@ -63,17 +63,17 @@ Mitigations:
 
 Generated from [`2026-05-09-dogfood-audit.json`](2026-05-09-dogfood-audit.json). `Before diagnostics` counts all diagnostics at `pre_36` regardless of severity tier (fatals, warnings, advisories — the JSON formerly called this `before_fatal`, which leaked the same severity assumption the audit critiques; renamed). `After fatal` and `After warning` are measured at `target`. The `Primary class` column is the largest non-zero disposition bucket per rule.
 
-| Rule | Before diagnostics | After fatal | After warning | Primary class | Verdict |
-|---|---:|---:|---:|---|---|
-| CX001 | 106 | 0 | 113 | `suppressed_by_severity_tier` | not_remediated_remaining_warning_debt |
-| CX002 | 27 | 0 | 30 | `suppressed_by_severity_tier` | not_remediated_remaining_warning_debt |
-| CX007 | 1 | 0 | 0 | `suppressed_by_exempt_paths` | suppressed_no_debt_metadata |
-| ER007 | 11 | 0 | 0 | `accepted_by_exception` | accepted_with_expires_and_reason |
-| DC002 | 3 | 0 | 0 | `accepted_by_exception` | accepted_with_expires_and_reason |
-| MO001 | 2 | 0 | 0 | `suppressed_by_override` | suppressed_with_full_debt_metadata |
-| LOCUS002 | 13 | 0 | 0 | `suppressed_by_acknowledged_empty` | suppressed_no_debt_metadata |
-| OT009 | 0 | 0 | 0 | `—` | pre_emptive_exception |
-| OT_CANONICALS | 0 | 0 | 0 | `—` | resolved_by_code_source_hints_predated_audit_window |
+| Rule | Before diagnostics | After fatal | After warning | Post-audit refactor delta | Primary class | Verdict |
+|---|---:|---:|---:|---:|---|---|
+| CX001 | 106 | 0 | 64 | -49 | `suppressed_by_severity_tier` | not_remediated_remaining_warning_debt |
+| CX002 | 27 | 0 | 39 | +9 | `suppressed_by_severity_tier` | not_remediated_remaining_warning_debt |
+| CX007 | 1 | 0 | 0 | 0 | `suppressed_by_exempt_paths` | suppressed_no_debt_metadata |
+| ER007 | 11 | 0 | 0 | 0 | `accepted_by_exception` | accepted_with_expires_and_reason |
+| DC002 | 3 | 0 | 0 | 0 | `accepted_by_exception` | accepted_with_expires_and_reason |
+| MO001 | 2 | 0 | 0 | 0 | `suppressed_by_override` | suppressed_with_full_debt_metadata |
+| LOCUS002 | 13 | 0 | 0 | 0 | `suppressed_by_acknowledged_empty` | suppressed_no_debt_metadata |
+| OT009 | 0 | 0 | 0 | — | `—` | pre_emptive_exception |
+| OT_CANONICALS | 0 | 0 | 0 | — | `—` | resolved_by_code_source_hints_predated_audit_window |
 
 **OT_CANONICALS** is not a rule; it is an aggregate entry for the 47 OT canonical type declarations persisted to `locus.lock` by PR #39. Authority was present in source hints before the audited PR window; no OT001/OT002 diagnostics fired at `pre_36`.
 
@@ -98,7 +98,7 @@ PR #36 changed the severity tier for CX001 and CX002 from strict-immediate Fatal
 
 **Verdict:** `blocking_status_changed_diagnostics_remained`. What "exit 0 under strict" actually meant at `post_36`: the rules were demoted, not the code fixed. The "0 fatals" claim is accurate for the severity tier that PR #36 established; it is not a remediation claim.
 
-**Post-baseline drift note:** Source code growth on main added 7 more CX001 hits and 3 more CX002 hits between the `post_39` lockfile commit and the `target` ref, so the `after_warning` counts in the top-level table (113 CX001 + 30 CX002) exceed the `post_36` post-demotion counts (106 + 27).
+**Post-baseline drift note:** Source code growth on main added 7 more CX001 hits and 3 more CX002 hits between the `post_39` lockfile commit and the audit `target` ref, so the audit-time `after_warning` counts (113 CX001 + 30 CX002) exceeded the `post_36` post-demotion counts (106 + 27). After the umbrella #51 refactor sweep (see "Post-audit refactor sweep" section below), CX001 dropped from 113 → 64 and CX002 rose from 30 → 39, for a net delta of -30 vs the pre_36 baseline.
 
 ---
 
@@ -221,6 +221,31 @@ PG006 (Policy Guard) requires debt metadata on new MO overrides — confirming t
 
 - **Split `locus_rust::visitor::scan_expr` per AST variant** (~298 lines). The single largest CX001 contributor and the structural reason PR #42 proposed a per-file budget override on the visitor module. → tracked as follow-up issue #52.
 - **Per-rule splits in `failure_lineage::rules` and `one_truth::rules`** — the two largest paradigm rule files. Splitting per-rule would let CX002 fire honestly without per-file overrides. → tracked as follow-up issue #53.
+
+---
+
+## Post-audit refactor sweep (umbrella #51)
+
+After the audit was published (PR #54, 2026-05-09), umbrella issue #51 drove a refactor-first response to the CX001 warning debt. The policy stance was explicit: **no `default_max_function_lines` raise; no `module_overrides` except temporary + metadata-backed + unavoidable; CX001 stands at 50 as designed.** PR #42's budget-raise approach was rejected permanently.
+
+Sub-issues landed:
+
+- **#59 / PR #64** — split `emit_fn` and `emit_impl` in `locus_rust::visitor` per AST variant.
+- **#60 / PR #70** — split >50-line paradigm rule functions; 21 paradigms refactored; CX001 in paradigm files dropped from 60 to 36 (target <40 met).
+- **#61 / PR #65** — split CLI command handlers; 5 functions split; CX001 in `locus_cli` dropped from 5 to 0.
+- **#52 / PR #56** — split `scan_expr` per AST variant (already in Wave 1).
+- **#53 / PR #66** — per-rule splits in FL/OT (already in Wave 2).
+
+Out-of-scope follow-ups deferred (not blockers for closing #51):
+
+- **#67 / PR #68** — MO005 (entrypoint declaration ownership) landed as an architectural reinforcement alongside the CLI split.
+- **#69** — lib.rs entrypoint handling for MO005 (separate design pass).
+- **PR #77** — DG003 lockfile fix for `AcknowledgedEmpty` re-export (one-line public_api addition).
+- **#62** — this audit doc update (Wave 4).
+
+**Result:** CX001 dropped from 113 (audit time) → 64 (current). CX002 rose from 30 → 39 due to PR #57's test extraction producing new `rules_tests.rs` files (accepted advisory debt per the audit's prior framing). No `module_overrides`, no `default_max_function_lines` raise, no `// locus: allow CX001` source hints introduced anywhere in the sweep.
+
+Refactor-first policy worked. CX001 dropped 49 hits via real code changes; CX002 grew 9 hits from the test-extraction structural effect; net warning debt down from 143 to 103. The remaining 64 CX001 + 39 CX002 = 103 stay as accepted advisory debt under the same dogfood-honest framing.
 
 ---
 
