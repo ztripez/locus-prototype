@@ -13,6 +13,7 @@ pub mod loaders;
 pub mod lockfile;
 pub mod paradigms;
 pub mod policy_guard;
+pub mod governance;
 
 pub use diagnostics::{
     CheckMode, Diagnostic, Severity, VACANT_PARADIGM_RULE, vacant_paradigm_diagnostic,
