@@ -411,21 +411,6 @@ pub fn mo004(air: &AirWorkspace, section: &MoSection, mode: CheckMode) -> Vec<Di
     out
 }
 
-/// Entrypoint-module names that MO005 applies to.
-///
-/// A file's `module_path` last segment is compared against this set.
-/// - `main` covers `src/main.rs` (Rust binary-crate convention).
-/// - `mod` covers `<dir>/mod.rs` (directory sub-module root).
-///
-/// `lib` (`src/lib.rs`) is intentionally out of scope for this first pass.
-/// lib.rs covers multiple distinct architectural shapes — thin re-export
-/// surface, canonical-data crate surface (e.g. `locus-air` where every
-/// `AirItem`/`AirType`/etc. is intentional public API), composition root,
-/// and accidental god module — that require their own design pass before
-/// MO005 can apply meaningfully. See follow-up issue for lib.rs entrypoint
-/// handling.
-const ENTRYPOINT_SUFFIXES: &[&str] = &["main", "mod"];
-
 /// Line-count budget for "thin" functions that MO005 permits in entrypoint
 /// modules. A `main`, `run`, or `init` function up to this many lines is
 /// accepted as composition glue. A function exceeding this limit is
@@ -446,15 +431,32 @@ pub const MO005_THIN_FN_MAX_LINES: u32 = 25;
 /// `setup` / `start` appear in test harnesses and integration crates.
 const ENTRYPOINT_FN_NAMES: &[&str] = &["main", "run", "init", "setup", "start"];
 
+/// Identifies whether an entrypoint module is a binary root (`main.rs`) or a
+/// directory module root (`mod.rs`).
+///
+/// The distinction matters for the composition-host exception in MO005: the
+/// exception applies only to `mod.rs` files (directory module roots), where
+/// a unit struct + thin `impl Paradigm` is the deliberate architectural
+/// convention. `main.rs` (binary entrypoints) must have zero impl blocks
+/// regardless of trait, target, or method size.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum EntrypointKind {
+    /// Binary-crate entrypoint (`main.rs` or module path ending in `::main`).
+    Main,
+    /// Directory-module root (`mod.rs` or module path ending in `::mod`).
+    Mod,
+}
+
 /// Check whether a file is an entrypoint module based on its module path
-/// and file path.
+/// and file path, and return the `EntrypointKind` when it is.
+///
+/// Returns `None` when the file is not an entrypoint module.
 ///
 /// Detection uses two complementary signals:
 ///
 /// 1. **Module-path suffix** — the last segment of `module_path` is compared
-///    against `ENTRYPOINT_SUFFIXES`. Catches `my_crate::commands::mod` and
-///    `my_crate::other_main` as entrypoints because they explicitly use the
-///    canonical names.
+///    against `ENTRYPOINT_SUFFIXES`. Catches `my_crate::commands::mod` as a
+///    directory-module entrypoint and `my_crate::main` as a binary entrypoint.
 ///
 /// 2. **File-path basename** — the file's OS path (when provided) is also
 ///    checked. This catches the common case in Rust where binary-crate
@@ -463,22 +465,30 @@ const ENTRYPOINT_FN_NAMES: &[&str] = &["main", "run", "init", "setup", "start"];
 ///    files inside subdirectories have module paths like `pkg::commands`,
 ///    not `pkg::commands::mod`.
 ///
-/// Both checks use the same `ENTRYPOINT_SUFFIXES` set so the semantics
+/// Both checks use the same two-value set (`main`, `mod`) so the semantics
 /// are symmetric — either the logical name or the filesystem name can
-/// trigger the rule. Note: `lib.rs` is excluded from `ENTRYPOINT_SUFFIXES`
-/// in this first pass; see the constant's doc comment for rationale.
-fn is_entrypoint_module_by_path(module_path: &str, file_path: &str) -> bool {
+/// trigger the rule. Note: `lib.rs` is excluded in this first pass; see
+/// `MO005` doc comment for rationale.
+fn entrypoint_kind(module_path: &str, file_path: &str) -> Option<EntrypointKind> {
     // Check 1: last module_path segment.
     let last_segment = module_path.rsplit("::").next().unwrap_or(module_path);
-    if ENTRYPOINT_SUFFIXES.contains(&last_segment) {
-        return true;
+    if let Some(kind) = segment_to_entrypoint_kind(last_segment) {
+        return Some(kind);
     }
     // Check 2: file basename stem (e.g. "main" from ".../src/main.rs").
     let stem = std::path::Path::new(file_path)
         .file_stem()
         .and_then(|s| s.to_str())
         .unwrap_or("");
-    ENTRYPOINT_SUFFIXES.contains(&stem)
+    segment_to_entrypoint_kind(stem)
+}
+
+fn segment_to_entrypoint_kind(segment: &str) -> Option<EntrypointKind> {
+    match segment {
+        "main" => Some(EntrypointKind::Main),
+        "mod" => Some(EntrypointKind::Mod),
+        _ => None,
+    }
 }
 
 /// Total impl-block line budget for the composition-host exception in
@@ -582,16 +592,27 @@ fn is_composition_host_struct(type_item: &locus_air::AirType, same_file_items: &
 /// needed to evaluate the composition-host exception (the host struct and its
 /// `impl Paradigm` are validated in terms of each other).
 ///
+/// `kind` identifies whether the entrypoint is `main.rs` or `mod.rs`. The
+/// composition-host exception (unit struct + thin `impl Paradigm`) is only
+/// valid in `mod.rs` files — `main.rs` is the binary entrypoint and must have
+/// zero impl blocks regardless of trait, target, or method size.
+///
 /// Returns `None` when the item is permitted; returns `Some(reason)` when
 /// it is a forbidden declaration that MO005 should flag.
-fn mo005_classify_item(item: &AirItem, same_file_items: &[AirItem]) -> Option<String> {
+fn mo005_classify_item(
+    item: &AirItem,
+    same_file_items: &[AirItem],
+    kind: EntrypointKind,
+) -> Option<String> {
     match item {
         AirItem::Type(t) => {
-            // Allow the unit struct that is the host for a composition-host impl.
-            if is_composition_host_struct(t, same_file_items) {
+            // The composition-host exception (unit struct paired with thin
+            // impl Paradigm) applies only in mod.rs files — it is a
+            // directory-module convention, not a binary-entrypoint convention.
+            if kind == EntrypointKind::Mod && is_composition_host_struct(t, same_file_items) {
                 return None;
             }
-            let kind = match t.kind {
+            let kind_str = match t.kind {
                 locus_air::TypeKind::Struct => "struct",
                 locus_air::TypeKind::Enum => "enum",
                 locus_air::TypeKind::Trait => "trait",
@@ -599,14 +620,16 @@ fn mo005_classify_item(item: &AirItem, same_file_items: &[AirItem]) -> Option<St
                 locus_air::TypeKind::Union => "union",
             };
             Some(format!(
-                "{kind} `{}` declared in entrypoint module — move to a sibling module",
+                "{kind_str} `{}` declared in entrypoint module — move to a sibling module",
                 t.name
             ))
         }
         AirItem::Impl(i) => {
             // Allow the composition-host impl: `impl Paradigm for LocalUnitStruct`
             // in a mod.rs, where all methods are thin (impl block ≤120 lines).
-            if is_composition_host_impl(i, same_file_items) {
+            // This exception does NOT apply to main.rs — the binary entrypoint
+            // must have zero impl blocks.
+            if kind == EntrypointKind::Mod && is_composition_host_impl(i, same_file_items) {
                 return None;
             }
             let target = &i.target_type;
@@ -702,9 +725,9 @@ pub fn mo005(air: &AirWorkspace, mode: CheckMode) -> Vec<Diagnostic> {
             let Some(module_path) = file.module_path.as_deref() else {
                 continue;
             };
-            if !is_entrypoint_module_by_path(module_path, &file.path) {
+            let Some(ep_kind) = entrypoint_kind(module_path, &file.path) else {
                 continue;
-            }
+            };
             // Compute a human-readable entrypoint label for the diagnostic.
             // Prefer the file basename (e.g. "main.rs") so the message
             // remains clear even when the module_path is flat (crate root).
@@ -713,7 +736,7 @@ pub fn mo005(air: &AirWorkspace, mode: CheckMode) -> Vec<Diagnostic> {
                 .and_then(|s| s.to_str())
                 .unwrap_or(&file.path);
             for item in &file.items {
-                if let Some(reason) = mo005_classify_item(item, &file.items) {
+                if let Some(reason) = mo005_classify_item(item, &file.items, ep_kind) {
                     let span = match item {
                         AirItem::Type(t) => t.span.clone(),
                         AirItem::Function(f) => f.span.clone(),

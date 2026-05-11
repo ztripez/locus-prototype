@@ -1125,6 +1125,28 @@ fn inherent_impl(target: &str) -> AirItem {
     })
 }
 
+/// Build a workspace with a `main.rs` file at the given module path containing
+/// the supplied items.
+fn main_rs_air(module_path: &str, items: Vec<AirItem>) -> AirWorkspace {
+    AirWorkspace {
+        schema_version: AIR_SCHEMA_VERSION,
+        packages: vec![AirPackage {
+            name: "x".into(),
+            version: "0".into(),
+            root_dir: "/".into(),
+            files: vec![AirFile {
+                path: "src/main.rs".into(),
+                module_path: Some(module_path.to_string()),
+                items,
+                hints: Vec::new(),
+                parse_error: None,
+                line_count: 200,
+            }],
+        }],
+        facts: Vec::new(),
+    }
+}
+
 /// Build a workspace with a `mod.rs` file at the given module path containing
 /// the supplied items.
 fn mod_rs_air(module_path: &str, items: Vec<AirItem>) -> AirWorkspace {
@@ -1271,5 +1293,33 @@ fn mo005_arbitrary_impl_in_mod_rs_still_fires() {
     assert!(
         diags.iter().any(|d| d.message.contains("impl block")),
         "expected impl-block diagnostic; got {diags:?}"
+    );
+}
+
+#[test]
+fn mo005_composition_host_pattern_in_main_rs_still_fires() {
+    // pub struct Foo; + impl Paradigm for Foo (thin) in main.rs — NOT mod.rs.
+    // The composition-host exception is a mod.rs-only convention: main.rs is
+    // the binary entrypoint and must have zero impl blocks regardless of
+    // trait, target, or method size. MO005 must fire on both the struct and
+    // the impl.
+    let items = vec![
+        unit_struct_item("MyParadigm"),
+        paradigm_impl_thin("MyParadigm"),
+    ];
+    let air = main_rs_air("my_crate::main", items);
+    let diags = mo005(&air, CheckMode::Human);
+    assert!(
+        !diags.is_empty(),
+        "composition-host pattern in main.rs must fire MO005 — \
+         the exception is mod.rs-only; got {diags:?}"
+    );
+    assert!(
+        diags.iter().any(|d| d.message.contains("struct")),
+        "expected struct diagnostic for unit struct in main.rs; got {diags:?}"
+    );
+    assert!(
+        diags.iter().any(|d| d.message.contains("impl block")),
+        "expected impl-block diagnostic for impl Paradigm in main.rs; got {diags:?}"
     );
 }
