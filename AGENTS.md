@@ -76,6 +76,8 @@ Two-layer separation, strictly enforced:
 
 If you reach for `syn`/`cargo_metadata` from `locus-core`, stop — that belongs in the language adapter. If you add paradigm-specific reasoning to `locus-rust`, stop — that belongs in a paradigm module.
 
+**Governance spine (epic #71) — strangler in progress.** `crates/locus-core/src/governance/` hosts the new `rules → findings → policies → decisions → diagnostics` pipeline. `Paradigm::check` is **transitional**: new rules must implement `RuleDefinition` and register in `RuleRegistry::standard()` and the corresponding `ParadigmDefinition::rules()` slice. The legacy adapter wraps any diagnostic whose `rule_id` is not in the rule registry, so output stays byte-identical until a policy explicitly says otherwise. Spec: `docs/superpowers/specs/2026-05-11-governance-spine-design.md`; P1 plan: `docs/superpowers/plans/2026-05-11-governance-spine-p1.md`.
+
 ## Self-application (dogfooding)
 
 Locus must be able to scan its own source. Annotate types at creation time, not retroactively:
