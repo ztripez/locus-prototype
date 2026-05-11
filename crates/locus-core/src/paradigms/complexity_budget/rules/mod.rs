@@ -21,6 +21,8 @@ use super::lockfile_schema::{CxSection, matches_pattern};
 use crate::diagnostics::{CheckMode, Diagnostic, Severity};
 use locus_air::AirSpan;
 
+pub mod cx001;
+
 fn cx001_why(
     func_symbol: &str,
     func_line_count: u32,
