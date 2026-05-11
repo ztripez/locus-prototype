@@ -16,6 +16,7 @@ pub mod decision;
 pub mod finding;
 pub mod ids;
 pub mod paradigm;
+mod paradigm_impls;
 pub mod policy;
 pub mod registry;
 pub mod rule;

@@ -213,9 +213,8 @@ pub fn validate_decisions(
     Ok(())
 }
 
-/// Filled in Task 10 — wires legacy paradigms as ParadigmDefinitions.
 fn standard_paradigms() -> Vec<&'static dyn ParadigmDefinition> {
-    Vec::new()
+    crate::governance::paradigm_impls::ALL_PARADIGM_DEFS.to_vec()
 }
 
 /// Filled in Task 12 — wires DefaultPassThroughPolicy.
@@ -309,6 +308,30 @@ mod tests {
             result,
             Err(RegistryError::DuplicateDecision { .. })
         ));
+    }
+
+    #[test]
+    fn standard_paradigm_registry_has_every_legacy_paradigm() {
+        let std_reg = ParadigmRegistry::standard();
+        let legacy = crate::paradigms::registry();
+        let std_ids: std::collections::HashSet<&str> =
+            std_reg.iter().map(|p| p.id().as_str()).collect();
+        for lp in &legacy {
+            assert!(
+                std_ids.contains(lp.rule_prefix()),
+                "ParadigmDefinition missing for legacy paradigm prefix {}",
+                lp.rule_prefix()
+            );
+        }
+        let legacy_ids: std::collections::HashSet<&str> =
+            legacy.iter().map(|p| p.rule_prefix()).collect();
+        for sp in std_reg.iter() {
+            assert!(
+                legacy_ids.contains(sp.id().as_str()),
+                "ParadigmDefinition {} has no matching legacy Paradigm",
+                sp.id().as_str()
+            );
+        }
     }
 
     fn test_finding(id: FindingId) -> RuleFinding {
