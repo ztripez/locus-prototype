@@ -7,10 +7,17 @@
 
 // locus: ot canonical
 
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+// Static-only IDs: `&'static str` storage with `const fn new` so static
+// registries work. `Serialize` is derived (we emit IDs as strings in
+// JSON/SARIF); `Deserialize` is intentionally NOT derived — IDs are only
+// constructed from string literals at compile time. Re-add when a future
+// epic needs to round-trip findings through serialized form (would
+// switch the storage to `Cow<'static, str>` and lose `Copy`).
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
 pub struct RuleId(&'static str);
 
 impl RuleId {
@@ -22,7 +29,7 @@ impl RuleId {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
 pub struct ParadigmId(&'static str);
 
 impl ParadigmId {
@@ -34,7 +41,7 @@ impl ParadigmId {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
 pub struct PolicyId(&'static str);
 
 impl PolicyId {
@@ -46,7 +53,7 @@ impl PolicyId {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, serde::Deserialize)]
 pub struct FindingId(u64);
 
 impl FindingId {
