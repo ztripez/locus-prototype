@@ -50,8 +50,11 @@ impl Paradigm for ComplexityBudget {
     fn check(&self, air: &AirWorkspace, lockfile: &Lockfile, mode: CheckMode) -> Vec<Diagnostic> {
         let section: lockfile_schema::CxSection =
             lockfile.paradigm_section(CX_PREFIX).unwrap_or_default();
-        let mut diags = rules::cx001(air, &section, mode);
-        diags.extend(rules::cx002(air, &section, mode));
+        // CX001 migrated to RuleDefinition (#71 P2). The governance
+        // pipeline runs it via Cx001Rule::observe; the legacy adapter's
+        // per-rule-code filter drops any CX001 diagnostic that would be
+        // emitted here, but we don't even compute it.
+        let mut diags = rules::cx002(air, &section, mode);
         diags.extend(rules::cx007(air, &section, mode));
         diags.extend(rules::cx008(air, &section, mode));
         diags
