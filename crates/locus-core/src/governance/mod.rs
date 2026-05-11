@@ -15,6 +15,7 @@
 pub mod decision;
 pub mod finding;
 pub mod ids;
+pub mod paradigm;
 pub mod registry;
 pub mod rule;
 
@@ -23,4 +24,5 @@ pub use finding::{
     Confidence, Evidence, FindingSource, FindingStore, LegacyEvidence, RuleFinding,
 };
 pub use ids::{FindingId, FindingIdMinter, ParadigmId, PolicyId, RuleId};
+pub use paradigm::ParadigmDefinition;
 pub use rule::{RuleContext, RuleDefinition};
