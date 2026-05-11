@@ -37,10 +37,7 @@ impl RuleDefinition for Ot002Rule {
     }
     fn observe(&self, ctx: &RuleContext<'_>) -> Vec<RuleFinding> {
         use super::super::lockfile_schema::OtSection;
-        let section: OtSection = ctx
-            .lockfile
-            .paradigm_section("OT")
-            .unwrap_or_default();
+        let section: OtSection = ctx.lockfile.paradigm_section("OT").unwrap_or_default();
         let clusters = super::super::infer::cluster_concepts_with_lockfile(ctx.air, &section);
         produce_findings_from_clusters(&clusters, ctx.mode, ctx.finding_ids)
     }
@@ -70,7 +67,13 @@ pub(crate) fn produce_findings_from_clusters(
             if member.field_overlap < FIELD_OVERLAP_THRESHOLD {
                 continue;
             }
-            out.push(make_finding_inner(cluster, canonical, member, mode, finding_ids));
+            out.push(make_finding_inner(
+                cluster,
+                canonical,
+                member,
+                mode,
+                finding_ids,
+            ));
         }
     }
     out

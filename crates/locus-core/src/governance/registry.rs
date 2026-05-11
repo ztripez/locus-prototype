@@ -350,7 +350,8 @@ mod tests {
         // rule's id starts with its paradigm prefix. Future migrations
         // (OT002, DG001, …) must keep this passing.
         let reg = RuleRegistry::standard();
-        reg.validate().expect("RuleRegistry::standard() must validate");
+        reg.validate()
+            .expect("RuleRegistry::standard() must validate");
     }
 
     #[test]

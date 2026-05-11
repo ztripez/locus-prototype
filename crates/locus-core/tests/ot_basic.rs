@@ -58,7 +58,11 @@ fn agent_strict_makes_ot002_fatal() {
     let air = locus_rust::scan(&fixture_path()).expect("scan succeeds");
     let lockfile = Lockfile::empty();
     let out = governance::run(&air, &lockfile, CheckMode::AgentStrict);
-    let ot002: Vec<_> = out.diagnostics.iter().filter(|d| d.rule_id == "OT002").collect();
+    let ot002: Vec<_> = out
+        .diagnostics
+        .iter()
+        .filter(|d| d.rule_id == "OT002")
+        .collect();
     assert_eq!(ot002.len(), 1);
     assert_eq!(ot002[0].severity, Severity::Fatal);
 }
@@ -112,7 +116,11 @@ fn check_against_populated_lockfile_still_flags_user_model() {
     }
 
     let out = governance::run(&air, &lockfile, CheckMode::Human);
-    let ot002: Vec<_> = out.diagnostics.iter().filter(|d| d.rule_id == "OT002").collect();
+    let ot002: Vec<_> = out
+        .diagnostics
+        .iter()
+        .filter(|d| d.rule_id == "OT002")
+        .collect();
     assert_eq!(ot002.len(), 1, "expected exactly one OT002 (UserModel)");
     assert!(ot002[0].message.contains("UserModel"));
 }
