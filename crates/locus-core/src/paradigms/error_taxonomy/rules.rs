@@ -21,31 +21,58 @@
 //! ER005 is lockfile-driven via [`ErSection::error_collapse_owner_paths`];
 //! silent until populated. ER007 is heuristic and lockfile-free.
 
-use locus_air::{AirItem, AirMatchArm, AirWorkspace, ArmBodyShape, Visibility};
+use locus_air::{AirItem, AirMatchArm, AirVariant, AirWorkspace, ArmBodyShape, Visibility};
 
 use super::lockfile_schema::{ErSection, matches_pattern};
 use crate::diagnostics::{CheckMode, Diagnostic, Severity};
 
+fn er001_diagnostic(
+    extra: &locus_air::AirType,
+    file_path: &str,
+    incumbent_name: &str,
+    all_names: &[String],
+    mode: CheckMode,
+) -> Diagnostic {
+    Diagnostic {
+        rule_id: "ER001".to_string(),
+        severity: mode.elevate(Severity::Warning),
+        span: extra.span.clone(),
+        concept: None,
+        message: format!(
+            "`{}` is an additional error type in `{file_path}`; \
+             `{incumbent_name}` is already the incumbent error type",
+            extra.name,
+        ),
+        why: vec![
+            format!("file `{file_path}`"),
+            format!(
+                "error types in this file: {}",
+                all_names
+                    .iter()
+                    .map(|n| format!("`{n}`"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+            format!("incumbent: `{incumbent_name}`"),
+        ],
+        suggested_fix: Some(format!(
+            "extend `{incumbent_name}` with a new variant rather than introducing a separate \
+             error type, or split `{}` into its own module if the taxonomy \
+             split is deliberate (see `docs/PARADIGMS.md` §\"Paradigm 13: \
+             Error Taxonomy Ownership\"; ER002+ will add lockfile-driven \
+             acceptance for intentional splits)",
+            extra.name,
+        )),
+    }
+}
+
 /// ER001 — multiple error types in the same module.
 ///
-/// A file defining two or more public types whose names end with the
-/// full-word suffix `Error` or `Err` is almost always a taxonomy fork: the
-/// author introduced a new error type instead of extending the existing one.
-/// The classic anti-pattern in the spec is `UserError` + `CreateUserError` +
-/// `UserServiceError` all living side-by-side.
+/// Fires when ≥ 2 public types in a single file have the `Error`/`Err`
+/// whole-word suffix. One diagnostic per extra error type (incumbent is
+/// the first in iteration order).
 ///
-/// Algorithm:
-/// 1. For each `AirFile`, collect public `AirItem::Type` entries whose name
-///    ends with `Error` or `Err` as a *whole-word* suffix (so `UserError` and
-///    `IoErr` match, but `Errand` does not).
-/// 2. If the file has ≥ 2 such types, pin the first as the "incumbent" and
-///    fire one diagnostic per *additional* error type — mirroring OT001's
-///    "duplicate canonical" reporting style.
-///
-/// Severity: Warning by default; Fatal under `--agent-strict` (this is a
-/// pattern agents are particularly prone to introducing, so the strict-mode
-/// elevation is deliberate). The `_section` parameter is unused — kept in
-/// the signature for symmetry with future ER rules.
+/// Severity: Warning; Fatal under `--agent-strict`.
 pub fn er001(air: &AirWorkspace, _section: &ErSection, mode: CheckMode) -> Vec<Diagnostic> {
     let mut out = Vec::new();
     for pkg in &air.packages {
@@ -67,67 +94,63 @@ pub fn er001(air: &AirWorkspace, _section: &ErSection, mode: CheckMode) -> Vec<D
             if error_types.len() < 2 {
                 continue;
             }
-
             let incumbent = error_types[0];
             let all_names: Vec<String> = error_types.iter().map(|t| t.name.clone()).collect();
-
             // One diagnostic per *extra* error type (so 3 error types → 2
             // diagnostics), matching OT001's "incumbent + duplicates" shape.
             for extra in &error_types[1..] {
-                out.push(Diagnostic {
-                    rule_id: "ER001".to_string(),
-                    severity: mode.elevate(Severity::Warning),
-                    span: extra.span.clone(),
-                    concept: None,
-                    message: format!(
-                        "`{}` is an additional error type in `{}`; \
-                         `{}` is already the incumbent error type",
-                        extra.name, file.path, incumbent.name,
-                    ),
-                    why: vec![
-                        format!("file `{}`", file.path),
-                        format!(
-                            "error types in this file: {}",
-                            all_names
-                                .iter()
-                                .map(|n| format!("`{n}`"))
-                                .collect::<Vec<_>>()
-                                .join(", ")
-                        ),
-                        format!("incumbent: `{}`", incumbent.name),
-                    ],
-                    suggested_fix: Some(format!(
-                        "extend `{}` with a new variant rather than introducing a separate \
-                         error type, or split `{}` into its own module if the taxonomy \
-                         split is deliberate (see `docs/PARADIGMS.md` §\"Paradigm 13: \
-                         Error Taxonomy Ownership\"; ER002+ will add lockfile-driven \
-                         acceptance for intentional splits)",
-                        incumbent.name, extra.name,
-                    )),
-                });
+                out.push(er001_diagnostic(extra, &file.path, &incumbent.name, &all_names, mode));
             }
         }
     }
     out
 }
 
+fn er002_diagnostic(
+    func: &locus_air::AirFunction,
+    ret: &str,
+    display_err_ty: &str,
+    matched_pattern: &str,
+) -> Diagnostic {
+    Diagnostic {
+        rule_id: "ER002".to_string(),
+        severity: Severity::Fatal,
+        span: func.span.clone(),
+        concept: None,
+        message: format!(
+            "function `{}` returns `{ret}` whose error type `{display_err_ty}` matches \
+             forbidden pattern `{matched_pattern}`",
+            func.name,
+        ),
+        why: vec![
+            format!("function `{}` (`{}`)", func.name, func.symbol),
+            format!("return type `{ret}`"),
+            format!(
+                "extracted error type `{display_err_ty}` matches forbidden \
+                 pattern `{matched_pattern}`"
+            ),
+            "string-shaped / catch-all error returns collapse the project's \
+             error taxonomy: every failure mode is forced through one \
+             opaque variant, so callers can't pattern-match on the cause \
+             and the failure lineage is lost"
+                .into(),
+        ],
+        suggested_fix: Some(format!(
+            "define a typed error enum (e.g. `#[derive(thiserror::Error)] \
+             enum {}Error {{ … }}`) and map the failure modes currently \
+             flattened into `{display_err_ty}` onto its variants; return \
+             that typed error from `{}` instead",
+            capitalize_first(&func.name),
+            func.name,
+        )),
+    }
+}
+
 /// ER002 — string-shaped / catch-all error in a `Result<_, E>` return type.
 ///
-/// For every `AirItem::Function` with a `return_type` that starts with
-/// `Result<` (after trimming + an optional leading `::`), extract the `E`
-/// position via the same top-level-comma logic FL001 uses. Match the trimmed
-/// `E` (with one leading `&` peeled, so `&str` lines up with the `"&str"`
-/// pattern) against every entry in [`ErSection::forbidden_error_types`].
-/// Each match fires one diagnostic.
-///
-/// ER001 catches the *opposite* drift — too many error types in one file.
-/// ER002 catches the inverse: collapsing the taxonomy to `String` /
-/// `anyhow::Error` because the agent didn't want to define a typed variant.
-///
-/// Severity: **Fatal** in both modes. The match is exact-pattern and
-/// lockfile-driven — there's no inference involved, so no `from_confidence`
-/// and no Human-mode warning tier. Empty `forbidden_error_types` keeps the
-/// rule fully silent.
+/// For every function whose return type is `Result<_, E>`, extracts `E` and
+/// matches it against `forbidden_error_types`. Fatal in both modes (lockfile-
+/// driven, no inference). Silent when `forbidden_error_types` is empty.
 pub fn er002(air: &AirWorkspace, section: &ErSection, mode: CheckMode) -> Vec<Diagnostic> {
     if section.forbidden_error_types.is_empty() {
         return Vec::new();
@@ -167,71 +190,99 @@ pub fn er002(air: &AirWorkspace, section: &ErSection, mode: CheckMode) -> Vec<Di
                     continue;
                 };
                 let display_err_ty = err_ty_raw.trim();
-                out.push(Diagnostic {
-                    rule_id: "ER002".to_string(),
-                    severity: Severity::Fatal,
-                    span: func.span.clone(),
-                    concept: None,
-                    message: format!(
-                        "function `{}` returns `{}` whose error type `{}` matches \
-                         forbidden pattern `{}`",
-                        func.name, ret, display_err_ty, matched_pattern,
-                    ),
-                    why: vec![
-                        format!("function `{}` (`{}`)", func.name, func.symbol),
-                        format!("return type `{ret}`"),
-                        format!(
-                            "extracted error type `{display_err_ty}` matches forbidden \
-                             pattern `{matched_pattern}`"
-                        ),
-                        "string-shaped / catch-all error returns collapse the project's \
-                         error taxonomy: every failure mode is forced through one \
-                         opaque variant, so callers can't pattern-match on the cause \
-                         and the failure lineage is lost"
-                            .into(),
-                    ],
-                    suggested_fix: Some(format!(
-                        "define a typed error enum (e.g. `#[derive(thiserror::Error)] \
-                         enum {}Error {{ … }}`) and map the failure modes currently \
-                         flattened into `{display_err_ty}` onto its variants; return \
-                         that typed error from `{}` instead",
-                        capitalize_first(&func.name),
-                        func.name,
-                    )),
-                });
+                out.push(er002_diagnostic(func, ret, display_err_ty, matched_pattern));
             }
         }
     }
     out
 }
 
+fn er003_diagnostic(
+    ty: &locus_air::AirType,
+    module_path: &str,
+    variant: &AirVariant,
+    field: &locus_air::AirField,
+    domain_pattern: &str,
+    boundary_pattern: &str,
+    mode: CheckMode,
+) -> Diagnostic {
+    Diagnostic {
+        rule_id: "ER003".to_string(),
+        severity: mode.elevate(Severity::Fatal),
+        span: ty.span.clone(),
+        concept: None,
+        message: format!(
+            "domain error `{}::{}` field has boundary error type `{}` \
+             (matched domain pattern `{domain_pattern}`, boundary pattern `{boundary_pattern}`)",
+            ty.name, variant.name, field.type_text,
+        ),
+        why: vec![
+            format!(
+                "module `{module_path}` matches domain pattern `{domain_pattern}`"
+            ),
+            format!("enum `{}` (`{}`)", ty.name, ty.symbol),
+            format!(
+                "variant `{}` has field `{}: {}`",
+                variant.name,
+                if field.name.is_empty() { "_" } else { field.name.as_str() },
+                field.type_text,
+            ),
+            format!(
+                "field type `{}` matches boundary pattern `{boundary_pattern}`",
+                field.type_text
+            ),
+            "domain error enums must speak the domain's failure \
+             vocabulary; embedding a transport / boundary error as a \
+             variant field buries the layer edge that should have \
+             wrapped it"
+                .into(),
+        ],
+        suggested_fix: Some(format!(
+            "wrap `{}` in a domain-shaped variant — replace the field \
+             with a structured value capturing only the domain-relevant \
+             facts (e.g. `Network {{ url: String }}` instead of \
+             `Network(reqwest::Error)`), or add a separate boundary \
+             error type at the adapter layer that converts to `{}` \
+             via `From`",
+            field.type_text, ty.name,
+        )),
+    }
+}
+
+/// Scan one domain-error enum for ER003 boundary-field violations.
+fn er003_scan_enum(
+    ty: &locus_air::AirType,
+    module_path: &str,
+    domain_pattern: &str,
+    boundary_error_patterns: &[String],
+    mode: CheckMode,
+    out: &mut Vec<Diagnostic>,
+) {
+    if ty.kind != locus_air::TypeKind::Enum {
+        return;
+    }
+    for variant in &ty.variants {
+        for field in &variant.fields {
+            let Some(boundary_pattern) = boundary_error_patterns
+                .iter()
+                .find(|pat| matches_pattern(pat, &field.type_text))
+            else {
+                continue;
+            };
+            out.push(er003_diagnostic(
+                ty, module_path, variant, field,
+                domain_pattern, boundary_pattern, mode,
+            ));
+        }
+    }
+}
+
 /// ER003 — boundary error type embedded as a field on a domain error enum.
 ///
-/// For every `AirFile` whose `module_path` matches a pattern in
-/// `domain_paths`, walk each `AirItem::Type` with `kind == Enum` and
-/// inspect every variant's field's `type_text`. Fire one diagnostic per
-/// matching field whose rendered type text matches any pattern in
-/// `boundary_error_patterns`.
-///
-/// The matcher is the FL/DG style (segment-aligned wildcards). It runs
-/// against the variant field's *raw* `type_text` — same source-of-truth
-/// rendering used by FL001 against `Result<T, E>` signatures. Common
-/// patterns:
-///
-/// - `"reqwest::Error"` — exact match
-/// - `"sqlx::*"` — anything in the `sqlx` crate
-/// - `"http::*"` — anything in the `http` crate
-/// - `"std::io::Error"` — exact match
-///
-/// Severity: **Fatal** in both modes. Embedding a transport error as a
-/// variant field is the structural mirror of FL001 (same error leaking
-/// through a *return type*): the layer edge that should have wrapped the
-/// boundary failure didn't, the failure has lost its owner, and now the
-/// loss is encoded in the type system. `mode.elevate` is still applied
-/// for symmetry, even though it's a no-op on Fatal.
-///
-/// Silent until **both** `domain_paths` and `boundary_error_patterns`
-/// are populated. Mirrors FL001's onboarding posture.
+/// Walks domain-pathed files for enums whose variant fields' `type_text`
+/// matches `boundary_error_patterns`. One diagnostic per matching field.
+/// Fatal — same layer-edge violation as FL001 but in the type definition.
+/// Silent until both `domain_paths` and `boundary_error_patterns` are set.
 pub fn er003(air: &AirWorkspace, section: &ErSection, mode: CheckMode) -> Vec<Diagnostic> {
     if section.domain_paths.is_empty() || section.boundary_error_patterns.is_empty() {
         return Vec::new();
@@ -250,74 +301,8 @@ pub fn er003(air: &AirWorkspace, section: &ErSection, mode: CheckMode) -> Vec<Di
                 continue;
             };
             for item in &file.items {
-                let AirItem::Type(ty) = item else {
-                    continue;
-                };
-                if ty.kind != locus_air::TypeKind::Enum {
-                    continue;
-                }
-                for variant in &ty.variants {
-                    for field in &variant.fields {
-                        let Some(boundary_pattern) = section
-                            .boundary_error_patterns
-                            .iter()
-                            .find(|pat| matches_pattern(pat, &field.type_text))
-                        else {
-                            continue;
-                        };
-                        out.push(Diagnostic {
-                            rule_id: "ER003".to_string(),
-                            severity: mode.elevate(Severity::Fatal),
-                            span: ty.span.clone(),
-                            concept: None,
-                            message: format!(
-                                "domain error `{}::{}` field has boundary error type `{}` \
-                                 (matched domain pattern `{}`, boundary pattern `{}`)",
-                                ty.name,
-                                variant.name,
-                                field.type_text,
-                                domain_pattern,
-                                boundary_pattern,
-                            ),
-                            why: vec![
-                                format!(
-                                    "module `{module_path}` matches domain pattern \
-                                     `{domain_pattern}`"
-                                ),
-                                format!("enum `{}` (`{}`)", ty.name, ty.symbol),
-                                format!(
-                                    "variant `{}` has field `{}: {}`",
-                                    variant.name,
-                                    if field.name.is_empty() {
-                                        "_"
-                                    } else {
-                                        field.name.as_str()
-                                    },
-                                    field.type_text,
-                                ),
-                                format!(
-                                    "field type `{}` matches boundary pattern \
-                                     `{boundary_pattern}`",
-                                    field.type_text
-                                ),
-                                "domain error enums must speak the domain's failure \
-                                 vocabulary; embedding a transport / boundary error as a \
-                                 variant field buries the layer edge that should have \
-                                 wrapped it"
-                                    .into(),
-                            ],
-                            suggested_fix: Some(format!(
-                                "wrap `{}` in a domain-shaped variant — replace the field \
-                                 with a structured value capturing only the domain-relevant \
-                                 facts (e.g. `Network {{ url: String }}` instead of \
-                                 `Network(reqwest::Error)`), or add a separate boundary \
-                                 error type at the adapter layer that converts to `{}` \
-                                 via `From`",
-                                field.type_text, ty.name,
-                            )),
-                        });
-                    }
-                }
+                let AirItem::Type(ty) = item else { continue };
+                er003_scan_enum(ty, module_path, domain_pattern, &section.boundary_error_patterns, mode, &mut out);
             }
         }
     }
@@ -470,112 +455,85 @@ fn diagnostic_for_er005(arm: &AirMatchArm, module_path: &str, mode: CheckMode) -
     }
 }
 
+/// First-seen occurrence tracker for ER007's variant dedup.
+struct Er007Incumbent<'a> {
+    type_name: &'a str,
+    file_path: &'a str,
+}
+
+fn er007_diagnostic(
+    ty: &locus_air::AirType,
+    file_path: &str,
+    variant: &AirVariant,
+    incumbent_type_name: &str,
+    incumbent_file_path: &str,
+    mode: CheckMode,
+) -> Diagnostic {
+    Diagnostic {
+        rule_id: "ER007".to_string(),
+        severity: mode.elevate(Severity::Warning),
+        span: ty.span.clone(),
+        concept: None,
+        message: format!(
+            "duplicate error variant `{}` on `{}` — already \
+             declared on `{incumbent_type_name}` in `{incumbent_file_path}`",
+            variant.name, ty.name,
+        ),
+        why: vec![
+            format!("variant `{}` declared on `{}`", variant.name, ty.name),
+            format!(
+                "incumbent: `{incumbent_type_name}::{}` in `{incumbent_file_path}`",
+                variant.name,
+            ),
+            format!("current declaration in `{file_path}`"),
+            "duplicate variants across error enums signal a drifting \
+             taxonomy: the same failure mode is being modelled twice \
+             under different types, so callers can't pattern-match \
+             across the workspace's error surface"
+                .into(),
+        ],
+        suggested_fix: Some(format!(
+            "extract `{}` into a shared error type (`enum \
+             DomainError {{ {} ,… }}`) and re-export it from both \
+             `{incumbent_type_name}` and `{}`, or rename one of them to clarify the \
+             distinct semantics. For an intentional duplication, \
+             suppress with `// locus: allow ER007 reason=\"…\" \
+             expires=\"YYYY-MM-DD\"`",
+            variant.name, variant.name, ty.name,
+        )),
+    }
+}
+
 /// ER007 — variant name shared across two or more `*Error*` enums.
 ///
-/// Walks every `AirItem::Type` with `kind == Enum` whose name passes
-/// [`has_error_suffix`] (matching ER001's `Error` / `Err` whole-word
-/// suffix discipline). Records every `(file_path, type_name,
-/// variant_name)` triple, then for each variant name appearing on
-/// **two or more distinct error types** (different `type_name` *or*
-/// different `file_path`) emits one diagnostic per occurrence beyond
-/// the first, citing the incumbent error type that introduced the name.
+/// Walks all error enums (names ending `Error`/`Err`), flags each variant
+/// whose name was already seen on a different error type. One diagnostic
+/// per duplicate occurrence (beyond the first).
 ///
-/// The drift this catches: `enum UserError { NotFound, Invalid }`
-/// living next to `enum OrderError { NotFound, Invalid }` — both
-/// "not found" failures in the workspace look identical to a
-/// caller, but they're modelled as two unrelated variants. The fix
-/// is usually to extract a shared `enum DomainError` (or to give
-/// each variant a more specific name).
-///
-/// Severity: `mode.elevate(Severity::Warning)`. The spec frames this
-/// as drift, not a structural violation — Warning by default, Fatal
-/// under `--agent-strict`. No lockfile fields; ER007 is heuristic and
-/// always-on (suppress per-callsite via `// locus: allow ER007`).
-///
-/// Determinism note: results are gathered in workspace iteration
-/// order (package → file → item → variant), and the "first" occurrence
-/// is whichever the iterator yielded first. AIR ordering is stable
-/// within a run, so a given `AirWorkspace` always produces the same
-/// (incumbent, duplicates) split.
+/// Severity: Warning; Fatal under `--agent-strict`. No lockfile fields.
 pub fn er007(air: &AirWorkspace, mode: CheckMode) -> Vec<Diagnostic> {
     use std::collections::HashMap;
-
-    /// First-seen occurrence of a variant name in an `*Error*` enum.
-    struct Incumbent<'a> {
-        type_name: &'a str,
-        file_path: &'a str,
-    }
-
-    let mut first_seen: HashMap<&str, Incumbent<'_>> = HashMap::new();
+    let mut first_seen: HashMap<&str, Er007Incumbent<'_>> = HashMap::new();
     let mut out = Vec::new();
-
     for pkg in &air.packages {
         for file in &pkg.files {
             for item in &file.items {
-                let AirItem::Type(ty) = item else {
-                    continue;
-                };
-                if ty.kind != locus_air::TypeKind::Enum {
-                    continue;
-                }
-                if !has_error_suffix(&ty.name) {
-                    continue;
-                }
+                let AirItem::Type(ty) = item else { continue };
+                if ty.kind != locus_air::TypeKind::Enum { continue; }
+                if !has_error_suffix(&ty.name) { continue; }
                 for variant in &ty.variants {
                     match first_seen.get(variant.name.as_str()) {
                         None => {
-                            first_seen.insert(
-                                variant.name.as_str(),
-                                Incumbent {
-                                    type_name: ty.name.as_str(),
-                                    file_path: file.path.as_str(),
-                                },
-                            );
+                            first_seen.insert(variant.name.as_str(), Er007Incumbent {
+                                type_name: ty.name.as_str(),
+                                file_path: file.path.as_str(),
+                            });
                         }
                         Some(incumbent) => {
-                            // Only fire when the duplicate sits on a *different*
-                            // error type (different type name or different file).
-                            // Same enum redeclaring the same variant name isn't
-                            // legal Rust and will be caught by `rustc`; we just
-                            // skip it defensively.
                             if incumbent.type_name == ty.name.as_str()
                                 && incumbent.file_path == file.path.as_str()
-                            {
-                                continue;
-                            }
-                            out.push(Diagnostic {
-                                rule_id: "ER007".to_string(),
-                                severity: mode.elevate(Severity::Warning),
-                                span: ty.span.clone(),
-                                concept: None,
-                                message: format!(
-                                    "duplicate error variant `{}` on `{}` — already \
-                                     declared on `{}` in `{}`",
-                                    variant.name, ty.name, incumbent.type_name, incumbent.file_path,
-                                ),
-                                why: vec![
-                                    format!("variant `{}` declared on `{}`", variant.name, ty.name),
-                                    format!(
-                                        "incumbent: `{}::{}` in `{}`",
-                                        incumbent.type_name, variant.name, incumbent.file_path,
-                                    ),
-                                    format!("current declaration in `{}`", file.path),
-                                    "duplicate variants across error enums signal a drifting \
-                                     taxonomy: the same failure mode is being modelled twice \
-                                     under different types, so callers can't pattern-match \
-                                     across the workspace's error surface"
-                                        .into(),
-                                ],
-                                suggested_fix: Some(format!(
-                                    "extract `{}` into a shared error type (`enum \
-                                     DomainError {{ {} ,… }}`) and re-export it from both \
-                                     `{}` and `{}`, or rename one of them to clarify the \
-                                     distinct semantics. For an intentional duplication, \
-                                     suppress with `// locus: allow ER007 reason=\"…\" \
-                                     expires=\"YYYY-MM-DD\"`",
-                                    variant.name, variant.name, incumbent.type_name, ty.name,
-                                )),
-                            });
+                            { continue; }
+                            out.push(er007_diagnostic(ty, &file.path, variant, incumbent.type_name, incumbent.file_path, mode));
                         }
                     }
                 }

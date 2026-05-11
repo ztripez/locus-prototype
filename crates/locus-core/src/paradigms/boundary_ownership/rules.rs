@@ -19,6 +19,48 @@ use locus_air::{AirItem, AirSpan, AirWorkspace, FactKind, FactTarget};
 use super::lockfile_schema::{BoSection, matches_pattern};
 use crate::diagnostics::{CheckMode, Diagnostic, Severity};
 
+fn bo001_diagnostic(
+    module_path: &str,
+    import_path: &str,
+    domain_pattern: &str,
+    forbidden_pattern: &str,
+    span: locus_air::AirSpan,
+    mode: CheckMode,
+) -> Diagnostic {
+    Diagnostic {
+        rule_id: "BO001".to_string(),
+        severity: mode.elevate(Severity::Fatal),
+        span,
+        concept: None,
+        message: format!(
+            "domain module `{module_path}` imports forbidden \
+             transport/persistence path `{import_path}`"
+        ),
+        why: vec![
+            format!(
+                "importer `{module_path}` matches domain_paths pattern \
+                 `{domain_pattern}`"
+            ),
+            format!(
+                "import `{import_path}` matches forbidden_in_domain pattern \
+                 `{forbidden_pattern}`"
+            ),
+            "domain/application code must not depend directly on transport, \
+             persistence, or serialization frameworks; those concerns belong \
+             at the boundary"
+                .into(),
+        ],
+        suggested_fix: Some(
+            "convert at the boundary (introduce a port/adapter, or move the \
+             conversion into an application-layer service that calls the \
+             framework on the domain's behalf); if the import is a \
+             domain-friendly utility, narrow the `paradigms.BO.forbidden_in_domain` \
+             pattern in `locus.lock` so it no longer matches"
+                .into(),
+        ),
+    }
+}
+
 /// BO001 — domain/application file imports a forbidden transport/persistence
 /// dependency.
 ///
@@ -57,44 +99,62 @@ pub fn bo001(air: &AirWorkspace, section: &BoSection, mode: CheckMode) -> Vec<Di
                 else {
                     continue;
                 };
-                out.push(Diagnostic {
-                    rule_id: "BO001".to_string(),
-                    severity: mode.elevate(Severity::Fatal),
-                    span: imp.span.clone(),
-                    concept: None,
-                    message: format!(
-                        "domain module `{module_path}` imports forbidden \
-                         transport/persistence path `{}`",
-                        imp.path
-                    ),
-                    why: vec![
-                        format!(
-                            "importer `{module_path}` matches domain_paths pattern \
-                             `{domain_pattern}`"
-                        ),
-                        format!(
-                            "import `{}` matches forbidden_in_domain pattern \
-                             `{forbidden_pattern}`",
-                            imp.path
-                        ),
-                        "domain/application code must not depend directly on transport, \
-                         persistence, or serialization frameworks; those concerns belong \
-                         at the boundary"
-                            .into(),
-                    ],
-                    suggested_fix: Some(
-                        "convert at the boundary (introduce a port/adapter, or move the \
-                         conversion into an application-layer service that calls the \
-                         framework on the domain's behalf); if the import is a \
-                         domain-friendly utility, narrow the `paradigms.BO.forbidden_in_domain` \
-                         pattern in `locus.lock` so it no longer matches"
-                            .into(),
-                    ),
-                });
+                out.push(bo001_diagnostic(
+                    module_path,
+                    &imp.path,
+                    domain_pattern,
+                    forbidden_pattern,
+                    imp.span.clone(),
+                    mode,
+                ));
             }
         }
     }
     out
+}
+
+fn bo002_diagnostic(
+    func: &locus_air::AirFunction,
+    module_path: &str,
+    domain_pattern: &str,
+    position: &str,
+    type_text: &str,
+    persistence_pattern: &str,
+    mode: CheckMode,
+) -> Diagnostic {
+    Diagnostic {
+        rule_id: "BO002".to_string(),
+        severity: mode.elevate(Severity::Fatal),
+        span: func.span.clone(),
+        concept: None,
+        message: format!(
+            "domain function `{}` exposes persistence-shaped type \
+             `{type_text}` in {position}",
+            func.symbol
+        ),
+        why: vec![
+            format!(
+                "module `{module_path}` matches domain_paths pattern \
+                 `{domain_pattern}`"
+            ),
+            format!(
+                "{position} type `{type_text}` matches \
+                 persistence_type_patterns pattern \
+                 `{persistence_pattern}`"
+            ),
+            "domain functions must speak in domain types; \
+             persistence-shaped values belong on the boundary, \
+             translated by an adapter or repository"
+                .into(),
+        ],
+        suggested_fix: Some(format!(
+            "introduce a domain type and a converter at the \
+             boundary; if `{type_text}` is genuinely a domain \
+             concept (rare), narrow \
+             `paradigms.BO.persistence_type_patterns` in `locus.lock` \
+             so `{persistence_pattern}` no longer matches"
+        )),
+    }
 }
 
 /// BO002 — persistence type leaking into a domain function signature.
@@ -132,11 +192,8 @@ pub fn bo002(air: &AirWorkspace, section: &BoSection, mode: CheckMode) -> Vec<Di
                 let AirItem::Function(func) = item else {
                     continue;
                 };
-
-                // Check parameters first, then return type. Fire at most once
-                // per (function, persistence pattern) match — first hit wins
-                // so the diagnostic stays scoped to the actual offender.
-                let mut hit: Option<(String, String, String)> = None; // (where, type_text, persistence_pattern)
+                // Check parameters first, then return type — first hit wins.
+                let mut hit: Option<(String, String, String)> = None;
                 for (pname, ptype) in &func.params {
                     if let Some(p) = section
                         .persistence_type_patterns
@@ -159,40 +216,15 @@ pub fn bo002(air: &AirWorkspace, section: &BoSection, mode: CheckMode) -> Vec<Di
                 let Some((position, type_text, persistence_pattern)) = hit else {
                     continue;
                 };
-
-                out.push(Diagnostic {
-                    rule_id: "BO002".to_string(),
-                    severity: mode.elevate(Severity::Fatal),
-                    span: func.span.clone(),
-                    concept: None,
-                    message: format!(
-                        "domain function `{}` exposes persistence-shaped type \
-                         `{type_text}` in {position}",
-                        func.symbol
-                    ),
-                    why: vec![
-                        format!(
-                            "module `{module_path}` matches domain_paths pattern \
-                             `{domain_pattern}`"
-                        ),
-                        format!(
-                            "{position} type `{type_text}` matches \
-                             persistence_type_patterns pattern \
-                             `{persistence_pattern}`"
-                        ),
-                        "domain functions must speak in domain types; \
-                         persistence-shaped values belong on the boundary, \
-                         translated by an adapter or repository"
-                            .into(),
-                    ],
-                    suggested_fix: Some(format!(
-                        "introduce a domain type and a converter at the \
-                         boundary; if `{type_text}` is genuinely a domain \
-                         concept (rare), narrow \
-                         `paradigms.BO.persistence_type_patterns` in `locus.lock` \
-                         so `{persistence_pattern}` no longer matches"
-                    )),
-                });
+                out.push(bo002_diagnostic(
+                    func,
+                    module_path,
+                    domain_pattern,
+                    &position,
+                    &type_text,
+                    &persistence_pattern,
+                    mode,
+                ));
             }
         }
     }
@@ -222,6 +254,49 @@ fn type_text_matches(pattern: &str, type_text: &str) -> bool {
         }
     }
     false
+}
+
+fn bo004_diagnostic(
+    ty: &locus_air::AirType,
+    module_path: &str,
+    canonical_pattern: &str,
+    derive: &str,
+    forbidden: &str,
+    mode: CheckMode,
+) -> Diagnostic {
+    Diagnostic {
+        rule_id: "BO004".to_string(),
+        severity: mode.elevate(Severity::Warning),
+        span: ty.span.clone(),
+        concept: None,
+        message: format!(
+            "canonical type `{}` carries forbidden derive `{derive}`",
+            ty.symbol
+        ),
+        why: vec![
+            format!(
+                "module `{module_path}` matches canonical_paths \
+                 pattern `{canonical_pattern}`"
+            ),
+            format!(
+                "derive `{derive}` matches \
+                 forbidden_canonical_derives entry `{forbidden}`"
+            ),
+            "canonical domain types must not depend on \
+             serialization/schema frameworks; serialization \
+             belongs on a boundary DTO"
+                .into(),
+        ],
+        suggested_fix: Some(format!(
+            "remove `{derive}` from `{}` and introduce a \
+             boundary DTO that does carry the derive plus a \
+             converter; if the derive is genuinely needed on \
+             the canonical (e.g. fixture/config), accept it \
+             via `paradigms.BO.forbidden_canonical_derives` in \
+             `locus.lock`",
+            ty.name
+        )),
+    }
 }
 
 /// BO004 — accepted canonical type carries a forbidden derive.
@@ -265,13 +340,7 @@ pub fn bo004(air: &AirWorkspace, section: &BoSection, mode: CheckMode) -> Vec<Di
                 let AirItem::Type(ty) = item else {
                     continue;
                 };
-                // BO004 historically scanned `AirType.derives` (Rust-only).
-                // After AIR v13 the field became `decorators` with a `source`
-                // tag; we keep BO004 narrow to derives by filtering to
-                // `DecoratorSource::Derive`. TS/Python adapters that emit
-                // their own derive-equivalent shapes (`Decorator` /
-                // `Annotation`) won't trip this rule unless the user opts
-                // those sources into the forbidden list separately.
+                // BO004 is narrow to Derive decorators (Rust-only).
                 for decorator in ty
                     .decorators
                     .iter()
@@ -286,46 +355,72 @@ pub fn bo004(air: &AirWorkspace, section: &BoSection, mode: CheckMode) -> Vec<Di
                     else {
                         continue;
                     };
-                    out.push(Diagnostic {
-                        rule_id: "BO004".to_string(),
-                        severity: mode.elevate(Severity::Warning),
-                        span: ty.span.clone(),
-                        concept: None,
-                        message: format!(
-                            "canonical type `{}` carries forbidden derive \
-                             `{derive}`",
-                            ty.symbol
-                        ),
-                        why: vec![
-                            format!(
-                                "module `{module_path}` matches canonical_paths \
-                                 pattern `{canonical_pattern}`"
-                            ),
-                            format!(
-                                "derive `{derive}` matches \
-                                 forbidden_canonical_derives entry `{forbidden}`"
-                            ),
-                            "canonical domain types must not depend on \
-                             serialization/schema frameworks; serialization \
-                             belongs on a boundary DTO"
-                                .into(),
-                        ],
-                        suggested_fix: Some(format!(
-                            "remove `{derive}` from `{}` and introduce a \
-                             boundary DTO that does carry the derive plus a \
-                             converter; if the derive is genuinely needed on \
-                             the canonical (e.g. fixture/config), accept it \
-                             via `paradigms.BO.forbidden_canonical_derives` in \
-                             `locus.lock`",
-                            ty.name
-                        )),
-                    });
-                    break; // one diagnostic per type — even if multiple derives match
+                    out.push(bo004_diagnostic(
+                        ty, module_path, canonical_pattern, derive, forbidden, mode,
+                    ));
+                    break; // one diagnostic per type
                 }
             }
         }
     }
     out
+}
+
+fn bo005_diagnostic(
+    fact: &locus_air::AirFact,
+    symbol: &str,
+    module_path: &str,
+    fn_span: AirSpan,
+    domain_pattern: &str,
+    mode: CheckMode,
+) -> Diagnostic {
+    let evidence = fact.evidence.as_deref().unwrap_or("persistence write");
+    let span = match &fact.target {
+        FactTarget::Span(s) => s.clone(),
+        FactTarget::Function { .. } | FactTarget::File { .. } => fn_span,
+    };
+    let mut why = vec![format!(
+        "module `{module_path}` (or function `{symbol}`) matches \
+         domain_paths pattern `{domain_pattern}`"
+    )];
+    if fact.reasons.is_empty() {
+        why.push("loader detected persistence-write-shaped call".to_string());
+    } else {
+        for r in &fact.reasons {
+            why.push(r.clone());
+        }
+    }
+    if let Some(ev) = fact.evidence.as_deref() {
+        why.push(format!("evidence: `{ev}`"));
+    }
+    why.push(
+        "domain code must not write to storage directly; persistence \
+         belongs at the boundary, behind a port (Repository/Storage \
+         trait) implemented by an adapter"
+            .to_string(),
+    );
+    Diagnostic {
+        rule_id: "BO005".to_string(),
+        severity: mode.elevate(Severity::Fatal),
+        span,
+        concept: None,
+        message: format!(
+            "domain function `{symbol}` performs persistence write \
+             `{evidence}` — domain code must not write to storage \
+             directly"
+        ),
+        why,
+        suggested_fix: Some(
+            "invert the dependency: define a port (e.g. a `Repository` \
+             or `Storage` trait) in the domain layer, implement it in \
+             an adapter, and inject the adapter from the composition \
+             root. The domain function then calls `repo.save(...)` \
+             instead of touching storage directly. If this module is \
+             actually outside the domain, narrow \
+             `paradigms.BO.domain_paths` in `locus.lock`."
+                .to_string(),
+        ),
+    }
 }
 
 /// BO005 — persistence write inside a domain function.
@@ -368,53 +463,7 @@ pub fn bo005(air: &AirWorkspace, section: &BoSection, mode: CheckMode) -> Vec<Di
         else {
             continue;
         };
-        let evidence = fact.evidence.as_deref().unwrap_or("persistence write");
-        let span = match &fact.target {
-            FactTarget::Span(s) => s.clone(),
-            FactTarget::Function { .. } | FactTarget::File { .. } => fn_span,
-        };
-        let mut why = vec![format!(
-            "module `{module_path}` (or function `{symbol}`) matches \
-             domain_paths pattern `{domain_pattern}`"
-        )];
-        if fact.reasons.is_empty() {
-            why.push("loader detected persistence-write-shaped call".to_string());
-        } else {
-            for r in &fact.reasons {
-                why.push(r.clone());
-            }
-        }
-        if let Some(ev) = fact.evidence.as_deref() {
-            why.push(format!("evidence: `{ev}`"));
-        }
-        why.push(
-            "domain code must not write to storage directly; persistence \
-             belongs at the boundary, behind a port (Repository/Storage \
-             trait) implemented by an adapter"
-                .to_string(),
-        );
-        out.push(Diagnostic {
-            rule_id: "BO005".to_string(),
-            severity: mode.elevate(Severity::Fatal),
-            span,
-            concept: None,
-            message: format!(
-                "domain function `{symbol}` performs persistence write \
-                 `{evidence}` — domain code must not write to storage \
-                 directly"
-            ),
-            why,
-            suggested_fix: Some(
-                "invert the dependency: define a port (e.g. a `Repository` \
-                 or `Storage` trait) in the domain layer, implement it in \
-                 an adapter, and inject the adapter from the composition \
-                 root. The domain function then calls `repo.save(...)` \
-                 instead of touching storage directly. If this module is \
-                 actually outside the domain, narrow \
-                 `paradigms.BO.domain_paths` in `locus.lock`."
-                    .to_string(),
-            ),
-        });
+        out.push(bo005_diagnostic(fact, symbol, module_path, fn_span, domain_pattern, mode));
     }
     out
 }

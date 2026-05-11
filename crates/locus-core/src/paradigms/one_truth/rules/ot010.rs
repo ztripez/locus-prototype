@@ -64,39 +64,62 @@ pub fn ot010(air: &AirWorkspace, section: &OtSection, mode: CheckMode) -> Vec<Di
                     if overlap < FIELD_OVERLAP_THRESHOLD {
                         continue;
                     }
-                    out.push(Diagnostic {
-                        rule_id: "OT010".to_string(),
+                    out.push(ot010_diagnostic(
+                        ty,
+                        &candidate_variants,
+                        canonical_symbol,
+                        canonical_variants,
+                        concept_id,
+                        overlap,
+                        confidence,
                         severity,
-                        span: ty.span.clone(),
-                        concept: Some(concept_id.clone()),
-                        message: format!(
-                            "enum `{}` overlaps {:.0}% with accepted canonical `{canonical_symbol}` \
-                             but is not accepted as canonical or boundary",
-                            ty.symbol,
-                            overlap * 100.0
-                        ),
-                        why: vec![
-                            format!("variants: {{{}}}", join_sorted(&candidate_variants)),
-                            format!(
-                                "canonical `{canonical_symbol}` variants: {{{}}}",
-                                join_sorted(canonical_variants)
-                            ),
-                            format!("Jaccard overlap: {:.2}", overlap),
-                            format!("inference confidence: {confidence:.2}"),
-                        ],
-                        suggested_fix: Some(format!(
-                            "remove `{}` and use `{canonical_symbol}` directly, or accept \
-                             this enum as a boundary for `{concept_id}` via \
-                             `// locus: ot boundary {concept_id} <name>` then rerun `locus init`",
-                            ty.name
-                        )),
-                    });
+                    ));
                     break;
                 }
             }
         }
     }
     out
+}
+
+#[allow(clippy::too_many_arguments)]
+fn ot010_diagnostic(
+    ty: &locus_air::AirType,
+    candidate_variants: &BTreeSet<String>,
+    canonical_symbol: &str,
+    canonical_variants: &BTreeSet<String>,
+    concept_id: &str,
+    overlap: f32,
+    confidence: f32,
+    severity: Severity,
+) -> Diagnostic {
+    Diagnostic {
+        rule_id: "OT010".to_string(),
+        severity,
+        span: ty.span.clone(),
+        concept: Some(concept_id.to_string()),
+        message: format!(
+            "enum `{}` overlaps {:.0}% with accepted canonical `{canonical_symbol}` \
+             but is not accepted as canonical or boundary",
+            ty.symbol,
+            overlap * 100.0
+        ),
+        why: vec![
+            format!("variants: {{{}}}", join_sorted(candidate_variants)),
+            format!(
+                "canonical `{canonical_symbol}` variants: {{{}}}",
+                join_sorted(canonical_variants)
+            ),
+            format!("Jaccard overlap: {:.2}", overlap),
+            format!("inference confidence: {confidence:.2}"),
+        ],
+        suggested_fix: Some(format!(
+            "remove `{}` and use `{canonical_symbol}` directly, or accept \
+             this enum as a boundary for `{concept_id}` via \
+             `// locus: ot boundary {concept_id} <name>` then rerun `locus init`",
+            ty.name
+        )),
+    }
 }
 
 /// `(variants, kind)` for the type whose `symbol` matches `target`.

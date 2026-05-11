@@ -74,52 +74,53 @@ pub fn cl001(air: &AirWorkspace, section: &ClSection, mode: CheckMode) -> Vec<Di
                 if analysis.non_reference_word_count >= MIN_RATIONALE_WORDS {
                     continue;
                 }
-                out.push(Diagnostic {
-                    rule_id: "CL001".to_string(),
-                    severity: mode.elevate(Severity::Warning),
-                    span,
-                    concept: None,
-                    message: format!(
-                        "{label} doc comment cites {ref_count} external reference(s) but \
-                         carries no local rationale ({words} non-reference word(s); \
-                         minimum {MIN_RATIONALE_WORDS})",
-                        ref_count = analysis.references.len(),
-                        words = analysis.non_reference_word_count,
-                    ),
-                    why: vec![
-                        format!(
-                            "doc text: `{}`",
-                            doc.replace('\n', " ")
-                                .trim()
-                                .chars()
-                                .take(120)
-                                .collect::<String>(),
-                        ),
-                        format!(
-                            "matched references: {}",
-                            analysis
-                                .references
-                                .iter()
-                                .map(|r| format!("`{r}`"))
-                                .collect::<Vec<_>>()
-                                .join(", ")
-                        ),
-                        "external references are traceability, not durable local \
-                         rationale — readers shouldn't need to fetch the linked issue \
-                         to understand why this code exists"
-                            .into(),
-                    ],
-                    suggested_fix: Some(
-                        "add a sentence in the doc comment explaining the local reason \
-                         (`why this exists / why this shape`); the external reference \
-                         can stay as a follow-up pointer"
-                            .into(),
-                    ),
-                });
+                out.push(cl001_diagnostic(doc, &label, &analysis, span, mode));
             }
         }
     }
     out
+}
+
+fn cl001_diagnostic(
+    doc: &str,
+    label: &str,
+    analysis: &DocAnalysis,
+    span: locus_air::AirSpan,
+    mode: CheckMode,
+) -> Diagnostic {
+    Diagnostic {
+        rule_id: "CL001".to_string(),
+        severity: mode.elevate(Severity::Warning),
+        span,
+        concept: None,
+        message: format!(
+            "{label} doc comment cites {} external reference(s) but \
+             carries no local rationale ({} non-reference word(s); \
+             minimum {MIN_RATIONALE_WORDS})",
+            analysis.references.len(),
+            analysis.non_reference_word_count,
+        ),
+        why: vec![
+            format!(
+                "doc text: `{}`",
+                doc.replace('\n', " ").trim().chars().take(120).collect::<String>(),
+            ),
+            format!(
+                "matched references: {}",
+                analysis.references.iter().map(|r| format!("`{r}`")).collect::<Vec<_>>().join(", ")
+            ),
+            "external references are traceability, not durable local \
+             rationale — readers shouldn't need to fetch the linked issue \
+             to understand why this code exists"
+                .into(),
+        ],
+        suggested_fix: Some(
+            "add a sentence in the doc comment explaining the local reason \
+             (`why this exists / why this shape`); the external reference \
+             can stay as a follow-up pointer"
+                .into(),
+        ),
+    }
 }
 
 #[derive(Debug)]
@@ -141,55 +142,35 @@ fn analyse_doc(doc: &str) -> DocAnalysis {
     let mut chars = doc.char_indices().peekable();
     let mut prev_char: Option<char> = None;
     while let Some(&(idx, ch)) = chars.peek() {
-        // GitHub-style `#NNN` reference at a word boundary.
         if ch == '#' && prev_char.is_none_or(|c| !is_word_char(c)) {
+            // GitHub-style `#NNN` reference at a word boundary.
             chars.next();
             let digits_start = idx + ch.len_utf8();
             let mut digits_end = digits_start;
-            while let Some(&(_, c2)) = chars.peek()
-                && c2.is_ascii_digit()
-            {
+            while let Some(&(_, c2)) = chars.peek() && c2.is_ascii_digit() {
                 digits_end += c2.len_utf8();
                 chars.next();
             }
             if digits_end > digits_start {
                 references.push(format!("#{}", &doc[digits_start..digits_end]));
-                prev_char = Some('#'); // any non-word char would do
+                prev_char = Some('#');
                 continue;
             }
-            // No digits followed — `#` was not a reference. Keep it in
-            // stripped text so the original word count isn't biased.
             stripped.push(ch);
             prev_char = Some(ch);
             continue;
         }
-        // URL: `http://` or `https://` followed by non-whitespace.
-        let remainder = &doc[idx..];
-        let url_prefix_len = if remainder.starts_with("http://") {
-            Some(7)
-        } else if remainder.starts_with("https://") {
-            Some(8)
-        } else {
-            None
-        };
-        if let Some(prefix_len) = url_prefix_len {
-            // Advance past prefix.
-            for _ in 0..remainder[..prefix_len].chars().count() {
-                chars.next();
-            }
+        if let Some(prefix_len) = url_prefix_len(&doc[idx..]) {
+            // URL: `http://` or `https://` followed by non-whitespace.
+            let remainder = &doc[idx..];
+            for _ in 0..remainder[..prefix_len].chars().count() { chars.next(); }
             let mut url_end = idx + prefix_len;
             while let Some(&(_, c2)) = chars.peek() {
-                if c2.is_whitespace() {
-                    break;
-                }
+                if c2.is_whitespace() { break; }
                 url_end += c2.len_utf8();
                 chars.next();
             }
-            references.push(
-                doc[idx..url_end]
-                    .trim_end_matches(['.', ',', ')', '`'])
-                    .to_string(),
-            );
+            references.push(doc[idx..url_end].trim_end_matches(['.', ',', ')', '`']).to_string());
             prev_char = Some(' ');
             continue;
         }
@@ -203,10 +184,13 @@ fn analyse_doc(doc: &str) -> DocAnalysis {
         .filter(|w| w.chars().any(|c| c.is_alphanumeric()))
         .count();
 
-    DocAnalysis {
-        references,
-        non_reference_word_count,
-    }
+    DocAnalysis { references, non_reference_word_count }
+}
+
+fn url_prefix_len(s: &str) -> Option<usize> {
+    if s.starts_with("https://") { Some(8) }
+    else if s.starts_with("http://") { Some(7) }
+    else { None }
 }
 
 fn is_word_char(c: char) -> bool {

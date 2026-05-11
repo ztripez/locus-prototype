@@ -17,6 +17,39 @@ use locus_air::{AirItem, AirSpan, AirWorkspace};
 use super::lockfile_schema::{DgSection, FeatureDefinition, matches_pattern};
 use crate::diagnostics::{CheckMode, Diagnostic, Severity};
 
+fn dg001_diagnostic(
+    module_path: &str,
+    imp: &locus_air::AirImport,
+    edge: &super::lockfile_schema::ForbiddenEdge,
+    mode: CheckMode,
+) -> Diagnostic {
+    let mut why = vec![
+        format!("importer `{module_path}` matches `from = {}`", edge.from),
+        format!("import `{}` matches `to = {}`", imp.path, edge.to),
+    ];
+    if let Some(reason) = &edge.reason {
+        why.push(format!("reason: {reason}"));
+    }
+    Diagnostic {
+        rule_id: "DG001".to_string(),
+        severity: mode.elevate(Severity::Fatal),
+        span: imp.span.clone(),
+        concept: None,
+        message: format!(
+            "forbidden import: `{module_path}` must not reach `{}`",
+            imp.path
+        ),
+        why,
+        suggested_fix: Some(
+            "remove the import, or route the call through an accepted \
+             intermediary (port, application service, or shared crate); \
+             if the edge is wrong, edit `paradigms.DG.forbidden_edges` in \
+             `locus.lock`"
+                .into(),
+        ),
+    }
+}
+
 /// DG001 — forbidden import.
 ///
 /// For every `AirImport` in every file, walk the lockfile's `forbidden_edges`.
@@ -46,31 +79,7 @@ pub fn dg001(air: &AirWorkspace, section: &DgSection, mode: CheckMode) -> Vec<Di
                     if !matches_pattern(&edge.to, &imp.path) {
                         continue;
                     }
-                    let mut why = vec![
-                        format!("importer `{module_path}` matches `from = {}`", edge.from),
-                        format!("import `{}` matches `to = {}`", imp.path, edge.to),
-                    ];
-                    if let Some(reason) = &edge.reason {
-                        why.push(format!("reason: {reason}"));
-                    }
-                    out.push(Diagnostic {
-                        rule_id: "DG001".to_string(),
-                        severity: mode.elevate(Severity::Fatal),
-                        span: imp.span.clone(),
-                        concept: None,
-                        message: format!(
-                            "forbidden import: `{module_path}` must not reach `{}`",
-                            imp.path
-                        ),
-                        why,
-                        suggested_fix: Some(
-                            "remove the import, or route the call through an accepted \
-                             intermediary (port, application service, or shared crate); \
-                             if the edge is wrong, edit `paradigms.DG.forbidden_edges` in \
-                             `locus.lock`"
-                                .into(),
-                        ),
-                    });
+                    out.push(dg001_diagnostic(module_path, imp, edge, mode));
                     break; // one diagnostic per (file, import); don't re-fire on overlapping edges
                 }
             }
@@ -247,6 +256,40 @@ fn first_segment(path: &str) -> &str {
     path.split("::").next().unwrap_or("").trim()
 }
 
+fn dg003_why(
+    module_path: &str,
+    imp: &locus_air::AirImport,
+    importer_feature: &FeatureDefinition,
+    target_feature: &FeatureDefinition,
+) -> Vec<String> {
+    vec![
+        format!(
+            "importer `{module_path}` belongs to feature `{}`",
+            importer_feature.name
+        ),
+        format!(
+            "import `{}` belongs to feature `{}` but is not in its public API",
+            imp.path, target_feature.name
+        ),
+        if target_feature.public_api.is_empty() {
+            format!(
+                "feature `{}` has no public_api defined",
+                target_feature.name
+            )
+        } else {
+            format!(
+                "public_api patterns: {}",
+                target_feature
+                    .public_api
+                    .iter()
+                    .map(|p| format!("`{p}`"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
+        },
+    ]
+}
+
 /// DG003 — cross-feature internals reach.
 ///
 /// For every `AirImport`, fire when:
@@ -298,32 +341,7 @@ pub fn dg003(air: &AirWorkspace, section: &DgSection, mode: CheckMode) -> Vec<Di
                         importer = importer_feature.name,
                         target = target_feature.name,
                     ),
-                    why: vec![
-                        format!(
-                            "importer `{module_path}` belongs to feature `{}`",
-                            importer_feature.name
-                        ),
-                        format!(
-                            "import `{}` belongs to feature `{}` but is not in its public API",
-                            imp.path, target_feature.name
-                        ),
-                        if target_feature.public_api.is_empty() {
-                            format!(
-                                "feature `{}` has no public_api defined",
-                                target_feature.name
-                            )
-                        } else {
-                            format!(
-                                "public_api patterns: {}",
-                                target_feature
-                                    .public_api
-                                    .iter()
-                                    .map(|p| format!("`{p}`"))
-                                    .collect::<Vec<_>>()
-                                    .join(", ")
-                            )
-                        },
-                    ],
+                    why: dg003_why(module_path, imp, importer_feature, target_feature),
                     suggested_fix: Some(format!(
                         "import through `{}`'s public API, or expand its public_api list \
                          to include `{}` if this access is intentional",
@@ -334,6 +352,39 @@ pub fn dg003(air: &AirWorkspace, section: &DgSection, mode: CheckMode) -> Vec<Di
         }
     }
     out
+}
+
+fn dg004_diagnostic(
+    module_path: &str,
+    imp: &locus_air::AirImport,
+    shared_pattern: &str,
+    target_feature: &FeatureDefinition,
+    mode: CheckMode,
+) -> Diagnostic {
+    Diagnostic {
+        rule_id: "DG004".to_string(),
+        severity: mode.elevate(Severity::Fatal),
+        span: imp.span.clone(),
+        concept: None,
+        message: format!(
+            "shared module `{module_path}` imports feature `{}` via `{}`",
+            target_feature.name, imp.path
+        ),
+        why: vec![
+            format!("`{module_path}` matches shared_paths pattern `{shared_pattern}`"),
+            format!(
+                "`{}` belongs to feature `{}` (pattern `{}`)",
+                imp.path, target_feature.name, target_feature.module
+            ),
+            "shared infrastructure must not depend on any feature".into(),
+        ],
+        suggested_fix: Some(
+            "invert the dependency: the feature should depend on the shared module \
+             (move the call into the feature, or extract the shared module's \
+             responsibility into a port the feature provides)"
+                .into(),
+        ),
+    }
 }
 
 /// DG004 — shared module reaching feature-specific code.
@@ -368,30 +419,13 @@ pub fn dg004(air: &AirWorkspace, section: &DgSection, mode: CheckMode) -> Vec<Di
                 let Some(target_feature) = owning_feature(&section.features, &imp.path) else {
                     continue;
                 };
-                out.push(Diagnostic {
-                    rule_id: "DG004".to_string(),
-                    severity: mode.elevate(Severity::Fatal),
-                    span: imp.span.clone(),
-                    concept: None,
-                    message: format!(
-                        "shared module `{module_path}` imports feature `{}` via `{}`",
-                        target_feature.name, imp.path
-                    ),
-                    why: vec![
-                        format!("`{module_path}` matches shared_paths pattern `{shared_pattern}`"),
-                        format!(
-                            "`{}` belongs to feature `{}` (pattern `{}`)",
-                            imp.path, target_feature.name, target_feature.module
-                        ),
-                        "shared infrastructure must not depend on any feature".into(),
-                    ],
-                    suggested_fix: Some(
-                        "invert the dependency: the feature should depend on the shared module \
-                         (move the call into the feature, or extract the shared module's \
-                         responsibility into a port the feature provides)"
-                            .into(),
-                    ),
-                });
+                out.push(dg004_diagnostic(
+                    module_path,
+                    imp,
+                    shared_pattern,
+                    target_feature,
+                    mode,
+                ));
             }
         }
     }

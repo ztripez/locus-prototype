@@ -28,6 +28,43 @@ use locus_air::{AirItem, AirWorkspace, TypeKind, Visibility};
 use super::lockfile_schema::{TaSection, matches_pattern};
 use crate::diagnostics::{CheckMode, Diagnostic, Severity};
 
+fn ta001_diagnostic(
+    ty: &locus_air::AirType,
+    module_path: &str,
+    pattern: &str,
+    mode: CheckMode,
+) -> Diagnostic {
+    Diagnostic {
+        rule_id: "TA001".to_string(),
+        severity: mode.elevate(Severity::Warning),
+        span: ty.span.clone(),
+        concept: None,
+        message: format!(
+            "test module `{module_path}` defines public type `{}` \
+             (matched test pattern `{pattern}`)",
+            ty.name
+        ),
+        why: vec![
+            format!("module `{module_path}` matches test pattern `{pattern}`"),
+            format!(
+                "public type `{}` (`{}`, visibility `{:?}`)",
+                ty.name, ty.symbol, ty.visibility
+            ),
+            "test modules must not create new domain truth; a public type \
+             in test code is typically a shadow of a domain concept that \
+             should live on the canonical production path"
+                .into(),
+        ],
+        suggested_fix: Some(format!(
+            "demote `{}` to non-`pub` if it's only used inside this test \
+             module; or move it out of the test module if it's actually \
+             shared production code; or accept this test module as a \
+             legitimate public-fixture surface (future TA mechanism)",
+            ty.name
+        )),
+    }
+}
+
 /// TA001 — test module defines a public domain-shaped type.
 ///
 /// For every `AirFile` whose `module_path` matches any pattern in
@@ -61,39 +98,51 @@ pub fn ta001(air: &AirWorkspace, section: &TaSection, mode: CheckMode) -> Vec<Di
                 if ty.visibility != Visibility::Public {
                     continue;
                 }
-                out.push(Diagnostic {
-                    rule_id: "TA001".to_string(),
-                    severity: mode.elevate(Severity::Warning),
-                    span: ty.span.clone(),
-                    concept: None,
-                    message: format!(
-                        "test module `{module_path}` defines public type `{}` \
-                         (matched test pattern `{pattern}`)",
-                        ty.name
-                    ),
-                    why: vec![
-                        format!("module `{module_path}` matches test pattern `{pattern}`"),
-                        format!(
-                            "public type `{}` (`{}`, visibility `{:?}`)",
-                            ty.name, ty.symbol, ty.visibility
-                        ),
-                        "test modules must not create new domain truth; a public type \
-                         in test code is typically a shadow of a domain concept that \
-                         should live on the canonical production path"
-                            .into(),
-                    ],
-                    suggested_fix: Some(format!(
-                        "demote `{}` to non-`pub` if it's only used inside this test \
-                         module; or move it out of the test module if it's actually \
-                         shared production code; or accept this test module as a \
-                         legitimate public-fixture surface (future TA mechanism)",
-                        ty.name
-                    )),
-                });
+                out.push(ta001_diagnostic(ty, module_path, pattern, mode));
             }
         }
     }
     out
+}
+
+fn ta002_diagnostic(
+    ty: &locus_air::AirType,
+    module_path: &str,
+    test_pattern: &str,
+    name_pattern: &str,
+    mode: CheckMode,
+) -> Diagnostic {
+    Diagnostic {
+        rule_id: "TA002".to_string(),
+        severity: mode.elevate(Severity::Warning),
+        span: ty.span.clone(),
+        concept: None,
+        message: format!(
+            "test module `{module_path}` defines type `{}` whose name \
+             matches accepted canonical pattern `{name_pattern}`",
+            ty.name
+        ),
+        why: vec![
+            format!("module `{module_path}` matches test pattern `{test_pattern}`"),
+            format!(
+                "type name `{}` matches `paradigms.TA.canonical_name_patterns` \
+                 entry `{name_pattern}`",
+                ty.name
+            ),
+            "test types that re-use canonical names shadow the production \
+             concept; even private duplicates drift over time and obscure \
+             where the real definition lives"
+                .into(),
+        ],
+        suggested_fix: Some(format!(
+            "rename `{}` to a test-scoped identifier (e.g. `Test{0}` or \
+             `{0}Fixture`), import the canonical type instead of redefining \
+             it, or — if this name is genuinely unrelated to the domain \
+             concept — narrow `paradigms.TA.canonical_name_patterns` so it \
+             no longer matches",
+            ty.name
+        )),
+    }
 }
 
 /// TA002 — test type whose name overlaps an accepted canonical concept.
@@ -139,41 +188,57 @@ pub fn ta002(air: &AirWorkspace, section: &TaSection, mode: CheckMode) -> Vec<Di
                 else {
                     continue;
                 };
-                out.push(Diagnostic {
-                    rule_id: "TA002".to_string(),
-                    severity: mode.elevate(Severity::Warning),
-                    span: ty.span.clone(),
-                    concept: None,
-                    message: format!(
-                        "test module `{module_path}` defines type `{}` whose name \
-                         matches accepted canonical pattern `{name_pattern}`",
-                        ty.name
-                    ),
-                    why: vec![
-                        format!("module `{module_path}` matches test pattern `{test_pattern}`"),
-                        format!(
-                            "type name `{}` matches `paradigms.TA.canonical_name_patterns` \
-                             entry `{name_pattern}`",
-                            ty.name
-                        ),
-                        "test types that re-use canonical names shadow the production \
-                         concept; even private duplicates drift over time and obscure \
-                         where the real definition lives"
-                            .into(),
-                    ],
-                    suggested_fix: Some(format!(
-                        "rename `{}` to a test-scoped identifier (e.g. `Test{0}` or \
-                         `{0}Fixture`), import the canonical type instead of redefining \
-                         it, or — if this name is genuinely unrelated to the domain \
-                         concept — narrow `paradigms.TA.canonical_name_patterns` so it \
-                         no longer matches",
-                        ty.name
-                    )),
-                });
+                out.push(ta002_diagnostic(ty, module_path, test_pattern, name_pattern, mode));
             }
         }
     }
     out
+}
+
+fn ta003_diagnostic(
+    ty: &locus_air::AirType,
+    module_path: &str,
+    test_pattern: &str,
+    name_pattern: &str,
+    overlap: f32,
+    canonical_set: &[String],
+    mode: CheckMode,
+) -> Diagnostic {
+    Diagnostic {
+        rule_id: "TA003".to_string(),
+        severity: mode.elevate(Severity::Warning),
+        span: ty.span.clone(),
+        concept: None,
+        message: format!(
+            "test struct `{}` in `{module_path}` shadows a canonical \
+             concept (name overlap with pattern `{name_pattern}`, field \
+             Jaccard {overlap:.2} against canonical field set)",
+            ty.name,
+        ),
+        why: vec![
+            format!("module `{module_path}` matches test pattern `{test_pattern}`"),
+            format!(
+                "struct name `{}` contains canonical pattern `{name_pattern}`",
+                ty.name
+            ),
+            format!(
+                "field-set Jaccard overlap {overlap:.2} >= 0.5 against canonical \
+                 field set `{canonical_set:?}`",
+            ),
+            "test structs that mirror canonical names *and* canonical \
+             field shapes are the spec's shape-shadow anti-pattern: \
+             agents recreate domain truth in test code rather than \
+             using the real type"
+                .into(),
+        ],
+        suggested_fix: Some(format!(
+            "import the canonical struct and construct it directly in this \
+             test, or, if this fixture is genuinely a different concept \
+             that just happens to share a few field names, rename it to \
+             break the name overlap (e.g. `{}_TestStub`)",
+            ty.name
+        )),
+    }
 }
 
 /// TA003 — test struct whose name and field shape both echo a canonical concept.
@@ -239,46 +304,60 @@ pub fn ta003(air: &AirWorkspace, section: &TaSection, mode: CheckMode) -> Vec<Di
                 if overlap < 0.5 {
                     continue;
                 }
-                out.push(Diagnostic {
-                    rule_id: "TA003".to_string(),
-                    severity: mode.elevate(Severity::Warning),
-                    span: ty.span.clone(),
-                    concept: None,
-                    message: format!(
-                        "test struct `{}` in `{module_path}` shadows a canonical \
-                         concept (name overlap with pattern `{name_pattern}`, field \
-                         Jaccard {:.2} against canonical field set)",
-                        ty.name, overlap,
-                    ),
-                    why: vec![
-                        format!("module `{module_path}` matches test pattern `{test_pattern}`"),
-                        format!(
-                            "struct name `{}` contains canonical pattern `{name_pattern}`",
-                            ty.name
-                        ),
-                        format!(
-                            "field-set Jaccard overlap {:.2} >= 0.5 against canonical \
-                             field set `{:?}`",
-                            overlap, canonical_set
-                        ),
-                        "test structs that mirror canonical names *and* canonical \
-                         field shapes are the spec's shape-shadow anti-pattern: \
-                         agents recreate domain truth in test code rather than \
-                         using the real type"
-                            .into(),
-                    ],
-                    suggested_fix: Some(format!(
-                        "import the canonical struct and construct it directly in this \
-                         test, or, if this fixture is genuinely a different concept \
-                         that just happens to share a few field names, rename it to \
-                         break the name overlap (e.g. `{}_TestStub`)",
-                        ty.name
-                    )),
-                });
+                out.push(ta003_diagnostic(
+                    ty,
+                    module_path,
+                    test_pattern,
+                    name_pattern,
+                    overlap,
+                    canonical_set,
+                    mode,
+                ));
             }
         }
     }
     out
+}
+
+fn ta004_diagnostic(
+    imp: &locus_air::AirImplBlock,
+    module_path: &str,
+    test_pattern: &str,
+    trait_path: &str,
+    port_pattern: &str,
+    mode: CheckMode,
+) -> Diagnostic {
+    Diagnostic {
+        rule_id: "TA004".to_string(),
+        severity: mode.elevate(Severity::Warning),
+        span: imp.span.clone(),
+        concept: None,
+        message: format!(
+            "port impl `impl {trait_path} for {}` in test module `{module_path}` \
+             lives outside any `paradigms.TA.accepted_test_adapter_paths`",
+            imp.target_type,
+        ),
+        why: vec![
+            format!("module `{module_path}` matches test pattern `{test_pattern}`"),
+            format!("trait path `{trait_path}` matches port pattern `{port_pattern}`"),
+            format!(
+                "module `{module_path}` matches no \
+                 `paradigms.TA.accepted_test_adapter_paths` pattern"
+            ),
+            "test adapters belong on a declared adapter path (e.g. \
+             `tests::support::*`); inline port impls inside test files \
+             drift from the production adapter contract"
+                .into(),
+        ],
+        suggested_fix: Some(format!(
+            "move `impl {trait_path} for {}` to a dedicated test-adapter \
+             module (and add that module to \
+             `paradigms.TA.accepted_test_adapter_paths` in `locus.lock`), \
+             or — if this trait isn't really a port — narrow \
+             `paradigms.TA.port_trait_patterns` so it no longer matches",
+            imp.target_type,
+        )),
+    }
 }
 
 /// TA004 — port impl in a test file that isn't an accepted test-adapter home.
@@ -337,37 +416,14 @@ pub fn ta004(air: &AirWorkspace, section: &TaSection, mode: CheckMode) -> Vec<Di
                 }) else {
                     continue;
                 };
-                out.push(Diagnostic {
-                    rule_id: "TA004".to_string(),
-                    severity: mode.elevate(Severity::Warning),
-                    span: imp.span.clone(),
-                    concept: None,
-                    message: format!(
-                        "port impl `impl {trait_path} for {}` in test module `{module_path}` \
-                         lives outside any `paradigms.TA.accepted_test_adapter_paths`",
-                        imp.target_type,
-                    ),
-                    why: vec![
-                        format!("module `{module_path}` matches test pattern `{test_pattern}`"),
-                        format!("trait path `{trait_path}` matches port pattern `{port_pattern}`"),
-                        format!(
-                            "module `{module_path}` matches no \
-                             `paradigms.TA.accepted_test_adapter_paths` pattern"
-                        ),
-                        "test adapters belong on a declared adapter path (e.g. \
-                         `tests::support::*`); inline port impls inside test files \
-                         drift from the production adapter contract"
-                            .into(),
-                    ],
-                    suggested_fix: Some(format!(
-                        "move `impl {trait_path} for {}` to a dedicated test-adapter \
-                         module (and add that module to \
-                         `paradigms.TA.accepted_test_adapter_paths` in `locus.lock`), \
-                         or — if this trait isn't really a port — narrow \
-                         `paradigms.TA.port_trait_patterns` so it no longer matches",
-                        imp.target_type,
-                    )),
-                });
+                out.push(ta004_diagnostic(
+                    imp,
+                    module_path,
+                    test_pattern,
+                    trait_path,
+                    port_pattern,
+                    mode,
+                ));
             }
         }
     }

@@ -266,33 +266,37 @@ pub fn ob004(air: &AirWorkspace, _section: &ObSection, mode: CheckMode) -> Vec<D
             Some((_, fn_span)) => fn_span,
             None => AirSpan::new("<unknown>", 0, 0),
         };
-        out.push(Diagnostic {
-            rule_id: "OB004".to_string(),
-            severity: mode.elevate(Severity::Warning),
-            span,
-            concept: None,
-            message: format!(
-                "boundary entry function `{symbol}` has no observability — \
-                 every entry should emit at least one logging / metric / \
-                 event call"
-            ),
-            why: vec![
-                format!("function `{symbol}` carries `BoundaryEntry` marker"),
-                format!("no `Logging` fact targets `{symbol}`"),
-                "boundary entries are the audit / debug surface — silent \
-                 entries make outage triage and request tracing impossible"
-                    .to_string(),
-            ],
-            suggested_fix: Some(format!(
-                "emit at least one structured log line at the entry of \
-                 `{symbol}` (e.g. `tracing::info!(\"entering boundary\", \
-                 request_id = %id)`), or a metric counter increment, or a \
-                 span. The `paradigms.OB` lockfile section enumerates what \
-                 counts as logging in this codebase."
-            )),
-        });
+        out.push(ob004_diagnostic(symbol, span, mode));
     }
     out
+}
+
+fn ob004_diagnostic(symbol: &str, span: AirSpan, mode: CheckMode) -> Diagnostic {
+    Diagnostic {
+        rule_id: "OB004".to_string(),
+        severity: mode.elevate(Severity::Warning),
+        span,
+        concept: None,
+        message: format!(
+            "boundary entry function `{symbol}` has no observability — \
+             every entry should emit at least one logging / metric / \
+             event call"
+        ),
+        why: vec![
+            format!("function `{symbol}` carries `BoundaryEntry` marker"),
+            format!("no `Logging` fact targets `{symbol}`"),
+            "boundary entries are the audit / debug surface — silent \
+             entries make outage triage and request tracing impossible"
+                .to_string(),
+        ],
+        suggested_fix: Some(format!(
+            "emit at least one structured log line at the entry of \
+             `{symbol}` (e.g. `tracing::info!(\"entering boundary\", \
+             request_id = %id)`), or a metric counter increment, or a \
+             span. The `paradigms.OB` lockfile section enumerates what \
+             counts as logging in this codebase."
+        )),
+    }
 }
 
 #[allow(clippy::too_many_arguments)]

@@ -76,38 +76,8 @@ pub fn cr001(air: &AirWorkspace, section: &CrSection, mode: CheckMode) -> Vec<Di
                     .function
                     .as_deref()
                     .unwrap_or("(no enclosing function recorded)");
-                let module_label = if module_path.is_empty() {
-                    "(unknown module)"
-                } else {
-                    module_path
-                };
-                out.push(Diagnostic {
-                    rule_id: "CR001".to_string(),
-                    severity: mode.elevate(Severity::Fatal),
-                    span: a.span.clone(),
-                    concept: None,
-                    message: format!(
-                        "service-shaped construction of `{}` in module `{module_label}` \
-                         (matched suffix `{matched_suffix}`) outside any declared \
-                         composition root",
-                        a.target
-                    ),
-                    why: vec![
-                        format!(
-                            "module `{module_label}` matches none of the \
-                             `composition_root_paths` patterns"
-                        ),
-                        format!("target `{}` ends with `{matched_suffix}`", a.target),
-                        format!("enclosing function: `{function_label}`"),
-                    ],
-                    suggested_fix: Some(format!(
-                        "move the construction of `{}` into a composition root \
-                         (e.g. `main`, a `wire` module, or a declared composition \
-                         module), or accept this file by adding its module to \
-                         `paradigms.CR.composition_root_paths`",
-                        a.target
-                    )),
-                });
+                let module_label = if module_path.is_empty() { "(unknown module)" } else { module_path };
+                out.push(cr001_diagnostic(a, module_label, matched_suffix, function_label, mode));
             }
         }
     }
@@ -174,44 +144,80 @@ pub fn cr002(air: &AirWorkspace, section: &CrSection, mode: CheckMode) -> Vec<Di
                 if count < section.wiring_density_threshold {
                     continue;
                 }
-                out.push(Diagnostic {
-                    rule_id: "CR002".to_string(),
-                    severity: mode.elevate(Severity::Warning),
-                    span,
-                    concept: None,
-                    message: format!(
-                        "function `{func}` in composition root `{module_path}` \
-                         constructs {count} services in a single function \
-                         (threshold {})",
-                        section.wiring_density_threshold
-                    ),
-                    why: vec![
-                        format!(
-                            "module `{module_path}` matches a \
-                             `composition_root_paths` pattern"
-                        ),
-                        format!(
-                            "{count} `Construct` actions are recorded with \
-                             enclosing function `{func}`"
-                        ),
-                        format!(
-                            "threshold is `wiring_density_threshold = {}`",
-                            section.wiring_density_threshold
-                        ),
-                    ],
-                    suggested_fix: Some(format!(
-                        "split `{func}` into sub-functions or sub-modules \
-                         (e.g. `wire_persistence`, `wire_http`); the \
-                         composition root remains the single owner of \
-                         construction, but the wiring stops being a wall of \
-                         text. If this density is intentional, raise \
-                         `paradigms.CR.wiring_density_threshold` in `locus.lock`"
-                    )),
-                });
+                out.push(cr002_diagnostic(&func, module_path, count, span, section.wiring_density_threshold, mode));
             }
         }
     }
     out
+}
+
+fn cr001_diagnostic(
+    a: &locus_air::AirTruthAction,
+    module_label: &str,
+    matched_suffix: &str,
+    function_label: &str,
+    mode: CheckMode,
+) -> Diagnostic {
+    Diagnostic {
+        rule_id: "CR001".to_string(),
+        severity: mode.elevate(Severity::Fatal),
+        span: a.span.clone(),
+        concept: None,
+        message: format!(
+            "service-shaped construction of `{}` in module `{module_label}` \
+             (matched suffix `{matched_suffix}`) outside any declared \
+             composition root",
+            a.target
+        ),
+        why: vec![
+            format!(
+                "module `{module_label}` matches none of the \
+                 `composition_root_paths` patterns"
+            ),
+            format!("target `{}` ends with `{matched_suffix}`", a.target),
+            format!("enclosing function: `{function_label}`"),
+        ],
+        suggested_fix: Some(format!(
+            "move the construction of `{}` into a composition root \
+             (e.g. `main`, a `wire` module, or a declared composition \
+             module), or accept this file by adding its module to \
+             `paradigms.CR.composition_root_paths`",
+            a.target
+        )),
+    }
+}
+
+fn cr002_diagnostic(
+    func: &str,
+    module_path: &str,
+    count: u32,
+    span: AirSpan,
+    threshold: u32,
+    mode: CheckMode,
+) -> Diagnostic {
+    Diagnostic {
+        rule_id: "CR002".to_string(),
+        severity: mode.elevate(Severity::Warning),
+        span,
+        concept: None,
+        message: format!(
+            "function `{func}` in composition root `{module_path}` \
+             constructs {count} services in a single function (threshold {threshold})"
+        ),
+        why: vec![
+            format!("module `{module_path}` matches a `composition_root_paths` pattern"),
+            format!("{count} `Construct` actions are recorded with enclosing function `{func}`"),
+            format!("threshold is `wiring_density_threshold = {threshold}`"),
+        ],
+        suggested_fix: Some(format!(
+            "split `{func}` into sub-functions or sub-modules \
+             (e.g. `wire_persistence`, `wire_http`); the \
+             composition root remains the single owner of \
+             construction, but the wiring stops being a wall of \
+             text. If this density is intentional, raise \
+             `paradigms.CR.wiring_density_threshold` in `locus.lock`"
+        )),
+    }
 }
 
 /// Pattern matching duplicated locally to mirror DG/UT (suffix wildcards).

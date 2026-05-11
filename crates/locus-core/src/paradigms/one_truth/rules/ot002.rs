@@ -29,37 +29,42 @@ pub fn ot002(clusters: &[ConceptCluster], mode: CheckMode) -> Vec<Diagnostic> {
             if member.field_overlap < FIELD_OVERLAP_THRESHOLD {
                 continue;
             }
-
-            let mut why = vec![
-                format!(
-                    "overlaps {:.0}% with `{}` (canonical for `{}`)",
-                    member.field_overlap * 100.0,
-                    canonical.name,
-                    cluster.concept_id
-                ),
-                format!("name shares stem `{}`", cluster.stem),
-            ];
-            why.extend(member.reasons.iter().cloned());
-
-            let suggested_fix = format!(
-                "annotate as boundary: `// locus: ot boundary {} <boundary-name>` above `{}`, \
-                 or remove and use `{}` directly",
-                cluster.concept_id, member.name, canonical.symbol
-            );
-
-            out.push(Diagnostic {
-                rule_id: "OT002".to_string(),
-                severity: mode.elevate(Severity::Warning),
-                span: member.span.clone(),
-                concept: Some(cluster.concept_id.clone()),
-                message: format!(
-                    "`{}` is concept-shaped but not accepted as canonical or boundary",
-                    member.symbol
-                ),
-                why,
-                suggested_fix: Some(suggested_fix),
-            });
+            out.push(ot002_diagnostic(cluster, canonical, member, mode));
         }
     }
     out
+}
+
+fn ot002_diagnostic(
+    cluster: &super::super::infer::ConceptCluster,
+    canonical: &super::super::infer::ClusterMember,
+    member: &super::super::infer::ClusterMember,
+    mode: CheckMode,
+) -> Diagnostic {
+    let mut why = vec![
+        format!(
+            "overlaps {:.0}% with `{}` (canonical for `{}`)",
+            member.field_overlap * 100.0,
+            canonical.name,
+            cluster.concept_id
+        ),
+        format!("name shares stem `{}`", cluster.stem),
+    ];
+    why.extend(member.reasons.iter().cloned());
+    Diagnostic {
+        rule_id: "OT002".to_string(),
+        severity: mode.elevate(Severity::Warning),
+        span: member.span.clone(),
+        concept: Some(cluster.concept_id.clone()),
+        message: format!(
+            "`{}` is concept-shaped but not accepted as canonical or boundary",
+            member.symbol
+        ),
+        why,
+        suggested_fix: Some(format!(
+            "annotate as boundary: `// locus: ot boundary {} <boundary-name>` above `{}`, \
+             or remove and use `{}` directly",
+            cluster.concept_id, member.name, canonical.symbol
+        )),
+    }
 }

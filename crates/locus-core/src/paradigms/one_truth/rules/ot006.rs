@@ -54,29 +54,37 @@ pub fn ot006(air: &AirWorkspace, section: &OtSection, mode: CheckMode) -> Vec<Di
                 if accepted {
                     continue;
                 }
-                out.push(Diagnostic {
-                    rule_id: "OT006".to_string(),
-                    severity: mode.elevate(Severity::Warning),
-                    span: c.span.clone(),
-                    concept: Some(from_concept.clone()),
-                    message: format!(
-                        "`{}` converts between accepted symbols of concept `{}` \
-                         but is not recorded as an accepted converter",
-                        c.symbol, from_concept
-                    ),
-                    why: vec![
-                        format!("from `{}` (accepted)", c.from),
-                        format!("to `{}` (accepted)", c.to),
-                        format!("conversion symbol `{}` not in lockfile", c.symbol),
-                    ],
-                    suggested_fix: Some(
-                        "rerun `locus init` to refresh the lockfile, or add the \
-                         converter symbol manually under the concept's `converters` list"
-                            .to_string(),
-                    ),
-                });
+                out.push(ot006_diagnostic(c, from_concept, mode));
             }
         }
     }
     out
+}
+
+fn ot006_diagnostic(
+    c: &locus_air::AirConversion,
+    from_concept: &str,
+    mode: CheckMode,
+) -> Diagnostic {
+    Diagnostic {
+        rule_id: "OT006".to_string(),
+        severity: mode.elevate(Severity::Warning),
+        span: c.span.clone(),
+        concept: Some(from_concept.to_string()),
+        message: format!(
+            "`{}` converts between accepted symbols of concept `{}` \
+             but is not recorded as an accepted converter",
+            c.symbol, from_concept
+        ),
+        why: vec![
+            format!("from `{}` (accepted)", c.from),
+            format!("to `{}` (accepted)", c.to),
+            format!("conversion symbol `{}` not in lockfile", c.symbol),
+        ],
+        suggested_fix: Some(
+            "rerun `locus init` to refresh the lockfile, or add the \
+             converter symbol manually under the concept's `converters` list"
+                .to_string(),
+        ),
+    }
 }

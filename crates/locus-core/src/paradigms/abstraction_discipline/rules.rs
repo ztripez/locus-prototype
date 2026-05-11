@@ -32,27 +32,21 @@ use locus_air::{AirItem, AirSpan, AirWorkspace, TypeKind};
 use super::lockfile_schema::{AbSection, matches_name_pattern, matches_pattern};
 use crate::diagnostics::{CheckMode, Diagnostic, Severity};
 
-/// AB001 — trait declared in the workspace has exactly one impl.
-///
-/// Severity: Warning by default; Fatal under `--agent-strict` via
-/// [`CheckMode::elevate`]. Spec lists this as a heuristic: a single-impl
-/// trait might still be a real port awaiting its second environment, so
-/// blocking by default would be too aggressive. The escape hatch is the
-/// `accepted_single_impl_traits` list.
-///
-/// Unlike MO/UT, AB001 fires even on a fully default section: the spec is
-/// explicit that speculative abstraction should be flagged eagerly so users
-/// have to examine each occurrence and explicitly accept legitimate ports.
-pub fn ab001(air: &AirWorkspace, section: &AbSection, mode: CheckMode) -> Vec<Diagnostic> {
-    // Step 1: collect every declared trait — symbol → (short name, span).
-    // We keep declarations in source order across packages so diagnostic
-    // output is stable.
-    struct TraitDecl {
-        symbol: String,
-        name: String,
-        span: AirSpan,
-    }
-    let mut traits: Vec<TraitDecl> = Vec::new();
+struct TraitDecl {
+    symbol: String,
+    name: String,
+    span: AirSpan,
+}
+
+#[derive(Default)]
+struct ImplCount {
+    count: u32,
+    first_self_ty: Option<String>,
+}
+
+/// Collect every declared trait in workspace iteration order.
+fn collect_trait_decls(air: &AirWorkspace) -> Vec<TraitDecl> {
+    let mut traits = Vec::new();
     for pkg in &air.packages {
         for file in &pkg.files {
             for item in &file.items {
@@ -68,28 +62,23 @@ pub fn ab001(air: &AirWorkspace, section: &AbSection, mode: CheckMode) -> Vec<Di
             }
         }
     }
+    traits
+}
 
-    if traits.is_empty() {
-        return Vec::new();
-    }
-
-    // Step 2: count impls per declared trait. We index by both full symbol
-    // and short name so impls written against either form are caught.
-    //
-    // Tracking the lone impl's `self_ty` lets us name it in the diagnostic
-    // — that's the most useful piece of context for the developer.
-    #[derive(Default)]
-    struct ImplCount {
-        count: u32,
-        first_self_ty: Option<String>,
-    }
+/// Count impl blocks per trait, indexed by both full symbol and short name.
+/// Returns `(by_symbol, by_short, ambiguous_shorts)`.
+fn count_trait_impls<'a>(
+    air: &AirWorkspace,
+    traits: &'a [TraitDecl],
+) -> (
+    HashMap<&'a str, ImplCount>,
+    HashMap<&'a str, ImplCount>,
+    std::collections::HashSet<&'a str>,
+) {
     let mut by_symbol: HashMap<&str, ImplCount> = HashMap::new();
     let mut by_short: HashMap<&str, ImplCount> = HashMap::new();
-    // If two declared traits share a short name, the short-name index can't
-    // disambiguate. In that case we only trust full-symbol matches; any
-    // short-name fallback is suppressed by checking `ambiguous_shorts`.
     let mut short_name_seen: HashMap<&str, u32> = HashMap::new();
-    for t in &traits {
+    for t in traits {
         by_symbol.insert(t.symbol.as_str(), ImplCount::default());
         by_short.entry(t.name.as_str()).or_default();
         *short_name_seen.entry(t.name.as_str()).or_insert(0) += 1;
@@ -104,11 +93,8 @@ pub fn ab001(air: &AirWorkspace, section: &AbSection, mode: CheckMode) -> Vec<Di
             for item in &file.items {
                 let AirItem::Impl(im) = item else { continue };
                 let Some(trait_path) = im.interface.as_deref() else {
-                    // Inherent impl (`impl Foo`) — never counts toward a trait.
                     continue;
                 };
-
-                // Try full-symbol match first.
                 if let Some(slot) = by_symbol.get_mut(trait_path) {
                     slot.count += 1;
                     if slot.first_self_ty.is_none() {
@@ -116,10 +102,6 @@ pub fn ab001(air: &AirWorkspace, section: &AbSection, mode: CheckMode) -> Vec<Di
                     }
                     continue;
                 }
-
-                // Suffix fallback: an impl's `trait_path` ends with the
-                // trait's short name (e.g. `ports::Clock` matches a trait
-                // declared as `crate::ports::Clock`). Skip ambiguous shorts.
                 let short = trait_path.rsplit("::").next().unwrap_or(trait_path);
                 if ambiguous_shorts.contains(short) {
                     continue;
@@ -133,13 +115,58 @@ pub fn ab001(air: &AirWorkspace, section: &AbSection, mode: CheckMode) -> Vec<Di
             }
         }
     }
+    (by_symbol, by_short, ambiguous_shorts)
+}
 
-    // Step 3: emit one diagnostic per single-impl trait, in declaration order.
+fn ab001_diagnostic(t: &TraitDecl, lone: &str, mode: CheckMode) -> Diagnostic {
+    Diagnostic {
+        rule_id: "AB001".to_string(),
+        severity: mode.elevate(Severity::Warning),
+        span: t.span.clone(),
+        concept: None,
+        message: format!(
+            "trait `{}` has exactly one impl (`{}`) — likely speculative abstraction",
+            t.symbol, lone
+        ),
+        why: vec![
+            format!("trait symbol `{}`", t.symbol),
+            "impl count: 1".into(),
+            format!("only impl is for `{lone}`"),
+            "single-impl traits with no boundary role are usually \
+             speculative abstraction (the spec's manager / processor / \
+             DataHandler pattern)"
+                .into(),
+        ],
+        suggested_fix: Some(format!(
+            "remove the trait and use `{lone}` directly, or — if this is a \
+             genuine port awaiting a second impl (e.g. a test double in a \
+             separate environment) — add `{}` to \
+             `paradigms.AB.accepted_single_impl_traits` in `locus.lock`",
+            t.symbol
+        )),
+    }
+}
+
+/// AB001 — trait declared in the workspace has exactly one impl.
+///
+/// Severity: Warning by default; Fatal under `--agent-strict` via
+/// [`CheckMode::elevate`]. Spec lists this as a heuristic: a single-impl
+/// trait might still be a real port awaiting its second environment, so
+/// blocking by default would be too aggressive. The escape hatch is the
+/// `accepted_single_impl_traits` list.
+///
+/// Unlike MO/UT, AB001 fires even on a fully default section: the spec is
+/// explicit that speculative abstraction should be flagged eagerly so users
+/// have to examine each occurrence and explicitly accept legitimate ports.
+pub fn ab001(air: &AirWorkspace, section: &AbSection, mode: CheckMode) -> Vec<Diagnostic> {
+    let traits = collect_trait_decls(air);
+    if traits.is_empty() {
+        return Vec::new();
+    }
+    let (by_symbol, by_short, ambiguous_shorts) = count_trait_impls(air, &traits);
+
     let mut out = Vec::new();
     for t in &traits {
-        // Prefer the full-symbol slot, but fall back to short-name when full
-        // symbol got zero hits (because every impl referenced the trait by
-        // a shorter path).
         let by_sym = by_symbol.get(t.symbol.as_str());
         let by_sht = if ambiguous_shorts.contains(t.name.as_str()) {
             None
@@ -152,12 +179,9 @@ pub fn ab001(air: &AirWorkspace, section: &AbSection, mode: CheckMode) -> Vec<Di
             (Some(s), None) => (s.count, s.first_self_ty.clone()),
             (None, None) => (0, None),
         };
-
         if count != 1 {
             continue;
         }
-
-        // Exemption check: full symbol or short name, against any pattern.
         let exempted = section
             .accepted_single_impl_traits
             .iter()
@@ -165,37 +189,46 @@ pub fn ab001(air: &AirWorkspace, section: &AbSection, mode: CheckMode) -> Vec<Di
         if exempted {
             continue;
         }
-
         let lone = lone_self_ty.unwrap_or_else(|| "<unknown>".to_string());
-        out.push(Diagnostic {
-            rule_id: "AB001".to_string(),
-            severity: mode.elevate(Severity::Warning),
-            span: t.span.clone(),
-            concept: None,
-            message: format!(
-                "trait `{}` has exactly one impl (`{}`) — likely speculative abstraction",
-                t.symbol, lone
-            ),
-            why: vec![
-                format!("trait symbol `{}`", t.symbol),
-                "impl count: 1".into(),
-                format!("only impl is for `{lone}`"),
-                "single-impl traits with no boundary role are usually \
-                 speculative abstraction (the spec's manager / processor / \
-                 DataHandler pattern)"
-                    .into(),
-            ],
-            suggested_fix: Some(format!(
-                "remove the trait and use `{lone}` directly, or — if this is a \
-                 genuine port awaiting a second impl (e.g. a test double in a \
-                 separate environment) — add `{}` to \
-                 `paradigms.AB.accepted_single_impl_traits` in `locus.lock`",
-                t.symbol
-            )),
-        });
+        out.push(ab001_diagnostic(t, &lone, mode));
     }
-
     out
+}
+
+fn ab002_diagnostic(
+    ty: &locus_air::AirType,
+    kind_word: &str,
+    matched_pattern: &str,
+    mode: CheckMode,
+) -> Diagnostic {
+    Diagnostic {
+        rule_id: "AB002".to_string(),
+        severity: mode.elevate(Severity::Warning),
+        span: ty.span.clone(),
+        concept: None,
+        message: format!(
+            "{kind_word} `{}` is named after a generic role (`{matched_pattern}`) \
+             without an accepted abstraction record — likely \
+             manager/processor/coordinator anti-pattern",
+            ty.symbol
+        ),
+        why: vec![
+            format!("{kind_word} symbol `{}`", ty.symbol),
+            format!(
+                "short name `{}` matches suspect pattern `{matched_pattern}`",
+                ty.name
+            ),
+            "neither `accepted_single_impl_traits` nor `accepted_abstraction_names` \
+             covers this symbol"
+                .into(),
+        ],
+        suggested_fix: Some(format!(
+            "rename the type after the *domain concept it owns* (e.g. `UserManager` \
+             → `UserDirectory`), or — if this name is genuinely the right one — \
+             add `{}` to `paradigms.AB.accepted_abstraction_names` in `locus.lock`",
+            ty.symbol
+        )),
+    }
 }
 
 /// AB002 — manager/processor abstraction without accepted role.
@@ -238,9 +271,6 @@ pub fn ab002(air: &AirWorkspace, section: &AbSection, mode: CheckMode) -> Vec<Di
                 if !matches!(ty.kind, TypeKind::Trait | TypeKind::Struct) {
                     continue;
                 }
-
-                // Find the first matching suspect pattern; recording it
-                // gives the diagnostic a useful "why" anchor.
                 let Some(matched_pattern) = section
                     .suspect_abstraction_patterns
                     .iter()
@@ -248,10 +278,6 @@ pub fn ab002(air: &AirWorkspace, section: &AbSection, mode: CheckMode) -> Vec<Di
                 else {
                     continue;
                 };
-
-                // Exemption check: full symbol or short name, against
-                // either the AB001 single-impl-traits list or the AB002
-                // accepted-names list.
                 let exempted_by_single_impl = section
                     .accepted_single_impl_traits
                     .iter()
@@ -263,41 +289,12 @@ pub fn ab002(air: &AirWorkspace, section: &AbSection, mode: CheckMode) -> Vec<Di
                 if exempted_by_single_impl || exempted_by_name {
                     continue;
                 }
-
                 let kind_word = match ty.kind {
                     TypeKind::Trait => "trait",
                     TypeKind::Struct => "struct",
                     _ => unreachable!(),
                 };
-
-                out.push(Diagnostic {
-                    rule_id: "AB002".to_string(),
-                    severity: mode.elevate(Severity::Warning),
-                    span: ty.span.clone(),
-                    concept: None,
-                    message: format!(
-                        "{kind_word} `{}` is named after a generic role (`{matched_pattern}`) \
-                         without an accepted abstraction record — likely \
-                         manager/processor/coordinator anti-pattern",
-                        ty.symbol
-                    ),
-                    why: vec![
-                        format!("{kind_word} symbol `{}`", ty.symbol),
-                        format!(
-                            "short name `{}` matches suspect pattern `{matched_pattern}`",
-                            ty.name
-                        ),
-                        "neither `accepted_single_impl_traits` nor `accepted_abstraction_names` \
-                         covers this symbol"
-                            .into(),
-                    ],
-                    suggested_fix: Some(format!(
-                        "rename the type after the *domain concept it owns* (e.g. `UserManager` \
-                         → `UserDirectory`), or — if this name is genuinely the right one — \
-                         add `{}` to `paradigms.AB.accepted_abstraction_names` in `locus.lock`",
-                        ty.symbol
-                    )),
-                });
+                out.push(ab002_diagnostic(ty, kind_word, matched_pattern, mode));
             }
         }
     }

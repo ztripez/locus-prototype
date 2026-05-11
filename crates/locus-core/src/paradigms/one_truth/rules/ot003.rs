@@ -18,9 +18,15 @@ use super::super::lockfile_schema::OtSection;
 use super::helpers::{file_of_symbol, type_text_references};
 use crate::diagnostics::{CheckMode, Diagnostic, Severity};
 
-pub fn ot003(air: &AirWorkspace, section: &OtSection, mode: CheckMode) -> Vec<Diagnostic> {
+/// Collect the boundary context for OT003:
+/// - boundary_files: set of file paths that define accepted boundary symbols
+/// - boundary_short_names: list of (short_name, concept_id) pairs
+fn collect_ot003_boundaries(
+    air: &AirWorkspace,
+    section: &OtSection,
+) -> (BTreeSet<String>, Vec<(String, String)>) {
     let mut boundary_files: BTreeSet<String> = BTreeSet::new();
-    let mut boundary_short_names: Vec<(String, String)> = Vec::new(); // (short, concept)
+    let mut boundary_short_names: Vec<(String, String)> = Vec::new();
     for (concept_id, entry) in &section.concepts {
         for b in &entry.boundaries {
             if let Some(file_path) = file_of_symbol(air, &b.symbol) {
@@ -31,6 +37,44 @@ pub fn ot003(air: &AirWorkspace, section: &OtSection, mode: CheckMode) -> Vec<Di
             }
         }
     }
+    (boundary_files, boundary_short_names)
+}
+
+/// Scan one function for OT003 hits; push diagnostics into `out`.
+fn ot003_scan_function(
+    f: &locus_air::AirFunction,
+    boundary_short_names: &[(String, String)],
+    accepted_converters: &BTreeSet<&str>,
+    mode: CheckMode,
+    out: &mut Vec<Diagnostic>,
+) {
+    if accepted_converters.contains(f.symbol.as_str()) {
+        return;
+    }
+    // Aggregate every boundary referenced in any signature slot; one
+    // diagnostic per (function, boundary) is enough.
+    let mut hits: BTreeMap<String, String> = BTreeMap::new();
+    for (_, ty_text) in &f.params {
+        for (short, concept) in boundary_short_names {
+            if type_text_references(ty_text, short) {
+                hits.entry(short.clone()).or_insert_with(|| concept.clone());
+            }
+        }
+    }
+    if let Some(ret) = &f.return_type {
+        for (short, concept) in boundary_short_names {
+            if type_text_references(ret, short) {
+                hits.entry(short.clone()).or_insert_with(|| concept.clone());
+            }
+        }
+    }
+    for (short, concept) in hits {
+        out.push(ot003_diagnostic(f, &short, &concept, mode));
+    }
+}
+
+pub fn ot003(air: &AirWorkspace, section: &OtSection, mode: CheckMode) -> Vec<Diagnostic> {
+    let (boundary_files, boundary_short_names) = collect_ot003_boundaries(air, section);
     if boundary_short_names.is_empty() {
         return Vec::new();
     }
@@ -50,54 +94,42 @@ pub fn ot003(air: &AirWorkspace, section: &OtSection, mode: CheckMode) -> Vec<Di
                 let AirItem::Function(f) = item else {
                     continue;
                 };
-                if accepted_converters.contains(f.symbol.as_str()) {
-                    continue;
-                }
-                // Aggregate every boundary referenced in any signature slot,
-                // emit one diagnostic per (function, boundary). Multiple
-                // diagnostics for the same boundary in different params would
-                // be noise; one is enough.
-                let mut hits: BTreeMap<String, String> = BTreeMap::new(); // short → concept
-                for (_, ty_text) in &f.params {
-                    for (short, concept) in &boundary_short_names {
-                        if type_text_references(ty_text, short) {
-                            hits.entry(short.clone()).or_insert_with(|| concept.clone());
-                        }
-                    }
-                }
-                if let Some(ret) = &f.return_type {
-                    for (short, concept) in &boundary_short_names {
-                        if type_text_references(ret, short) {
-                            hits.entry(short.clone()).or_insert_with(|| concept.clone());
-                        }
-                    }
-                }
-                for (short, concept) in hits {
-                    out.push(Diagnostic {
-                        rule_id: "OT003".to_string(),
-                        severity: mode.elevate(Severity::Fatal),
-                        span: f.span.clone(),
-                        concept: Some(concept.clone()),
-                        message: format!(
-                            "function `{}` exposes boundary type `{}` in its signature; \
-                             boundary types must be converted before crossing into \
-                             domain/application code",
-                            f.symbol, short
-                        ),
-                        why: vec![
-                            format!("file `{}` is not a boundary file (no accepted boundary lives here)", f.span.file),
-                            format!("`{short}` is the accepted boundary for concept `{concept}`"),
-                            format!("`{}` is not an accepted converter", f.symbol),
-                        ],
-                        suggested_fix: Some(format!(
-                            "convert `{short}` at the edge: \
-                             `let domain = canonical_for_{concept}::try_from(value)?;`, \
-                             then take the canonical type in this signature instead"
-                        )),
-                    });
-                }
+                ot003_scan_function(f, &boundary_short_names, &accepted_converters, mode, &mut out);
             }
         }
     }
     out
+}
+
+fn ot003_diagnostic(
+    f: &locus_air::AirFunction,
+    short: &str,
+    concept: &str,
+    mode: CheckMode,
+) -> Diagnostic {
+    Diagnostic {
+        rule_id: "OT003".to_string(),
+        severity: mode.elevate(Severity::Fatal),
+        span: f.span.clone(),
+        concept: Some(concept.to_string()),
+        message: format!(
+            "function `{}` exposes boundary type `{}` in its signature; \
+             boundary types must be converted before crossing into \
+             domain/application code",
+            f.symbol, short
+        ),
+        why: vec![
+            format!(
+                "file `{}` is not a boundary file (no accepted boundary lives here)",
+                f.span.file
+            ),
+            format!("`{short}` is the accepted boundary for concept `{concept}`"),
+            format!("`{}` is not an accepted converter", f.symbol),
+        ],
+        suggested_fix: Some(format!(
+            "convert `{short}` at the edge: \
+             `let domain = canonical_for_{concept}::try_from(value)?;`, \
+             then take the canonical type in this signature instead"
+        )),
+    }
 }

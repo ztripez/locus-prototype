@@ -30,6 +30,73 @@ use locus_air::{AirItem, AirWorkspace, Visibility};
 use super::lockfile_schema::{DcSection, matches_pattern};
 use crate::diagnostics::{CheckMode, Diagnostic, Severity};
 
+fn dc001_diagnostic_for_type(
+    ty: &locus_air::AirType,
+    module_label: &str,
+    mode: CheckMode,
+) -> Diagnostic {
+    Diagnostic {
+        rule_id: "DC001".to_string(),
+        severity: mode.elevate(Severity::Warning),
+        span: ty.span.clone(),
+        concept: None,
+        message: format!("public type `{}` in `{module_label}` has no doc comment", ty.name),
+        why: vec![
+            format!("type `{}` (`{}`)", ty.name, ty.symbol),
+            "visibility is Public".into(),
+            "doc is None (no `///` or `#[doc = \"...\"]` text)".into(),
+            format!(
+                "module `{module_label}` did not match any \
+                 `paradigms.DC.exempt_paths` pattern"
+            ),
+        ],
+        suggested_fix: Some(format!(
+            "add a `///` doc comment on `{}` describing why it exists \
+             and what invariant it carries; if this region is \
+             intentionally undocumented, add a pattern to \
+             `paradigms.DC.exempt_paths` (e.g. `{module_label}` or a \
+             `parent::*` wildcard) — see `docs/PARADIGMS.md` \
+             §\"Paradigm 17: Documentation / Comment Ownership\"",
+            ty.name,
+        )),
+    }
+}
+
+fn dc001_diagnostic_for_fn(
+    func: &locus_air::AirFunction,
+    module_label: &str,
+    mode: CheckMode,
+) -> Diagnostic {
+    Diagnostic {
+        rule_id: "DC001".to_string(),
+        severity: mode.elevate(Severity::Warning),
+        span: func.span.clone(),
+        concept: None,
+        message: format!(
+            "public function `{}` in `{module_label}` has no doc comment",
+            func.name
+        ),
+        why: vec![
+            format!("function `{}` (`{}`)", func.name, func.symbol),
+            "visibility is Public".into(),
+            "doc is None (no `///` or `#[doc = \"...\"]` text)".into(),
+            format!(
+                "module `{module_label}` did not match any \
+                 `paradigms.DC.exempt_paths` pattern"
+            ),
+        ],
+        suggested_fix: Some(format!(
+            "add a `///` doc comment on `{}` describing why it exists \
+             and what invariant it carries; if this region is \
+             intentionally undocumented, add a pattern to \
+             `paradigms.DC.exempt_paths` (e.g. `{module_label}` or a \
+             `parent::*` wildcard) — see `docs/PARADIGMS.md` \
+             §\"Paradigm 17: Documentation / Comment Ownership\"",
+            func.name,
+        )),
+    }
+}
+
 /// DC001 — public API has no doc comment.
 ///
 /// For every `AirFile` whose `module_path` does *not* match any pattern in
@@ -51,10 +118,6 @@ pub fn dc001(air: &AirWorkspace, section: &DcSection, mode: CheckMode) -> Vec<Di
     let mut out = Vec::new();
     for pkg in &air.packages {
         for file in &pkg.files {
-            // Files without a module_path can't be matched against
-            // exempt_paths. Treat them as non-exempt — the rule still
-            // applies, falling back on the file `path` for diagnostic
-            // text.
             let module_path = file.module_path.as_deref();
             if let Some(mp) = module_path
                 && section
@@ -65,80 +128,17 @@ pub fn dc001(air: &AirWorkspace, section: &DcSection, mode: CheckMode) -> Vec<Di
                 continue;
             }
             let module_label = module_path.unwrap_or(&file.path);
-
             for item in &file.items {
                 match item {
                     AirItem::Type(ty) => {
-                        if ty.visibility != Visibility::Public {
-                            continue;
+                        if ty.visibility == Visibility::Public && ty.doc.is_none() {
+                            out.push(dc001_diagnostic_for_type(ty, module_label, mode));
                         }
-                        if ty.doc.is_some() {
-                            continue;
-                        }
-                        out.push(Diagnostic {
-                            rule_id: "DC001".to_string(),
-                            severity: mode.elevate(Severity::Warning),
-                            span: ty.span.clone(),
-                            concept: None,
-                            message: format!(
-                                "public type `{}` in `{}` has no doc comment",
-                                ty.name, module_label,
-                            ),
-                            why: vec![
-                                format!("type `{}` (`{}`)", ty.name, ty.symbol),
-                                "visibility is Public".into(),
-                                "doc is None (no `///` or `#[doc = \"...\"]` text)".into(),
-                                format!(
-                                    "module `{module_label}` did not match any \
-                                     `paradigms.DC.exempt_paths` pattern"
-                                ),
-                            ],
-                            suggested_fix: Some(format!(
-                                "add a `///` doc comment on `{}` describing why it exists \
-                                 and what invariant it carries; if this region is \
-                                 intentionally undocumented, add a pattern to \
-                                 `paradigms.DC.exempt_paths` (e.g. `{module_label}` or a \
-                                 `parent::*` wildcard) — see `docs/PARADIGMS.md` \
-                                 §\"Paradigm 17: Documentation / Comment Ownership\"",
-                                ty.name,
-                            )),
-                        });
                     }
                     AirItem::Function(func) => {
-                        if func.visibility != Visibility::Public {
-                            continue;
+                        if func.visibility == Visibility::Public && func.doc.is_none() {
+                            out.push(dc001_diagnostic_for_fn(func, module_label, mode));
                         }
-                        if func.doc.is_some() {
-                            continue;
-                        }
-                        out.push(Diagnostic {
-                            rule_id: "DC001".to_string(),
-                            severity: mode.elevate(Severity::Warning),
-                            span: func.span.clone(),
-                            concept: None,
-                            message: format!(
-                                "public function `{}` in `{}` has no doc comment",
-                                func.name, module_label,
-                            ),
-                            why: vec![
-                                format!("function `{}` (`{}`)", func.name, func.symbol),
-                                "visibility is Public".into(),
-                                "doc is None (no `///` or `#[doc = \"...\"]` text)".into(),
-                                format!(
-                                    "module `{module_label}` did not match any \
-                                     `paradigms.DC.exempt_paths` pattern"
-                                ),
-                            ],
-                            suggested_fix: Some(format!(
-                                "add a `///` doc comment on `{}` describing why it exists \
-                                 and what invariant it carries; if this region is \
-                                 intentionally undocumented, add a pattern to \
-                                 `paradigms.DC.exempt_paths` (e.g. `{module_label}` or a \
-                                 `parent::*` wildcard) — see `docs/PARADIGMS.md` \
-                                 §\"Paradigm 17: Documentation / Comment Ownership\"",
-                                func.name,
-                            )),
-                        });
                     }
                     _ => {}
                 }
@@ -146,6 +146,45 @@ pub fn dc001(air: &AirWorkspace, section: &DcSection, mode: CheckMode) -> Vec<Di
         }
     }
     out
+}
+
+fn dc002_diagnostic(
+    kind_label: &str,
+    name: &str,
+    symbol: &str,
+    module_label: &str,
+    matched_alias: &str,
+    alias_note: &str,
+    confidence: f32,
+    span: locus_air::AirSpan,
+    severity: Severity,
+) -> Diagnostic {
+    Diagnostic {
+        rule_id: "DC002".to_string(),
+        severity,
+        span,
+        concept: None,
+        message: format!(
+            "public {kind_label} `{name}` in `{module_label}` has a doc \
+             comment containing forbidden phrase `{matched_alias}`{alias_note}"
+        ),
+        why: vec![
+            format!("{kind_label} `{name}` (`{symbol}`)"),
+            format!("matched phrase `{matched_alias}`{alias_note}"),
+            format!("phrase confidence {confidence:.2}"),
+            "doc text contains phrase suggesting LLM transcript residue \
+             or stale planning notes"
+                .into(),
+        ],
+        suggested_fix: Some(format!(
+            "rewrite the doc comment on `{name}` to describe what the \
+             {kind_label} *is* and what invariant it carries — not the \
+             conversation it came from. If the marker is intentional \
+             (e.g. a tracked `TODO`) and you want to keep it, demote or \
+             remove the matching entry from \
+             `paradigms.DC.forbidden_doc_phrases`."
+        )),
+    }
 }
 
 /// DC002 — public item's doc comment contains a forbidden phrase.
@@ -175,77 +214,80 @@ pub fn dc002(air: &AirWorkspace, section: &DcSection, mode: CheckMode) -> Vec<Di
         for file in &pkg.files {
             let module_label = file.module_path.as_deref().unwrap_or(&file.path);
             for item in &file.items {
-                let (kind_label, name, symbol, doc, span, vis) = match item {
-                    AirItem::Type(ty) => (
-                        "type",
-                        &ty.name,
-                        &ty.symbol,
-                        ty.doc.as_deref(),
-                        ty.span.clone(),
-                        ty.visibility,
-                    ),
-                    AirItem::Function(func) => (
-                        "function",
-                        &func.name,
-                        &func.symbol,
-                        func.doc.as_deref(),
-                        func.span.clone(),
-                        func.visibility,
-                    ),
-                    _ => continue,
-                };
-                if vis != Visibility::Public {
-                    continue;
-                }
-                let Some(doc_text) = doc else {
-                    continue;
-                };
-                let doc_lower = doc_text.to_lowercase();
-                for forbidden in &section.forbidden_doc_phrases {
-                    let Some(matched_alias) = matched_phrasing(&doc_lower, forbidden) else {
-                        continue;
-                    };
-                    let Some(severity) = Severity::from_confidence(forbidden.confidence, mode)
-                    else {
-                        continue;
-                    };
-                    let primary = &forbidden.phrase;
-                    let alias_note = if matched_alias == *primary {
-                        String::new()
-                    } else {
-                        format!(" (alias of `{primary}`)")
-                    };
-                    out.push(Diagnostic {
-                        rule_id: "DC002".to_string(),
-                        severity,
-                        span: span.clone(),
-                        concept: None,
-                        message: format!(
-                            "public {kind_label} `{name}` in `{module_label}` has a doc \
-                             comment containing forbidden phrase `{matched_alias}`{alias_note}"
-                        ),
-                        why: vec![
-                            format!("{kind_label} `{name}` (`{symbol}`)"),
-                            format!("matched phrase `{matched_alias}`{alias_note}"),
-                            format!("phrase confidence {:.2}", forbidden.confidence),
-                            "doc text contains phrase suggesting LLM transcript residue \
-                             or stale planning notes"
-                                .into(),
-                        ],
-                        suggested_fix: Some(format!(
-                            "rewrite the doc comment on `{name}` to describe what the \
-                             {kind_label} *is* and what invariant it carries — not the \
-                             conversation it came from. If the marker is intentional \
-                             (e.g. a tracked `TODO`) and you want to keep it, demote or \
-                             remove the matching entry from \
-                             `paradigms.DC.forbidden_doc_phrases`."
-                        )),
-                    });
-                }
+                dc002_check_item(item, module_label, &section.forbidden_doc_phrases, mode, &mut out);
             }
         }
     }
     out
+}
+
+fn dc002_check_item(
+    item: &locus_air::AirItem,
+    module_label: &str,
+    forbidden_phrases: &[super::lockfile_schema::ForbiddenPhrase],
+    mode: CheckMode,
+    out: &mut Vec<Diagnostic>,
+) {
+    let (kind_label, name, symbol, doc, span, vis) = match item {
+        locus_air::AirItem::Type(ty) => ("type", &ty.name, &ty.symbol, ty.doc.as_deref(), ty.span.clone(), ty.visibility),
+        locus_air::AirItem::Function(func) => ("function", &func.name, &func.symbol, func.doc.as_deref(), func.span.clone(), func.visibility),
+        _ => return,
+    };
+    if vis != Visibility::Public { return; }
+    let Some(doc_text) = doc else { return };
+    let doc_lower = doc_text.to_lowercase();
+    for forbidden in forbidden_phrases {
+        let Some(matched_alias) = matched_phrasing(&doc_lower, forbidden) else { continue };
+        let Some(severity) = Severity::from_confidence(forbidden.confidence, mode) else { continue };
+        let primary = &forbidden.phrase;
+        let alias_note = if matched_alias == *primary {
+            String::new()
+        } else {
+            format!(" (alias of `{primary}`)")
+        };
+        out.push(dc002_diagnostic(kind_label, name, symbol, module_label, &matched_alias, &alias_note, forbidden.confidence, span.clone(), severity));
+    }
+}
+
+fn dc004_diagnostic(
+    kind_label: &str,
+    name: &str,
+    symbol: &str,
+    module_label: &str,
+    marker: &str,
+    occurrence: &UnownedMarker,
+    span: locus_air::AirSpan,
+    mode: CheckMode,
+) -> Diagnostic {
+    Diagnostic {
+        rule_id: "DC004".to_string(),
+        severity: mode.elevate(Severity::Warning),
+        span,
+        concept: None,
+        message: format!(
+            "public {kind_label} `{name}` in `{module_label}` has \
+             a `{marker}` marker without an owner reference"
+        ),
+        why: vec![
+            format!("{kind_label} `{name}` (`{symbol}`)"),
+            format!("matched marker `{marker}` (case-insensitive)"),
+            format!(
+                "marker is followed by `{}` — no `(owner)` handle",
+                occurrence.trailing_preview
+            ),
+            "owner-less follow-up markers have no path to \
+             resolution and accumulate as architectural debt"
+                .into(),
+        ],
+        suggested_fix: Some(format!(
+            "rewrite the marker on `{name}` with an owner reference \
+             (e.g. `{marker}(alice): ...` or `{marker}(#123): ...`) \
+             so the reminder has a path to resolution; or remove the \
+             marker if it's stale. To opt out for a region, add the \
+             marker word to `paradigms.DC.unowned_marker_patterns` to \
+             demote it (clearing the list disables DC004 entirely)."
+        )),
+    }
 }
 
 // locus: allow DC004 reason="docstring deliberately quotes the bare marker syntax DC004 fires on" expires="2099-01-01"
@@ -280,68 +322,32 @@ pub fn dc004(air: &AirWorkspace, section: &DcSection, mode: CheckMode) -> Vec<Di
         for file in &pkg.files {
             let module_label = file.module_path.as_deref().unwrap_or(&file.path);
             for item in &file.items {
-                let (kind_label, name, symbol, doc, span, vis) = match item {
-                    AirItem::Type(ty) => (
-                        "type",
-                        &ty.name,
-                        &ty.symbol,
-                        ty.doc.as_deref(),
-                        ty.span.clone(),
-                        ty.visibility,
-                    ),
-                    AirItem::Function(func) => (
-                        "function",
-                        &func.name,
-                        &func.symbol,
-                        func.doc.as_deref(),
-                        func.span.clone(),
-                        func.visibility,
-                    ),
-                    _ => continue,
-                };
-                if vis != Visibility::Public {
-                    continue;
-                }
-                let Some(doc_text) = doc else {
-                    continue;
-                };
-                for marker in &section.unowned_marker_patterns {
-                    for occurrence in find_unowned_marker_occurrences(doc_text, marker) {
-                        out.push(Diagnostic {
-                            rule_id: "DC004".to_string(),
-                            severity: mode.elevate(Severity::Warning),
-                            span: span.clone(),
-                            concept: None,
-                            message: format!(
-                                "public {kind_label} `{name}` in `{module_label}` has \
-                                 a `{marker}` marker without an owner reference"
-                            ),
-                            why: vec![
-                                format!("{kind_label} `{name}` (`{symbol}`)"),
-                                format!("matched marker `{marker}` (case-insensitive)"),
-                                format!(
-                                    "marker is followed by `{}` — no `(owner)` handle",
-                                    occurrence.trailing_preview
-                                ),
-                                "owner-less follow-up markers have no path to \
-                                 resolution and accumulate as architectural debt"
-                                    .into(),
-                            ],
-                            suggested_fix: Some(format!(
-                                "rewrite the marker on `{name}` with an owner reference \
-                                 (e.g. `{marker}(alice): ...` or `{marker}(#123): ...`) \
-                                 so the reminder has a path to resolution; or remove the \
-                                 marker if it's stale. To opt out for a region, add the \
-                                 marker word to `paradigms.DC.unowned_marker_patterns` to \
-                                 demote it (clearing the list disables DC004 entirely)."
-                            )),
-                        });
-                    }
-                }
+                dc004_check_item(item, module_label, &section.unowned_marker_patterns, mode, &mut out);
             }
         }
     }
     out
+}
+
+fn dc004_check_item(
+    item: &locus_air::AirItem,
+    module_label: &str,
+    unowned_marker_patterns: &[String],
+    mode: CheckMode,
+    out: &mut Vec<Diagnostic>,
+) {
+    let (kind_label, name, symbol, doc, span, vis) = match item {
+        locus_air::AirItem::Type(ty) => ("type", &ty.name, &ty.symbol, ty.doc.as_deref(), ty.span.clone(), ty.visibility),
+        locus_air::AirItem::Function(func) => ("function", &func.name, &func.symbol, func.doc.as_deref(), func.span.clone(), func.visibility),
+        _ => return,
+    };
+    if vis != Visibility::Public { return; }
+    let Some(doc_text) = doc else { return };
+    for marker in unowned_marker_patterns {
+        for occurrence in find_unowned_marker_occurrences(doc_text, marker) {
+            out.push(dc004_diagnostic(kind_label, name, symbol, module_label, marker, &occurrence, span.clone(), mode));
+        }
+    }
 }
 
 /// One unowned-marker occurrence inside a doc string. `trailing_preview`

@@ -85,35 +85,48 @@ pub fn fl013(air: &AirWorkspace, section: &FlSection, mode: CheckMode) -> Vec<Di
             // on the first stringifying callee we see (one diag per fn —
             // multiple stringifications inside one function reduce to a
             // single signal; the fix is the same regardless of count).
-            for func in stringy_fns {
-                if callsite_in_invariant_owner(
-                    module_path,
-                    Some(&func.symbol),
-                    &section.invariant_owner_paths,
-                ) {
-                    continue;
-                }
-                let hit = file.items.iter().find_map(|item| {
-                    let AirItem::CallSite(cs) = item else {
-                        return None;
-                    };
-                    if cs.function.as_deref() != Some(func.symbol.as_str()) {
-                        return None;
-                    }
-                    let last = cs.callee.rsplit("::").next().unwrap_or(&cs.callee);
-                    if STRINGIFY_CALLEES.contains(&last) {
-                        Some(cs)
-                    } else {
-                        None
-                    }
-                });
-                if let Some(cs) = hit {
-                    out.push(diagnostic_for_fl013(func, cs, module_path, mode));
-                }
-            }
+            scan_stringy_fns(
+                &stringy_fns,
+                &file.items,
+                module_path,
+                STRINGIFY_CALLEES,
+                &section.invariant_owner_paths,
+                mode,
+                &mut out,
+            );
         }
     }
     out
+}
+
+#[allow(clippy::too_many_arguments)]
+fn scan_stringy_fns(
+    stringy_fns: &[&locus_air::AirFunction],
+    items: &[locus_air::AirItem],
+    module_path: &str,
+    stringify_callees: &[&str],
+    invariant_owner_paths: &[String],
+    mode: CheckMode,
+    out: &mut Vec<Diagnostic>,
+) {
+    for func in stringy_fns {
+        if callsite_in_invariant_owner(module_path, Some(&func.symbol), invariant_owner_paths) {
+            continue;
+        }
+        let hit = items.iter().find_map(|item| {
+            let AirItem::CallSite(cs) = item else {
+                return None;
+            };
+            if cs.function.as_deref() != Some(func.symbol.as_str()) {
+                return None;
+            }
+            let last = cs.callee.rsplit("::").next().unwrap_or(&cs.callee);
+            if stringify_callees.contains(&last) { Some(cs) } else { None }
+        });
+        if let Some(cs) = hit {
+            out.push(diagnostic_for_fl013(func, cs, module_path, mode));
+        }
+    }
 }
 
 fn diagnostic_for_fl013(

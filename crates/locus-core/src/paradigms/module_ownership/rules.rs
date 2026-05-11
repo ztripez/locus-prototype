@@ -16,27 +16,68 @@ use locus_air::{
 use super::lockfile_schema::{MoSection, matches_name_glob, matches_pattern};
 use crate::diagnostics::{CheckMode, Diagnostic, Severity};
 
+fn mo001_why(
+    module_path: &str,
+    count: u32,
+    budget: u32,
+    default_budget: u32,
+    matched_override: Option<&super::lockfile_schema::MoOverride>,
+    section: &MoSection,
+) -> Vec<String> {
+    let mut why = vec![
+        format!("file `{module_path}` defines {count} public top-level type(s)"),
+        if let Some(o) = matched_override {
+            format!("budget {budget} from override `module = {}`", o.module)
+        } else {
+            format!("budget {budget} (workspace default)")
+        },
+    ];
+    if matched_override.is_none() && section.default_max_public_types.is_none() {
+        why.push(format!(
+            "no `default_max_public_types` configured; using built-in fallback {default_budget}",
+        ));
+    }
+    why
+}
+
+fn mo001_diagnostic(
+    module_path: &str,
+    count: u32,
+    budget: u32,
+    default_budget: u32,
+    span: AirSpan,
+    matched_override: Option<&super::lockfile_schema::MoOverride>,
+    section: &MoSection,
+    mode: CheckMode,
+) -> Diagnostic {
+    Diagnostic {
+        rule_id: "MO001".to_string(),
+        severity: mode.elevate(Severity::Warning),
+        span,
+        concept: None,
+        message: format!(
+            "module `{module_path}` has {count} public top-level types (budget {budget})"
+        ),
+        why: mo001_why(module_path, count, budget, default_budget, matched_override, section),
+        suggested_fix: Some(
+            "split the module into submodules each owning one architectural role, \
+             or — if this density is intended (e.g. an API surface) — raise the \
+             budget by adding an override to `paradigms.MO.overrides` in \
+             `locus.lock`"
+                .into(),
+        ),
+    }
+}
+
 /// MO001 — module file has too many public top-level types.
 ///
 /// For each `AirFile` with a `module_path`, count `AirItem::Type` items
 /// whose visibility is `Public`. Compare against the file's effective
-/// budget:
-/// - if the file's `module_path` matches an override's `module` pattern,
-///   the override's `max_public_types` wins;
-/// - otherwise the section's `default_max_public_types` (or the constant
-///   fallback) is used.
+/// budget (override wins, then default, then built-in fallback).
+/// Fires when `count > budget`. One diagnostic per file.
 ///
-/// One diagnostic per file (not per type) — the violation is the file's
-/// responsibility, not any individual type.
-///
-/// Severity: Warning by default. `--agent-strict` elevates to Fatal via
-/// [`CheckMode::elevate`].
-///
-/// Fires by default — the section's built-in fallback budget is treated
-/// as real configuration. Configuration narrows: users raise the budget
-/// on legitimately-broad modules via `paradigms.MO.overrides`, or replace
-/// the workspace default via `default_max_public_types`. Add the prefix
-/// to `acknowledged_empty` to silence the paradigm entirely.
+/// Severity: Warning by default; `--agent-strict` elevates to Fatal.
+/// Fires by default on un-onboarded code using built-in fallback budgets.
 pub fn mo001(air: &AirWorkspace, section: &MoSection, mode: CheckMode) -> Vec<Diagnostic> {
     let default_budget = section.effective_default();
     let mut out = Vec::new();
@@ -52,7 +93,6 @@ pub fn mo001(air: &AirWorkspace, section: &MoSection, mode: CheckMode) -> Vec<Di
                     |item| matches!(item, AirItem::Type(t) if t.visibility == Visibility::Public),
                 )
                 .count() as u32;
-
             let matched_override = section.matching_override(module_path);
             let budget = matched_override
                 .map(|o| o.max_public_types)
@@ -60,10 +100,7 @@ pub fn mo001(air: &AirWorkspace, section: &MoSection, mode: CheckMode) -> Vec<Di
             if count <= budget {
                 continue;
             }
-
-            // Anchor the diagnostic at the file's first public type when
-            // possible — otherwise at line 1 of the file. Either way, the
-            // diagnostic is per-file, not per-type.
+            // Anchor at the first public type, or line 1 of the file.
             let span = file
                 .items
                 .iter()
@@ -72,39 +109,10 @@ pub fn mo001(air: &AirWorkspace, section: &MoSection, mode: CheckMode) -> Vec<Di
                     _ => None,
                 })
                 .unwrap_or_else(|| locus_air::AirSpan::new(file.path.clone(), 1, 1));
-
-            let mut why = vec![
-                format!("file `{module_path}` defines {count} public top-level type(s)"),
-                if let Some(o) = matched_override {
-                    format!("budget {budget} from override `module = {}`", o.module)
-                } else {
-                    format!("budget {budget} (workspace default)")
-                },
-            ];
-            if matched_override.is_none() && section.default_max_public_types.is_none() {
-                why.push(format!(
-                    "no `default_max_public_types` configured; using built-in fallback {}",
-                    default_budget
-                ));
-            }
-
-            out.push(Diagnostic {
-                rule_id: "MO001".to_string(),
-                severity: mode.elevate(Severity::Warning),
-                span,
-                concept: None,
-                message: format!(
-                    "module `{module_path}` has {count} public top-level types (budget {budget})"
-                ),
-                why,
-                suggested_fix: Some(
-                    "split the module into submodules each owning one architectural role, \
-                     or — if this density is intended (e.g. an API surface) — raise the \
-                     budget by adding an override to `paradigms.MO.overrides` in \
-                     `locus.lock`"
-                        .into(),
-                ),
-            });
+            out.push(mo001_diagnostic(
+                module_path, count, budget, default_budget, span,
+                matched_override, section, mode,
+            ));
         }
     }
     out
@@ -197,24 +205,54 @@ fn has_io_call_site(file: &AirFile) -> bool {
     })
 }
 
+fn mo002_diagnostic(
+    module_path: &str,
+    count: u32,
+    threshold: u32,
+    role_list: &str,
+    span: AirSpan,
+    mode: CheckMode,
+) -> Diagnostic {
+    Diagnostic {
+        rule_id: "MO002".to_string(),
+        severity: mode.elevate(Severity::Warning),
+        span,
+        concept: None,
+        message: format!(
+            "module `{module_path}` carries {count} distinct architectural roles \
+             ({role_list}); threshold is {threshold}"
+        ),
+        why: vec![
+            format!("file `{module_path}` exhibits roles: {role_list}"),
+            format!(
+                "MO002 entropy threshold is {threshold} (configured via \
+                 `paradigms.MO.entropy_threshold` in `locus.lock`)"
+            ),
+            "a single file mixing canonical/boundary/converter/handler/persistence/io \
+             roles is a responsibility blob — split each role into its own module"
+                .into(),
+        ],
+        suggested_fix: Some(
+            "split this file along role boundaries: canonical types into \
+             `domain/`, boundary DTOs into `dto/`, conversions into a \
+             `convert.rs`, handlers into a `handlers/` module, and \
+             persistence/io into an adapter layer. If the density is \
+             intentional, raise `paradigms.MO.entropy_threshold` in \
+             `locus.lock`."
+                .into(),
+        ),
+    }
+}
+
 /// MO002 — responsibility entropy in a single file.
 ///
-/// Counts the number of distinct architectural roles a file carries:
-/// (a) `AirHint::Canonical` present, (b) `AirHint::Boundary` present,
-/// (c) `AirHint::Converter` present, (d) any function whose name matches
-/// `handler_name_patterns` (default `*_handler`/`handle_*`), (e) any
-/// `AirImport.path` matching `persistence_import_patterns`, (f) any
-/// `AirItem::CallSite.callee` matching the built-in io pattern set.
-///
-/// Fires when the count `>= entropy_threshold` (default 3).
+/// Counts how many of the six architectural roles a file carries:
+/// canonical hint, boundary hint, converter hint, handler-named function,
+/// persistence import, or IO call site. Fires when `count >= threshold`
+/// (default 3).
 ///
 /// Severity: Warning by default; `--agent-strict` elevates to Fatal.
-///
-/// Fires by default — the section's built-in fallback threshold and
-/// pattern lists are treated as real configuration. Configuration
-/// narrows: users widen the entropy budget via `entropy_threshold`,
-/// override per-module via `overrides`, or add the prefix to
-/// `acknowledged_empty` to silence the paradigm entirely.
+/// Fires by default with built-in fallback threshold and pattern lists.
 pub fn mo002(air: &AirWorkspace, section: &MoSection, mode: CheckMode) -> Vec<Diagnostic> {
     let threshold = section.effective_entropy_threshold();
     let handler_patterns = section.effective_handler_name_patterns();
@@ -250,38 +288,36 @@ pub fn mo002(air: &AirWorkspace, section: &MoSection, mode: CheckMode) -> Vec<Di
             }
             let span = file_anchor_span(file);
             let role_list = roles.join(", ");
-            out.push(Diagnostic {
-                rule_id: "MO002".to_string(),
-                severity: mode.elevate(Severity::Warning),
-                span,
-                concept: None,
-                message: format!(
-                    "module `{module_path}` carries {count} distinct architectural roles \
-                     ({role_list}); threshold is {threshold}"
-                ),
-                why: vec![
-                    format!("file `{module_path}` exhibits roles: {role_list}"),
-                    format!(
-                        "MO002 entropy threshold is {threshold} (configured via \
-                         `paradigms.MO.entropy_threshold` in `locus.lock`)"
-                    ),
-                    "a single file mixing canonical/boundary/converter/handler/persistence/io \
-                     roles is a responsibility blob — split each role into its own module"
-                        .into(),
-                ],
-                suggested_fix: Some(
-                    "split this file along role boundaries: canonical types into \
-                     `domain/`, boundary DTOs into `dto/`, conversions into a \
-                     `convert.rs`, handlers into a `handlers/` module, and \
-                     persistence/io into an adapter layer. If the density is \
-                     intentional, raise `paradigms.MO.entropy_threshold` in \
-                     `locus.lock`."
-                        .into(),
-                ),
-            });
+            out.push(mo002_diagnostic(module_path, count, threshold, &role_list, span, mode));
         }
     }
     out
+}
+
+fn mo003_diagnostic(module_path: &str, span: AirSpan, mode: CheckMode) -> Diagnostic {
+    Diagnostic {
+        rule_id: "MO003".to_string(),
+        severity: mode.elevate(Severity::Warning),
+        span,
+        concept: None,
+        message: format!("module `{module_path}` mixes canonical and boundary types"),
+        why: vec![
+            format!(
+                "file `{module_path}` has both a `// locus: ot canonical` \
+                 and a `// locus: ot boundary` hint"
+            ),
+            "canonical types are the domain truth; boundary types are the \
+             wire/protocol shadow of that truth — keeping them in one file \
+             blurs ownership and makes the converter direction ambiguous"
+                .into(),
+        ],
+        suggested_fix: Some(
+            "split the file: move canonical types into a `domain/` module \
+             and boundary types into a `dto/` module, with explicit \
+             `From`/`TryFrom` converters between them"
+                .into(),
+        ),
+    }
 }
 
 /// MO003 — canonical type co-located with a boundary type in the same file.
@@ -309,31 +345,47 @@ pub fn mo003(air: &AirWorkspace, mode: CheckMode) -> Vec<Diagnostic> {
                 .find(|h| matches!(h.kind, HintKind::Canonical))
                 .map(|h: &AirHint| h.span.clone())
                 .unwrap_or_else(|| file_anchor_span(file));
-            out.push(Diagnostic {
-                rule_id: "MO003".to_string(),
-                severity: mode.elevate(Severity::Warning),
-                span,
-                concept: None,
-                message: format!(
-                    "module `{module_path}` mixes canonical and boundary types"
-                ),
-                why: vec![
-                    format!("file `{module_path}` has both a `// locus: ot canonical` and a `// locus: ot boundary` hint"),
-                    "canonical types are the domain truth; boundary types are the \
-                     wire/protocol shadow of that truth — keeping them in one file \
-                     blurs ownership and makes the converter direction ambiguous"
-                        .into(),
-                ],
-                suggested_fix: Some(
-                    "split the file: move canonical types into a `domain/` module \
-                     and boundary types into a `dto/` module, with explicit \
-                     `From`/`TryFrom` converters between them"
-                        .into(),
-                ),
-            });
+            out.push(mo003_diagnostic(module_path, span, mode));
         }
     }
     out
+}
+
+fn mo004_diagnostic(
+    module_path: &str,
+    handler: &locus_air::AirFunction,
+    handler_patterns: &[&str],
+    mode: CheckMode,
+) -> Diagnostic {
+    Diagnostic {
+        rule_id: "MO004".to_string(),
+        severity: mode.elevate(Severity::Warning),
+        span: handler.span.clone(),
+        concept: None,
+        message: format!(
+            "module `{module_path}` co-locates handler `{}` with a canonical concept",
+            handler.name
+        ),
+        why: vec![
+            format!("file `{module_path}` has a `// locus: ot canonical` hint"),
+            format!(
+                "function `{}` matches handler name pattern (one of {handler_patterns:?})",
+                handler.name,
+            ),
+            "handlers belong to an application/transport layer; canonical \
+             types belong to the domain layer — co-locating them couples \
+             the two and makes the canonical reusable from non-handler \
+             callers harder"
+                .into(),
+        ],
+        suggested_fix: Some(format!(
+            "move `{}` into a `handlers/` module that depends on the \
+             canonical, instead of defining both in the same file. If the \
+             name match is a false positive, narrow \
+             `paradigms.MO.handler_name_patterns` in `locus.lock`.",
+            handler.name
+        )),
+    }
 }
 
 /// MO004 — handler co-located with a canonical concept in the same file.
@@ -373,35 +425,7 @@ pub fn mo004(air: &AirWorkspace, section: &MoSection, mode: CheckMode) -> Vec<Di
             let Some(handler) = handler else {
                 continue;
             };
-            out.push(Diagnostic {
-                rule_id: "MO004".to_string(),
-                severity: mode.elevate(Severity::Warning),
-                span: handler.span.clone(),
-                concept: None,
-                message: format!(
-                    "module `{module_path}` co-locates handler `{}` with a canonical concept",
-                    handler.name
-                ),
-                why: vec![
-                    format!("file `{module_path}` has a `// locus: ot canonical` hint"),
-                    format!(
-                        "function `{}` matches handler name pattern (one of {:?})",
-                        handler.name, handler_patterns
-                    ),
-                    "handlers belong to an application/transport layer; canonical \
-                     types belong to the domain layer — co-locating them couples \
-                     the two and makes the canonical reusable from non-handler \
-                     callers harder"
-                        .into(),
-                ],
-                suggested_fix: Some(format!(
-                    "move `{}` into a `handlers/` module that depends on the \
-                     canonical, instead of defining both in the same file. If the \
-                     name match is a false positive, narrow \
-                     `paradigms.MO.handler_name_patterns` in `locus.lock`.",
-                    handler.name
-                )),
-            });
+            out.push(mo004_diagnostic(module_path, handler, &handler_patterns, mode));
         }
     }
     out
