@@ -32,7 +32,7 @@ pub use ids::{FindingId, FindingIdMinter, ParadigmId, PolicyId, RuleId};
 pub use legacy::LegacyParadigmRuleAdapter;
 pub use paradigm::ParadigmDefinition;
 pub use pipeline::{GovernanceOutput, run};
-pub use policies::DefaultPassThroughPolicy;
+pub use policies::{DefaultPassThroughPolicy, RegistryIntegrityPolicy};
 pub use policy::{PolicyContext, PolicyDefinition, PolicyOutput};
 pub use registry::{
     GovernanceDiagnosticRegistry, ParadigmRegistry, PolicyRegistry, RegistryError, RuleRegistry,
