@@ -40,12 +40,14 @@ Snapshot numbers live in
 [`docs/superpowers/specs/2026-05-09-dogfood-audit.md`](docs/superpowers/specs/2026-05-09-dogfood-audit.md).
 Update that audit when changing policy or dogfood claims.
 
-Snapshot as of 2026-05-09: 0 active fatals, 143 warning debt
-(113 CX001 + 30 CX002 advisory), 16 accepted debt entries (14 lockfile
-exceptions + 2 MO overrides with full metadata), 13 policy suppressions
-without debt metadata (12 acknowledged_empty paradigms + 1 CX
-exempt_paths-covered CX007), 133 severity-tier demotions, +10
-post-baseline source drift.
+Snapshot as of 2026-05-11: 0 active fatals, 103 warning debt
+(64 CX001 + 39 CX002 advisory; down from 143 after umbrella #51's
+refactor-first sweep), 16 accepted debt entries (14 lockfile
+exceptions + 2 MO overrides with full metadata), 13 policy
+suppressions without debt metadata (12 acknowledged_empty paradigms +
+1 CX exempt_paths-covered CX007), 133 severity-tier demotions
+(unchanged historical fact from PR #36), -30 net delta vs pre_36
+baseline (refactor sweep reversed earlier source-drift accumulation).
 
 Workspace layout:
 
