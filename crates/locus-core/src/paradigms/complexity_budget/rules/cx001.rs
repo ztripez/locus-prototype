@@ -34,9 +34,117 @@ impl RuleDefinition for Cx001Rule {
     fn default_severity(&self) -> Severity {
         Severity::Warning
     }
-    fn observe(&self, _ctx: &RuleContext<'_>) -> Vec<RuleFinding> {
-        // Implemented in Task 4.
-        Vec::new()
+    fn observe(&self, ctx: &RuleContext<'_>) -> Vec<RuleFinding> {
+        use super::super::lockfile_schema::CxSection;
+        let section: CxSection = ctx
+            .lockfile
+            .paradigm_section("CX")
+            .unwrap_or_default();
+        let default_budget = section.effective_default();
+        let mut out = Vec::new();
+        for pkg in &ctx.air.packages {
+            for file in &pkg.files {
+                let Some(module_path) = file.module_path.as_deref() else {
+                    continue;
+                };
+                check_file(file, module_path, &section, default_budget, ctx, &mut out);
+            }
+        }
+        out
+    }
+}
+
+fn check_file(
+    file: &locus_air::AirFile,
+    module_path: &str,
+    section: &super::super::lockfile_schema::CxSection,
+    default_budget: u32,
+    ctx: &RuleContext<'_>,
+    out: &mut Vec<RuleFinding>,
+) {
+    use locus_air::AirItem;
+
+    let matched_override = section.matching_override(module_path);
+    let budget = matched_override
+        .map(|o| o.max_function_lines)
+        .unwrap_or(default_budget);
+    let narrowed = matched_override.is_some() || section.default_max_function_lines.is_some();
+    for item in &file.items {
+        let AirItem::Function(func) = item else {
+            continue;
+        };
+        if func.line_count <= budget {
+            continue;
+        }
+        out.push(make_finding(
+            func,
+            budget,
+            matched_override,
+            narrowed,
+            section,
+            default_budget,
+            ctx,
+        ));
+    }
+}
+
+fn make_finding(
+    func: &locus_air::AirFunction,
+    budget: u32,
+    matched_override: Option<&super::super::lockfile_schema::CxOverride>,
+    narrowed: bool,
+    section: &super::super::lockfile_schema::CxSection,
+    default_budget: u32,
+    ctx: &RuleContext<'_>,
+) -> RuleFinding {
+    let severity = ctx.mode.elevate_when_actionable(Severity::Warning, narrowed);
+    let message = format!(
+        "function `{}` is {} lines, budget {} ({})",
+        func.symbol,
+        func.line_count,
+        budget,
+        match matched_override {
+            Some(o) => format!("override `{}`", o.module),
+            None => "workspace default".to_string(),
+        }
+    );
+    let mut why = vec![
+        format!("function `{}` spans {} line(s)", func.symbol, func.line_count),
+        if let Some(o) = matched_override {
+            format!("budget {budget} from override `module = {}`", o.module)
+        } else {
+            format!("budget {budget} (workspace default)")
+        },
+    ];
+    if matched_override.is_none() && section.default_max_function_lines.is_none() {
+        why.push(format!(
+            "no `default_max_function_lines` configured; using built-in fallback {}",
+            default_budget
+        ));
+    }
+    RuleFinding {
+        id: ctx.finding_ids.next(),
+        source: FindingSource::RegisteredRule(CX001_ID),
+        rule_id: Some(CX001_ID),
+        paradigm_id: Some(CX_PARADIGM),
+        default_severity: severity,
+        span: Some(func.span.clone()),
+        concept: None,
+        message,
+        evidence: vec![Evidence::ComplexityBudget {
+            lines: func.line_count,
+            budget,
+            override_match: matched_override.map(|o| o.module.clone()),
+        }],
+        why,
+        suggested_fix: Some(
+            "split the function into smaller steps each owning one decision, \
+             or — if this length is intended (e.g. a parser arm or state \
+             machine) — raise the budget by adding an override to \
+             `paradigms.CX.overrides` in `locus.lock`"
+                .into(),
+        ),
+        diagnostic_code: None,
     }
 }
 
