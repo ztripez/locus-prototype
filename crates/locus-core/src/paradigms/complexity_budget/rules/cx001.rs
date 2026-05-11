@@ -51,6 +51,7 @@ impl RuleDefinition for Cx001Rule {
     }
 }
 
+// locus: allow OT009 — `check_file` here is CX001's per-file walker, not a validator for the AirFile canonical (false positive: name matches the `check_` heuristic but the function is a rule internal)
 fn check_file(
     file: &locus_air::AirFile,
     module_path: &str,
