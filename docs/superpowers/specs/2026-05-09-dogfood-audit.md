@@ -72,8 +72,8 @@ Generated from [`2026-05-09-dogfood-audit.json`](2026-05-09-dogfood-audit.json).
 | DC002 | 3 | 0 | 0 | 0 | `accepted_by_exception` | accepted_with_expires_and_reason |
 | MO001 | 2 | 0 | 0 | 0 | `suppressed_by_override` | suppressed_with_full_debt_metadata |
 | LOCUS002 | 13 | 0 | 0 | 0 | `suppressed_by_acknowledged_empty` | suppressed_no_debt_metadata |
-| OT009 | 0 | 0 | 0 | `—` | pre_emptive_exception |
-| OT_CANONICALS | 0 | 0 | 0 | `—` | resolved_by_code_source_hints_predated_audit_window |
+| OT009 | 0 | 0 | 0 | — | `—` | pre_emptive_exception |
+| OT_CANONICALS | 0 | 0 | 0 | — | `—` | resolved_by_code_source_hints_predated_audit_window |
 
 **OT_CANONICALS** is not a rule; it is an aggregate entry for the 47 OT canonical type declarations persisted to `locus.lock` by PR #39. Authority was present in source hints before the audited PR window; no OT001/OT002 diagnostics fired at `pre_36`.
 
