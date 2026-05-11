@@ -217,9 +217,10 @@ fn standard_paradigms() -> Vec<&'static dyn ParadigmDefinition> {
     crate::governance::paradigm_impls::ALL_PARADIGM_DEFS.to_vec()
 }
 
-/// Filled in Task 12 — wires DefaultPassThroughPolicy.
 fn standard_policies() -> Vec<&'static dyn PolicyDefinition> {
-    Vec::new()
+    // DefaultPassThroughPolicy MUST be last. Future policies
+    // (RegistryIntegrityPolicy, ExceptionPolicy, ...) insert before it.
+    vec![&crate::governance::policies::default::DefaultPassThroughPolicy]
 }
 
 #[cfg(test)]
@@ -308,6 +309,19 @@ mod tests {
             result,
             Err(RegistryError::DuplicateDecision { .. })
         ));
+    }
+
+    #[test]
+    fn default_pass_through_policy_is_last_in_standard_registry() {
+        let reg = PolicyRegistry::standard();
+        let policies: Vec<_> = reg.iter().collect();
+        assert!(!policies.is_empty(), "policy registry must not be empty");
+        let last = policies.last().unwrap();
+        assert_eq!(
+            last.id().as_str(),
+            "default-pass-through",
+            "DefaultPassThroughPolicy MUST be the last entry in PolicyRegistry::standard()"
+        );
     }
 
     #[test]

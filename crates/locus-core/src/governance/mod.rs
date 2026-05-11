@@ -18,6 +18,7 @@ pub mod ids;
 pub mod legacy;
 pub mod paradigm;
 mod paradigm_impls;
+pub mod policies;
 pub mod policy;
 pub mod registry;
 pub mod rule;
@@ -29,6 +30,7 @@ pub use finding::{
 pub use ids::{FindingId, FindingIdMinter, ParadigmId, PolicyId, RuleId};
 pub use legacy::LegacyParadigmRuleAdapter;
 pub use paradigm::ParadigmDefinition;
+pub use policies::DefaultPassThroughPolicy;
 pub use policy::{PolicyContext, PolicyDefinition, PolicyOutput};
 pub use registry::{
     GovernanceDiagnosticRegistry, ParadigmRegistry, PolicyRegistry, RegistryError, RuleRegistry,
