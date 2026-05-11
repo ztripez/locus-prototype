@@ -100,34 +100,46 @@ impl RuleDefinition for Ot002Rule {
             .paradigm_section("OT")
             .unwrap_or_default();
         let clusters = super::super::infer::cluster_concepts_with_lockfile(ctx.air, &section);
-        let mut out = Vec::new();
-        for cluster in &clusters {
-            let canonical = cluster
-                .members
-                .iter()
-                .find(|m| m.role == InferredRole::Canonical);
-            let Some(canonical) = canonical else {
-                continue;
-            };
-            for member in &cluster.members {
-                if member.role != InferredRole::Unknown {
-                    continue;
-                }
-                if member.field_overlap < FIELD_OVERLAP_THRESHOLD {
-                    continue;
-                }
-                out.push(make_finding(cluster, canonical, member, ctx));
-            }
-        }
-        out
+        produce_findings_from_clusters(&clusters, ctx.mode, ctx.finding_ids)
     }
 }
 
-fn make_finding(
+/// Cluster-level helper exposed for tests. Walks pre-computed clusters
+/// and emits findings — same logic as `Ot002Rule::observe` minus the
+/// AIR-to-clusters step.
+pub(crate) fn produce_findings_from_clusters(
+    clusters: &[ConceptCluster],
+    mode: CheckMode,
+    finding_ids: &crate::governance::ids::FindingIdMinter,
+) -> Vec<RuleFinding> {
+    let mut out = Vec::new();
+    for cluster in clusters {
+        let canonical = cluster
+            .members
+            .iter()
+            .find(|m| m.role == InferredRole::Canonical);
+        let Some(canonical) = canonical else {
+            continue;
+        };
+        for member in &cluster.members {
+            if member.role != InferredRole::Unknown {
+                continue;
+            }
+            if member.field_overlap < FIELD_OVERLAP_THRESHOLD {
+                continue;
+            }
+            out.push(make_finding_inner(cluster, canonical, member, mode, finding_ids));
+        }
+    }
+    out
+}
+
+fn make_finding_inner(
     cluster: &ConceptCluster,
     canonical: &super::super::infer::ClusterMember,
     member: &super::super::infer::ClusterMember,
-    ctx: &RuleContext<'_>,
+    mode: CheckMode,
+    finding_ids: &crate::governance::ids::FindingIdMinter,
 ) -> RuleFinding {
     let mut signals = vec![
         format!(
@@ -140,10 +152,10 @@ fn make_finding(
     ];
     signals.extend(member.reasons.iter().cloned());
 
-    let severity = ctx.mode.elevate(Severity::Warning);
+    let severity = mode.elevate(Severity::Warning);
     let why = signals.clone();
     RuleFinding {
-        id: ctx.finding_ids.next(),
+        id: finding_ids.next(),
         source: FindingSource::RegisteredRule(OT002_ID),
         rule_id: Some(OT002_ID),
         paradigm_id: Some(OT_PARADIGM),
