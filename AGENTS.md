@@ -6,9 +6,26 @@ This file is the per-repo dev-handoff for Claude Code (and other agents — `CLA
 
 1. **[`README.md`](README.md)** — what Locus is and isn't, in two screens.
 2. **[`docs/AGENT_GUARDRAILS.md`](docs/AGENT_GUARDRAILS.md)** — non-negotiables for agents working on Locus itself (determinism, no LLM in `check`, no broad ignores, etc.). Read before adding anything to the rule engine.
-3. **[`docs/PARADIGMS.md`](docs/PARADIGMS.md)** — full umbrella spec; every paradigm Locus is meant to guard. Use as the source of truth for paradigm semantics, source-fact taxonomy, and the architectural-authority framing. Paradigm 1 carries summary rule entries (OT001–OT012), source-hint forms, and severity tiers.
-4. **[`docs/project-jumpoff.md`](docs/project-jumpoff.md)** — the original OT-paradigm deep dive. Read for full spec content (CLI command surface, lockfile examples, generator design, exception format). Pre-dates the multi-paradigm reframing, so treat its top-level "Locus is …" framing as historical; the rule definitions and AIR examples remain authoritative.
-5. **[`docs/superpowers/specs/2026-05-09-dogfood-false-positive-ledger.md`](docs/superpowers/specs/2026-05-09-dogfood-false-positive-ledger.md)** — active triage ledger for Epic #1. Use this to track per-rule TP/FP/onboarding/debt classification and strictness-graduation evidence.
+3. **[`docs/superpowers/specs/2026-05-11-governance-spine-design.md`](docs/superpowers/specs/2026-05-11-governance-spine-design.md)** — active architecture-governance transition spec for epic #71. Read this before touching rule execution, diagnostics, registries, policies, or the legacy `Paradigm::check` path.
+4. **[`docs/PARADIGMS.md`](docs/PARADIGMS.md)** — full umbrella spec; every paradigm Locus is meant to guard. Use as the source of truth for paradigm semantics, source-fact taxonomy, and the architectural-authority framing. Paradigm 1 carries summary rule entries (OT001–OT012), source-hint forms, and severity tiers.
+5. **[`docs/project-jumpoff.md`](docs/project-jumpoff.md)** — the original OT-paradigm deep dive. Read for full spec content (CLI command surface, lockfile examples, generator design, exception format). Pre-dates the multi-paradigm reframing, so treat its top-level "Locus is …" framing as historical; the rule definitions and AIR examples remain authoritative.
+6. **[`docs/superpowers/specs/2026-05-09-dogfood-false-positive-ledger.md`](docs/superpowers/specs/2026-05-09-dogfood-false-positive-ledger.md)** — active triage ledger for Epic #1. Use this to track per-rule TP/FP/onboarding/debt classification and strictness-graduation evidence.
+
+## Active roadmap: architecture governance spine
+
+Epic **#71** is the active roadmap. Locus is transitioning from a rule-runner linter into a deterministic architecture-governance engine:
+
+```text
+rules / sensors -> findings / evidence -> policy decisions -> diagnostics
+```
+
+A rule finding is not the final diagnostic. Rules are sensors/evidence producers. Policies are first-class governance logic that decides final severity, status, rationale, and output in architectural context. Policies are not simple rule bundles.
+
+Registries for rules, paradigms, policies, and governance diagnostic codes are the preferred modularity direction. New rules must implement `RuleDefinition` and register through the governance spine. The legacy `Paradigm::check() -> Vec<Diagnostic>` path is transitional compatibility only; do not add new rules there unless explicitly instructed.
+
+Prioritize #71–#76 work unless the maintainer explicitly redirects. Public release polish, broad new paradigm packs, framework loaders, SARIF/JSON reporters, and release documentation are iced until the governance spine stabilizes.
+
+Dogfood discipline remains strict: do not weaken rules, raise budgets, add broad exemptions, or hide findings to make `locus check --workspace .` pass. If a finding is real debt, keep it visible or add a narrow, justified, time-bounded exception with ownership metadata. Do not implement future AC/TX/SE-style paradigm packs before the decision/policy pipeline exists.
 
 ## Project status
 
