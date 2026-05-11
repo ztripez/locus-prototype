@@ -4,6 +4,11 @@ assertion_line: 57
 expression: "format!(\"STDOUT:\\n{stdout}\\nSTDERR:\\n{stderr}\")"
 ---
 STDOUT:
+info[LOCUS003]: rule code LOCUS002 emitted via legacy paradigm runner; not yet migrated to RuleDefinition (13 observations this run)
+  --> <governance>:0
+  - 13 observations this run
+  fix: migrate LOCUS002 to a RuleDefinition implementation (governance spine epic #71)
+
 error[OT002]: `sample_crate::shadow::UserModel` is concept-shaped but not accepted as canonical or boundary
   --> <FIXTURE>/src/shadow.rs:4
   concept: user
@@ -136,6 +141,6 @@ error[PG007]: new exempt path `*::test::*` in `paradigms.CX.exempt_paths` lacks 
   - PG007 is unaffected by `--allow-policy-calibration`: calibration accepts the addition itself (PG003), but does not waive the requirement to record why, when to revisit, and who owns it
   fix: populate `reason` (why this exemption exists), `expires` (`YYYY-MM-DD` review date), and `owner` (team/individual). Use the struct form: `{"pattern": "…", "reason": "…", "expires": "YYYY-MM-DD", "owner": "…"}`.
 
-summary: 3 error(s), 0 warning(s), 13 advisory.
+summary: 3 error(s), 0 warning(s), 14 advisory.
 
 STDERR:
