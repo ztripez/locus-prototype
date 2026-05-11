@@ -10,9 +10,7 @@
 
 use super::super::infer::{ConceptCluster, FIELD_OVERLAP_THRESHOLD, InferredRole};
 use crate::diagnostics::{CheckMode, Diagnostic, Severity};
-#[allow(unused_imports)]
 use crate::governance::evidence::{Confidence, Evidence};
-#[allow(unused_imports)]
 use crate::governance::finding::{FindingSource, RuleFinding};
 use crate::governance::ids::{ParadigmId, RuleId};
 use crate::governance::rule::{RuleContext, RuleDefinition};
@@ -95,9 +93,93 @@ impl RuleDefinition for Ot002Rule {
     fn default_severity(&self) -> Severity {
         Severity::Warning
     }
-    fn observe(&self, _ctx: &RuleContext<'_>) -> Vec<RuleFinding> {
-        // Implemented in Task 3.
-        Vec::new()
+    fn observe(&self, ctx: &RuleContext<'_>) -> Vec<RuleFinding> {
+        use super::super::lockfile_schema::OtSection;
+        let section: OtSection = ctx
+            .lockfile
+            .paradigm_section("OT")
+            .unwrap_or_default();
+        let clusters = super::super::infer::cluster_concepts_with_lockfile(ctx.air, &section);
+        let mut out = Vec::new();
+        for cluster in &clusters {
+            let canonical = cluster
+                .members
+                .iter()
+                .find(|m| m.role == InferredRole::Canonical);
+            let Some(canonical) = canonical else {
+                continue;
+            };
+            for member in &cluster.members {
+                if member.role != InferredRole::Unknown {
+                    continue;
+                }
+                if member.field_overlap < FIELD_OVERLAP_THRESHOLD {
+                    continue;
+                }
+                out.push(make_finding(cluster, canonical, member, ctx));
+            }
+        }
+        out
+    }
+}
+
+fn make_finding(
+    cluster: &ConceptCluster,
+    canonical: &super::super::infer::ClusterMember,
+    member: &super::super::infer::ClusterMember,
+    ctx: &RuleContext<'_>,
+) -> RuleFinding {
+    let mut signals = vec![
+        format!(
+            "overlaps {:.0}% with `{}` (canonical for `{}`)",
+            member.field_overlap * 100.0,
+            canonical.name,
+            cluster.concept_id
+        ),
+        format!("name shares stem `{}`", cluster.stem),
+    ];
+    signals.extend(member.reasons.iter().cloned());
+
+    let severity = ctx.mode.elevate(Severity::Warning);
+    let why = signals.clone();
+    RuleFinding {
+        id: ctx.finding_ids.next(),
+        source: FindingSource::RegisteredRule(OT002_ID),
+        rule_id: Some(OT002_ID),
+        paradigm_id: Some(OT_PARADIGM),
+        default_severity: severity,
+        span: Some(member.span.clone()),
+        concept: Some(cluster.concept_id.clone()),
+        message: format!(
+            "`{}` is concept-shaped but not accepted as canonical or boundary",
+            member.symbol
+        ),
+        evidence: vec![Evidence::InferenceConfidence {
+            score: confidence_from_overlap(member.field_overlap),
+            signals,
+        }],
+        why,
+        suggested_fix: Some(format!(
+            "annotate as boundary: `// locus: ot boundary {} <boundary-name>` above `{}`, \
+             or remove and use `{}` directly",
+            cluster.concept_id, member.name, canonical.symbol
+        )),
+        diagnostic_code: None,
+    }
+}
+
+/// Discretize the inference's `field_overlap` (0.0..=1.0) into a
+/// `Confidence` tier. Mirrors the spec's 0.50/0.70/0.90 confidence
+/// ladder (`Severity::from_confidence` in `diagnostics.rs`). Since the
+/// rule's overlap gate is `FIELD_OVERLAP_THRESHOLD = 0.50`, an overlap
+/// of < 0.70 maps to Low, [0.70, 0.90) to Medium, and ≥ 0.90 to High.
+fn confidence_from_overlap(overlap: f32) -> Confidence {
+    if overlap >= 0.90 {
+        Confidence::High
+    } else if overlap >= 0.70 {
+        Confidence::Medium
+    } else {
+        Confidence::Low
     }
 }
 
@@ -164,6 +246,17 @@ mod ot002_rule_tests {
             }
             other => panic!("expected InferenceConfidence evidence, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn confidence_ladder_matches_spec_thresholds() {
+        assert_eq!(confidence_from_overlap(1.00), Confidence::High);
+        assert_eq!(confidence_from_overlap(0.95), Confidence::High);
+        assert_eq!(confidence_from_overlap(0.90), Confidence::High);
+        assert_eq!(confidence_from_overlap(0.89), Confidence::Medium);
+        assert_eq!(confidence_from_overlap(0.70), Confidence::Medium);
+        assert_eq!(confidence_from_overlap(0.69), Confidence::Low);
+        assert_eq!(confidence_from_overlap(0.50), Confidence::Low);
     }
 
     fn workspace_with_canonical_and_sibling() -> AirWorkspace {
