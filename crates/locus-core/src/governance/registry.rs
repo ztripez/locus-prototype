@@ -29,10 +29,22 @@ impl RuleRegistry {
     /// Migrated rules. Grows as rules move from legacy `Paradigm::check`
     /// to `RuleDefinition` impls. CX001 lands in P2 (#71); others follow
     /// in subsequent PRs.
+    ///
+    /// Construction-time invariants (uniqueness, prefix consistency) are
+    /// asserted under `debug_assert!`. The spec mandates a recoverable
+    /// error path at runtime; this is the MVP form until a fallible
+    /// constructor lands (see spec §"Registries → Construction-time
+    /// validation").
     pub fn standard() -> Self {
-        Self {
+        let reg = Self {
             rules: vec![&crate::paradigms::complexity_budget::rules::cx001::CX001_RULE],
-        }
+        };
+        debug_assert!(
+            reg.validate().is_ok(),
+            "RuleRegistry::standard() violates a construction invariant: {:?}",
+            reg.validate()
+        );
+        reg
     }
 
     /// Test-only constructor.
@@ -326,6 +338,16 @@ mod tests {
             "default-pass-through",
             "DefaultPassThroughPolicy MUST be the last entry in PolicyRegistry::standard()"
         );
+    }
+
+    #[test]
+    fn rule_registry_standard_satisfies_construction_invariants() {
+        // P2 lands the first real registered rule. From now on, the
+        // standard registry must validate clean: no duplicate IDs, every
+        // rule's id starts with its paradigm prefix. Future migrations
+        // (OT002, DG001, …) must keep this passing.
+        let reg = RuleRegistry::standard();
+        reg.validate().expect("RuleRegistry::standard() must validate");
     }
 
     #[test]
