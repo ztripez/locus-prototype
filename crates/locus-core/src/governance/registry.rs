@@ -235,9 +235,12 @@ fn standard_paradigms() -> Vec<&'static dyn ParadigmDefinition> {
 }
 
 fn standard_policies() -> Vec<&'static dyn PolicyDefinition> {
-    // DefaultPassThroughPolicy MUST be last. Future policies
-    // (RegistryIntegrityPolicy, ExceptionPolicy, ...) insert before it.
-    vec![&crate::governance::policies::default::DefaultPassThroughPolicy]
+    // RegistryIntegrityPolicy MUST come before DefaultPassThroughPolicy.
+    // Future policies (ExceptionPolicy, ...) insert between them.
+    vec![
+        &crate::governance::policies::registry_integrity::RegistryIntegrityPolicy,
+        &crate::governance::policies::default::DefaultPassThroughPolicy,
+    ]
 }
 
 #[cfg(test)]
@@ -341,6 +344,20 @@ mod tests {
             last.id().as_str(),
             "default-pass-through",
             "DefaultPassThroughPolicy MUST be the last entry in PolicyRegistry::standard()"
+        );
+    }
+
+    #[test]
+    fn registry_integrity_policy_is_before_pass_through() {
+        let reg = PolicyRegistry::standard();
+        let ids: Vec<&str> = reg.iter().map(|p| p.id().as_str()).collect();
+        let ri_pos = ids.iter().position(|&id| id == "registry-integrity")
+            .expect("RegistryIntegrityPolicy must be in PolicyRegistry::standard()");
+        let pt_pos = ids.iter().position(|&id| id == "default-pass-through")
+            .expect("DefaultPassThroughPolicy must be in PolicyRegistry::standard()");
+        assert!(
+            ri_pos < pt_pos,
+            "RegistryIntegrityPolicy ({ri_pos}) must come before DefaultPassThroughPolicy ({pt_pos})"
         );
     }
 

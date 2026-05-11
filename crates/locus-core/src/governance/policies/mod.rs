@@ -3,11 +3,13 @@
 //! `default` — `DefaultPassThroughPolicy` (always last in the policy
 //! chain; decides every finding not already decided).
 //!
-//! Future policies (RegistryIntegrityPolicy in P3, ExceptionPolicy / etc.
-//! in future epics) live alongside `default` here.
+//! `registry_integrity` — `RegistryIntegrityPolicy` (runs before
+//! pass-through; emits LOCUS003 migration-debt advisories).
 
 // locus: ot canonical
 
 pub mod default;
+pub mod registry_integrity;
 
 pub use default::DefaultPassThroughPolicy;
+pub use registry_integrity::RegistryIntegrityPolicy;
