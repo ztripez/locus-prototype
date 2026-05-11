@@ -32,6 +32,16 @@ use locus_air::AirWorkspace;
 
 // locus: ot canonical
 // locus: allow MO005 — Paradigm trait is the module registry interface, intentionally lives in this mod.rs
+
+/// **Transitional legacy execution surface (epic #71).**
+///
+/// New rules must implement [`crate::governance::RuleDefinition`], not be
+/// added inside `Paradigm::check`. This trait is preserved so existing
+/// rule code keeps running through `LegacyParadigmRuleAdapter` while
+/// rules migrate one at a time. It will be removed after all rule codes
+/// have a `RuleDefinition` impl.
+///
+/// Spec: `docs/superpowers/specs/2026-05-11-governance-spine-design.md`.
 pub trait Paradigm {
     /// Human-facing paradigm name, e.g. `"Canonical Domain Ownership"`.
     fn name(&self) -> &'static str;
@@ -42,9 +52,11 @@ pub trait Paradigm {
     /// `paradigms.<prefix>` in `locus.lock`.
     fn init(&self, air: &AirWorkspace) -> serde_json::Value;
     /// Run all of this paradigm's rules against `air` and return diagnostics.
-    /// Implementations should consult `lockfile.paradigm_section(self.rule_prefix())`
-    /// for accepted ownership; missing sections mean "nothing accepted yet,"
-    /// which is normal before `locus init` has been run.
+    ///
+    /// **Transitional.** New rules belong in `RuleDefinition::observe`.
+    /// Diagnostics emitted here are wrapped into synthetic findings by
+    /// `LegacyParadigmRuleAdapter` unless their `rule_id` is already
+    /// covered by a registered `RuleDefinition`.
     fn check(&self, air: &AirWorkspace, lockfile: &Lockfile, mode: CheckMode) -> Vec<Diagnostic>;
     /// Emit init-time onboarding suggestions for this paradigm. Default
     /// returns no suggestions; paradigms override to propose layer paths,

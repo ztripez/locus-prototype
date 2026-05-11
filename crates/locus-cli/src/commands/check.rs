@@ -3,7 +3,7 @@ use std::path::PathBuf;
 
 use anyhow::{Context, Result};
 use locus_core::{
-    CheckMode, Diagnostic, Lockfile, Severity, apply_exceptions, registry, today_utc,
+    CheckMode, Diagnostic, Lockfile, Severity, apply_exceptions, governance, today_utc,
 };
 
 use crate::diff;
@@ -65,10 +65,12 @@ pub fn run(args: CheckArgs) -> Result<()> {
         CheckMode::Human
     };
 
-    let mut all = Vec::new();
-    for paradigm in registry() {
-        all.extend(paradigm.check(&air, &lockfile, mode));
-    }
+    // Run the governance pipeline. Returns diagnostics already
+    // materialized through DefaultPassThroughPolicy — byte-identical to
+    // the prior `for paradigm in registry() { paradigm.check(...) }` loop
+    // under P1's empty rule registry.
+    let governance_out = governance::run(&air, &lockfile, mode);
+    let all = governance_out.diagnostics;
 
     // Apply exceptions BEFORE Policy Guard — PG must not be suppressible by
     // the same lockfile it audits. See #44.

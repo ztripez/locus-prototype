@@ -8,6 +8,7 @@
 
 pub mod diagnostics;
 pub mod exceptions;
+pub mod governance;
 pub mod init;
 pub mod loaders;
 pub mod lockfile;
