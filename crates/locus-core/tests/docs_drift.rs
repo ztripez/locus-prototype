@@ -40,14 +40,15 @@ fn collect_rule_ids_from_rules_files(root: &Path) -> BTreeSet<String> {
             continue;
         }
 
-        let rules_file = path.join("rules.rs");
-        if !rules_file.exists() {
-            continue;
+        // Collect all files to scan. Rules may live in:
+        //   - paradigm/rules.rs                 (legacy flat layout)
+        //   - paradigm/rules/mod.rs             (promoted directory, CX001 P2)
+        //   - paradigm/rules/<id>.rs            (per-rule split, OT + CX001 P2)
+        let mut files_to_scan: Vec<PathBuf> = Vec::new();
+        let flat_rules = path.join("rules.rs");
+        if flat_rules.exists() {
+            files_to_scan.push(flat_rules);
         }
-
-        // Collect all files to scan: rules.rs itself plus any per-rule files
-        // under the sibling rules/ sub-directory (the per-rule-split layout).
-        let mut files_to_scan: Vec<PathBuf> = vec![rules_file];
         let rules_subdir = path.join("rules");
         if rules_subdir.is_dir()
             && let Ok(sub_entries) = fs::read_dir(&rules_subdir)
@@ -60,19 +61,27 @@ fn collect_rule_ids_from_rules_files(root: &Path) -> BTreeSet<String> {
             }
         }
 
+        if files_to_scan.is_empty() {
+            continue;
+        }
+
         for file_path in &files_to_scan {
             let content = fs::read_to_string(file_path).expect("rules file should be readable");
             for line in content.lines() {
-                let marker = "rule_id: \"";
-                if let Some(start) = line.find(marker) {
-                    let suffix = &line[start + marker.len()..];
-                    if let Some(end) = suffix.find('"') {
-                        let candidate = &suffix[..end];
-                        if candidate.len() == 5
-                            && candidate[..2].chars().all(|c| c.is_ascii_uppercase())
-                            && candidate[2..].chars().all(|c| c.is_ascii_digit())
-                        {
-                            ids.insert(candidate.to_string());
+                // Two patterns:
+                //   `rule_id: "XX###"` — legacy Diagnostic construction
+                //   `RuleId::new("XX###")` — new RuleDefinition impls (post P2 #71)
+                for marker in [r#"rule_id: ""#, r#"RuleId::new(""#] {
+                    if let Some(start) = line.find(marker) {
+                        let suffix = &line[start + marker.len()..];
+                        if let Some(end) = suffix.find('"') {
+                            let candidate = &suffix[..end];
+                            if candidate.len() == 5
+                                && candidate[..2].chars().all(|c| c.is_ascii_uppercase())
+                                && candidate[2..].chars().all(|c| c.is_ascii_digit())
+                            {
+                                ids.insert(candidate.to_string());
+                            }
                         }
                     }
                 }

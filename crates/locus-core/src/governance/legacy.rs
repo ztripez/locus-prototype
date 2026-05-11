@@ -115,9 +115,12 @@ mod tests {
 
     #[test]
     fn legacy_diagnostic_with_registered_rule_code_is_skipped() {
-        // contains_code returns false for empty registry, so the diagnostic
-        // would be synthesized. Verify the contract.
+        // Post-P2 (#71), CX001 IS in `RuleRegistry::standard()`. The
+        // legacy adapter's per-diagnostic-code filter sees `contains_code`
+        // == true and skips synthesizing a legacy CX001 finding — that's
+        // the strangler invariant in action.
         let reg = RuleRegistry::standard();
-        assert!(!reg.contains_code("CX001"));
+        assert!(reg.contains_code("CX001"), "CX001 must be registered post-P2");
+        assert!(!reg.contains_code("XX999"), "unregistered codes must return false");
     }
 }
