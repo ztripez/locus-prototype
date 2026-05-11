@@ -12,10 +12,12 @@
 
 // locus: ot canonical
 
-pub mod ids;
+pub mod decision;
 pub mod finding;
+pub mod ids;
 
-pub use ids::{FindingId, FindingIdMinter, ParadigmId, PolicyId, RuleId};
+pub use decision::{Decision, DecisionStatus, SeverityChange};
 pub use finding::{
     Confidence, Evidence, FindingSource, FindingStore, LegacyEvidence, RuleFinding,
 };
+pub use ids::{FindingId, FindingIdMinter, ParadigmId, PolicyId, RuleId};
