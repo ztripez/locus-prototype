@@ -16,4 +16,6 @@ pub mod ids;
 pub mod finding;
 
 pub use ids::{FindingId, FindingIdMinter, ParadigmId, PolicyId, RuleId};
-pub use finding::{Confidence, Evidence, LegacyEvidence};
+pub use finding::{
+    Confidence, Evidence, FindingSource, FindingStore, LegacyEvidence, RuleFinding,
+};
