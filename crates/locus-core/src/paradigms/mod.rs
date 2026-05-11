@@ -31,6 +31,7 @@ use crate::lockfile::Lockfile;
 use locus_air::AirWorkspace;
 
 // locus: ot canonical
+// locus: allow MO005 — Paradigm trait is the module registry interface, intentionally lives in this mod.rs
 pub trait Paradigm {
     /// Human-facing paradigm name, e.g. `"Canonical Domain Ownership"`.
     fn name(&self) -> &'static str;
@@ -57,6 +58,7 @@ pub trait Paradigm {
 /// alphabetical-by-prefix (AB, BO, CF, CL, CR, CX, DA, DC, ER, FL, FO,
 /// MO, OB, PA, RM, RW, TA, UT) — preserves existing test expectations
 /// that key off OT/DG.
+// locus: allow MO005 — registry() is composition glue by definition: it wires paradigm singletons into the runtime
 pub fn registry() -> Vec<Box<dyn Paradigm>> {
     vec![
         Box::new(one_truth::OneTruth),
@@ -87,7 +89,9 @@ mod suggest_default_tests {
     use super::*;
     use locus_air::AirWorkspace;
 
+    // locus: allow MO005 — test-only Stub is the minimal Paradigm fixture; no better home in this test
     struct Stub;
+    // locus: allow MO005 — test-only Paradigm impl for Stub
     impl Paradigm for Stub {
         fn name(&self) -> &'static str {
             "Stub"
@@ -104,6 +108,7 @@ mod suggest_default_tests {
     }
 
     #[test]
+    // locus: allow MO005 — test function in test-only inline mod; no better home than this mod.rs
     fn default_suggest_returns_empty() {
         let p = Stub;
         let air = AirWorkspace::new(Vec::new());

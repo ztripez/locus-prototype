@@ -8,6 +8,10 @@
 //! - [`mo003`]: canonical hint co-located with a boundary hint in the same file.
 //! - [`mo004`]: canonical hint co-located with a handler-named function in the
 //!   same file.
+//! - [`mo005`]: entrypoint modules (`main.rs`, `mod.rs`) contain type
+//!   declarations, impl blocks, or substantial functions — forbidden because
+//!   entrypoint modules are composition surfaces, not ownership sites.
+//!   `lib.rs` is out of scope in this first pass (see follow-up issue).
 
 use locus_air::{
     AirFile, AirHint, AirImport, AirItem, AirSpan, AirWorkspace, HintKind, Visibility,
@@ -426,6 +430,371 @@ pub fn mo004(air: &AirWorkspace, section: &MoSection, mode: CheckMode) -> Vec<Di
                 continue;
             };
             out.push(mo004_diagnostic(module_path, handler, &handler_patterns, mode));
+        }
+    }
+    out
+}
+
+/// Line-count budget for "thin" functions that MO005 permits in entrypoint
+/// modules. A `main`, `run`, or `init` function up to this many lines is
+/// accepted as composition glue. A function exceeding this limit is
+/// substantial enough that it belongs in a dedicated module.
+///
+/// 25 lines is deliberate: it accommodates `fn main() -> Result<()>` that
+/// parses args and dispatches a single `run()` call, plus small helpers like
+/// `fn run(cli: Cli) -> Result<()> { commands::run(cli) }`, while still
+/// flagging multi-branch dispatch bodies that belong in a `commands/` module.
+pub const MO005_THIN_FN_MAX_LINES: u32 = 25;
+
+/// Function names that MO005 treats as composition glue and therefore
+/// exempts from the line-count check **in addition to** the thin-function
+/// budget. An entrypoint module may contain any number of these functions
+/// provided each is individually below `MO005_THIN_FN_MAX_LINES` lines.
+///
+/// `main` / `run` / `init` are the conventional Rust entrypoint names.
+/// `setup` / `start` appear in test harnesses and integration crates.
+const ENTRYPOINT_FN_NAMES: &[&str] = &["main", "run", "init", "setup", "start"];
+
+/// Identifies whether an entrypoint module is a binary root (`main.rs`) or a
+/// directory module root (`mod.rs`).
+///
+/// The distinction matters for the composition-host exception in MO005: the
+/// exception applies only to `mod.rs` files (directory module roots), where
+/// a unit struct + thin `impl Paradigm` is the deliberate architectural
+/// convention. `main.rs` (binary entrypoints) must have zero impl blocks
+/// regardless of trait, target, or method size.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum EntrypointKind {
+    /// Binary-crate entrypoint (`main.rs` or module path ending in `::main`).
+    Main,
+    /// Directory-module root (`mod.rs` or module path ending in `::mod`).
+    Mod,
+}
+
+/// Check whether a file is an entrypoint module based on its module path
+/// and file path, and return the `EntrypointKind` when it is.
+///
+/// Returns `None` when the file is not an entrypoint module.
+///
+/// Detection uses two complementary signals:
+///
+/// 1. **Module-path suffix** — the last segment of `module_path` is compared
+///    against `ENTRYPOINT_SUFFIXES`. Catches `my_crate::commands::mod` as a
+///    directory-module entrypoint and `my_crate::main` as a binary entrypoint.
+///
+/// 2. **File-path basename** — the file's OS path (when provided) is also
+///    checked. This catches the common case in Rust where binary-crate
+///    `main.rs` produces a flat `module_path` equal to just the crate name
+///    (e.g. `locus_cli` rather than `locus_cli::main`). Likewise `mod.rs`
+///    files inside subdirectories have module paths like `pkg::commands`,
+///    not `pkg::commands::mod`.
+///
+/// Both checks use the same two-value set (`main`, `mod`) so the semantics
+/// are symmetric — either the logical name or the filesystem name can
+/// trigger the rule. Note: `lib.rs` is excluded in this first pass; see
+/// `MO005` doc comment for rationale.
+fn entrypoint_kind(module_path: &str, file_path: &str) -> Option<EntrypointKind> {
+    // Check 1: last module_path segment.
+    let last_segment = module_path.rsplit("::").next().unwrap_or(module_path);
+    if let Some(kind) = segment_to_entrypoint_kind(last_segment) {
+        return Some(kind);
+    }
+    // Check 2: file basename stem (e.g. "main" from ".../src/main.rs").
+    let stem = std::path::Path::new(file_path)
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("");
+    segment_to_entrypoint_kind(stem)
+}
+
+fn segment_to_entrypoint_kind(segment: &str) -> Option<EntrypointKind> {
+    match segment {
+        "main" => Some(EntrypointKind::Main),
+        "mod" => Some(EntrypointKind::Mod),
+        _ => None,
+    }
+}
+
+/// Total impl-block line budget for the composition-host exception in
+/// entrypoint `mod.rs` files.
+///
+/// `AirImplBlock` carries the names of methods but not per-method line counts.
+/// The impl block's span (line_end − line_start + 1) is used as a proxy: if
+/// the entire block fits within this budget, every method inside it is
+/// necessarily thin (≤30 lines each, even with 4–5 methods and boilerplate).
+///
+/// 120 lines is chosen to comfortably accommodate the largest real composition-
+/// host impl blocks observed during dogfooding (~60 lines) while still flagging
+/// impls that contain substantial business logic. The observed maximum across
+/// all Locus paradigm host impls is ~60 lines; 120 gives 2× headroom.
+pub const MO005_COMPOSITION_HOST_IMPL_MAX_LINES: u32 = 120;
+
+/// Trait name suffix that identifies the known composition trait.
+///
+/// Matched by suffix so both `Paradigm` and `crate::paradigms::Paradigm` (or
+/// any module-qualified form) resolve to the same check. If another trait named
+/// `Paradigm` exists in the workspace, that is an acceptable false-negative
+/// risk for this first pass.
+const COMPOSITION_TRAIT_NAME: &str = "Paradigm";
+
+/// Returns `true` when `impl_block` matches the composition-host pattern in a
+/// `mod.rs` entrypoint:
+///
+/// 1. The impl block implements the known composition trait (`Paradigm`).
+/// 2. The target type is a local unit struct (zero fields) declared in
+///    `same_file_items`.
+/// 3. The total impl block span is ≤ `MO005_COMPOSITION_HOST_IMPL_MAX_LINES`.
+///
+/// All three conditions must hold; if any fails the impl block is still
+/// flagged by MO005.
+fn is_composition_host_impl(
+    impl_block: &locus_air::AirImplBlock,
+    same_file_items: &[AirItem],
+) -> bool {
+    // Condition 1: implements the Paradigm trait.
+    let Some(interface) = &impl_block.interface else {
+        return false;
+    };
+    let implements_paradigm = interface == COMPOSITION_TRAIT_NAME
+        || interface.ends_with(&format!("::{COMPOSITION_TRAIT_NAME}"));
+    if !implements_paradigm {
+        return false;
+    }
+
+    // Condition 2: target type is a local unit struct in the same module.
+    let target = &impl_block.target_type;
+    let is_local_unit_struct = same_file_items.iter().any(|item| {
+        let AirItem::Type(t) = item else {
+            return false;
+        };
+        t.kind == locus_air::TypeKind::Struct
+            && t.fields.is_empty()
+            && (t.name == *target
+                || t.symbol == *target
+                || t.symbol.ends_with(&format!("::{target}")))
+    });
+    if !is_local_unit_struct {
+        return false;
+    }
+
+    // Condition 3: total impl block is within the thin-methods budget.
+    let impl_lines = impl_block
+        .span
+        .line_end
+        .saturating_sub(impl_block.span.line_start)
+        + 1;
+    impl_lines <= MO005_COMPOSITION_HOST_IMPL_MAX_LINES
+}
+
+/// Returns `true` when `type_item` is the host unit struct paired with a
+/// composition-host impl in the same file.
+///
+/// The host struct is allowed (not flagged) when its matching `impl Paradigm`
+/// is allowed. This prevents the struct itself from triggering MO005 even
+/// though it is a type declaration in an entrypoint module.
+fn is_composition_host_struct(type_item: &locus_air::AirType, same_file_items: &[AirItem]) -> bool {
+    // Must be a unit struct (no fields).
+    if type_item.kind != locus_air::TypeKind::Struct || !type_item.fields.is_empty() {
+        return false;
+    }
+    // There must be a composition-host impl targeting this struct in the same file.
+    same_file_items.iter().any(|item| {
+        let AirItem::Impl(impl_block) = item else {
+            return false;
+        };
+        let target = &impl_block.target_type;
+        let names_match = *target == type_item.name
+            || *target == type_item.symbol
+            || target.ends_with(&format!("::{}", type_item.name));
+        names_match && is_composition_host_impl(impl_block, same_file_items)
+    })
+}
+
+/// Classify an `AirItem` as allowed or forbidden in an entrypoint module.
+///
+/// `same_file_items` is the full item list from the file being checked; it is
+/// needed to evaluate the composition-host exception (the host struct and its
+/// `impl Paradigm` are validated in terms of each other).
+///
+/// `kind` identifies whether the entrypoint is `main.rs` or `mod.rs`. The
+/// composition-host exception (unit struct + thin `impl Paradigm`) is only
+/// valid in `mod.rs` files — `main.rs` is the binary entrypoint and must have
+/// zero impl blocks regardless of trait, target, or method size.
+///
+/// Returns `None` when the item is permitted; returns `Some(reason)` when
+/// it is a forbidden declaration that MO005 should flag.
+fn mo005_classify_item(
+    item: &AirItem,
+    same_file_items: &[AirItem],
+    kind: EntrypointKind,
+) -> Option<String> {
+    match item {
+        AirItem::Type(t) => {
+            // The composition-host exception (unit struct paired with thin
+            // impl Paradigm) applies only in mod.rs files — it is a
+            // directory-module convention, not a binary-entrypoint convention.
+            if kind == EntrypointKind::Mod && is_composition_host_struct(t, same_file_items) {
+                return None;
+            }
+            let kind_str = match t.kind {
+                locus_air::TypeKind::Struct => "struct",
+                locus_air::TypeKind::Enum => "enum",
+                locus_air::TypeKind::Trait => "trait",
+                locus_air::TypeKind::Alias => "type alias",
+                locus_air::TypeKind::Union => "union",
+            };
+            Some(format!(
+                "{kind_str} `{}` declared in entrypoint module — move to a sibling module",
+                t.name
+            ))
+        }
+        AirItem::Impl(i) => {
+            // Allow the composition-host impl: `impl Paradigm for LocalUnitStruct`
+            // in a mod.rs, where all methods are thin (impl block ≤120 lines).
+            // This exception does NOT apply to main.rs — the binary entrypoint
+            // must have zero impl blocks.
+            if kind == EntrypointKind::Mod && is_composition_host_impl(i, same_file_items) {
+                return None;
+            }
+            let target = &i.target_type;
+            Some(format!(
+                "impl block for `{target}` in entrypoint module — move to the module that owns `{target}`"
+            ))
+        }
+        AirItem::Function(f) => {
+            let is_permitted_name = ENTRYPOINT_FN_NAMES.contains(&f.name.as_str());
+            let within_budget = f.line_count <= MO005_THIN_FN_MAX_LINES;
+            if is_permitted_name && within_budget {
+                // Thin composition-glue function: allowed.
+                return None;
+            }
+            if is_permitted_name {
+                // Named correctly but too large — this is itself a smell.
+                Some(format!(
+                    "function `{}` in entrypoint module spans {} lines (budget {}); \
+                     move its body into a dedicated module",
+                    f.name, f.line_count, MO005_THIN_FN_MAX_LINES
+                ))
+            } else {
+                // Non-permitted name — regardless of line count this is a
+                // domain/business function that belongs elsewhere.
+                Some(format!(
+                    "function `{}` in entrypoint module is not composition glue; \
+                     move it to a sibling module (e.g. `commands/`, `routes/`, \
+                     `handlers/`)",
+                    f.name
+                ))
+            }
+        }
+        AirItem::Conversion(c) => {
+            // Converter / From/TryFrom impls in an entrypoint are unlikely;
+            // flag them as misplaced.
+            Some(format!(
+                "converter `{}` declared in entrypoint module — move to a `convert.rs` \
+                 or the owning domain module",
+                c.symbol
+            ))
+        }
+        // All other item kinds — imports, hints, facts, call-sites, etc.
+        // — are passive observations, not declarations. Permitted.
+        _ => None,
+    }
+}
+
+/// MO005 — entrypoint modules must be composition surfaces, not ownership
+/// sites.
+///
+/// Fires for every `AirItem` in a file whose `module_path` ends in `::main`
+/// or `::mod` (or whose file's basename is `main.rs`/`mod.rs`) that is a
+/// type declaration, impl block, converter, or a function that is not a thin
+/// composition-glue wrapper (≤25 lines named `main`/`run`/`init`/`setup`/
+/// `start`).
+///
+/// **Allowed in entrypoint modules:**
+/// - `mod` declarations (not captured in AIR at the item level)
+/// - imports (`AirItem::Import`)
+/// - crate-level doc attrs / hints
+/// - thin `fn main` / `fn run` / `fn init` (≤ `MO005_THIN_FN_MAX_LINES` lines)
+/// - **composition-host pair** in `mod.rs`: a unit struct + `impl Paradigm`
+///   where all methods are thin (total impl block ≤ `MO005_COMPOSITION_HOST_IMPL_MAX_LINES`
+///   lines). This encodes the deliberate architectural convention that every
+///   Locus paradigm module has exactly one host struct + `impl Paradigm` in its
+///   `mod.rs`. The exception is structural: it fires only when the impl
+///   implements the known `Paradigm` trait, the target is a local unit struct,
+///   and the whole block is thin.
+///
+/// **Forbidden:**
+/// - struct / enum / trait / alias / union declarations (except the host unit struct)
+/// - impl blocks (except the composition-host `impl Paradigm` in `mod.rs`)
+/// - converter declarations
+/// - functions not named `main`/`run`/`init`/`setup`/`start`
+/// - functions whose line count exceeds the budget
+///
+/// `lib.rs` is out of scope in this first pass; see follow-up issue for
+/// lib.rs entrypoint handling.
+///
+/// **Rationale:** entrypoint modules are the last place agents look when
+/// adding new behavior, so they accumulate it. Enforcing that they contain
+/// only composition glue keeps the dependency tree legible and prevents
+/// god-module accumulation at the binary root.
+///
+/// Severity: Warning by default; `--agent-strict` elevates to Fatal.
+///
+/// No lockfile configuration in the first pass — exemption via the standard
+/// `// locus: allow MO005` source-hint.
+pub fn mo005(air: &AirWorkspace, mode: CheckMode) -> Vec<Diagnostic> {
+    let mut out = Vec::new();
+    for pkg in &air.packages {
+        for file in &pkg.files {
+            let Some(module_path) = file.module_path.as_deref() else {
+                continue;
+            };
+            let Some(ep_kind) = entrypoint_kind(module_path, &file.path) else {
+                continue;
+            };
+            // Compute a human-readable entrypoint label for the diagnostic.
+            // Prefer the file basename (e.g. "main.rs") so the message
+            // remains clear even when the module_path is flat (crate root).
+            let file_label = std::path::Path::new(&file.path)
+                .file_name()
+                .and_then(|s| s.to_str())
+                .unwrap_or(&file.path);
+            for item in &file.items {
+                if let Some(reason) = mo005_classify_item(item, &file.items, ep_kind) {
+                    let span = match item {
+                        AirItem::Type(t) => t.span.clone(),
+                        AirItem::Function(f) => f.span.clone(),
+                        AirItem::Impl(i) => i.span.clone(),
+                        AirItem::Conversion(c) => c.span.clone(),
+                        _ => AirSpan::new(file.path.clone(), 1, 1),
+                    };
+                    out.push(Diagnostic {
+                        rule_id: "MO005".to_string(),
+                        severity: mode.elevate(Severity::Warning),
+                        span,
+                        concept: None,
+                        message: format!("MO005: {reason}"),
+                        why: vec![
+                            format!(
+                                "`{file_label}` (module `{module_path}`) is an entrypoint \
+                                 module — it must be a composition surface, not an ownership site"
+                            ),
+                            "entrypoint modules are composition surfaces — they wire \
+                             modules together via `mod` declarations, imports, and thin \
+                             `main`/`run`/`init` functions. Substantial declarations \
+                             belong in dedicated sibling modules."
+                                .into(),
+                        ],
+                        suggested_fix: Some(
+                            "move this declaration into a dedicated sibling module \
+                             (e.g. `cli.rs` for the root arg struct, `commands/` for \
+                             command implementations). Entrypoint should contain only \
+                             `mod` decls, imports, and a thin `main` or `run` function."
+                                .into(),
+                        ),
+                    });
+                }
+            }
         }
     }
     out
