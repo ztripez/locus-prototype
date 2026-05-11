@@ -33,7 +33,22 @@ paradigm_def!(BoParadigmDef, "BO", "Boundary Ownership");
 paradigm_def!(CfParadigmDef, "CF", "Config Data");
 paradigm_def!(CrParadigmDef, "CR", "Claim Ownership");
 paradigm_def!(ClParadigmDef, "CL", "Composition Root");
-paradigm_def!(CxParadigmDef, "CX", "Complexity Budget");
+// CX breaks out of the macro pattern — first paradigm with a migrated
+// rule, so `rules()` returns a non-empty slice.
+pub struct CxParadigmDef;
+impl ParadigmDefinition for CxParadigmDef {
+    fn id(&self) -> ParadigmId {
+        ParadigmId::new("CX")
+    }
+    fn title(&self) -> &'static str {
+        "Complexity Budget"
+    }
+    fn rules(&self) -> &'static [&'static dyn RuleDefinition] {
+        static RULES: [&dyn RuleDefinition; 1] =
+            [&crate::paradigms::complexity_budget::rules::cx001::CX001_RULE];
+        &RULES
+    }
+}
 paradigm_def!(DaParadigmDef, "DA", "Demand Driven");
 paradigm_def!(DcParadigmDef, "DC", "Documentation");
 paradigm_def!(ErParadigmDef, "ER", "Error Taxonomy");

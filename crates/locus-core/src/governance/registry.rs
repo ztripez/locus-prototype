@@ -26,9 +26,13 @@ pub struct RuleRegistry {
 }
 
 impl RuleRegistry {
-    /// Empty registry. P1 wires no migrated rules.
+    /// Migrated rules. Grows as rules move from legacy `Paradigm::check`
+    /// to `RuleDefinition` impls. CX001 lands in P2 (#71); others follow
+    /// in subsequent PRs.
     pub fn standard() -> Self {
-        Self { rules: Vec::new() }
+        Self {
+            rules: vec![&crate::paradigms::complexity_budget::rules::cx001::CX001_RULE],
+        }
     }
 
     /// Test-only constructor.
@@ -322,6 +326,25 @@ mod tests {
             "default-pass-through",
             "DefaultPassThroughPolicy MUST be the last entry in PolicyRegistry::standard()"
         );
+    }
+
+    #[test]
+    fn rule_registry_contains_cx001_after_p2_migration() {
+        let reg = RuleRegistry::standard();
+        assert!(reg.contains_code("CX001"), "CX001 must be in RuleRegistry::standard() after P2");
+        let rule = reg.find(&RuleId::new("CX001")).expect("CX001 missing");
+        assert_eq!(rule.paradigm().as_str(), "CX");
+        assert_eq!(rule.default_severity(), crate::diagnostics::Severity::Warning);
+    }
+
+    #[test]
+    fn cx_paradigm_def_lists_cx001_rule() {
+        let reg = ParadigmRegistry::standard();
+        let cx = reg
+            .find(&ParadigmId::new("CX"))
+            .expect("CX ParadigmDefinition missing");
+        let rule_ids: Vec<&str> = cx.rules().iter().map(|r| r.id().as_str()).collect();
+        assert_eq!(rule_ids, vec!["CX001"]);
     }
 
     #[test]
