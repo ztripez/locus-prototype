@@ -9,22 +9,26 @@
     {
       "id": "rule",
       "source_of_truth": "RuleDefinition",
-      "registry": "RuleRegistry"
+      "registry": "RuleRegistry",
+      "enforcement": "advisory"
     },
     {
       "id": "paradigm",
       "source_of_truth": "ParadigmDefinition",
-      "registry": "ParadigmRegistry"
+      "registry": "ParadigmRegistry",
+      "enforcement": "advisory"
     },
     {
       "id": "policy",
       "source_of_truth": "PolicyDefinition",
-      "registry": "PolicyRegistry"
+      "registry": "PolicyRegistry",
+      "enforcement": "advisory"
     },
     {
       "id": "governance-code",
       "source_of_truth": "GovernanceDiagnosticRegistry",
-      "registry": "GovernanceDiagnosticRegistry"
+      "registry": "GovernanceDiagnosticRegistry",
+      "enforcement": "advisory"
     }
   ]
 }

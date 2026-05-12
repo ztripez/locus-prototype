@@ -14,8 +14,9 @@ use locus_core::governance::finding::RuleFinding;
 use locus_core::governance::ids::{FindingIdMinter, ParadigmId, PolicyId, RuleId};
 use locus_core::governance::policy::PolicyContext;
 use locus_core::governance::{
-    self, ArchDeclaration, ArchLoadOutcome, ConceptDeclaration, ConceptSourceOfTruthPolicy,
-    FindingSource, FindingStore, ParadigmRegistry, PolicyDefinition, PolicyRegistry, RuleRegistry,
+    self, ArchDeclaration, ArchLoadOutcome, ConceptDeclaration, ConceptEnforcement,
+    ConceptSourceOfTruthPolicy, FindingSource, FindingStore, ParadigmRegistry, PolicyDefinition,
+    PolicyRegistry, RuleRegistry,
 };
 use locus_core::{CheckMode, Lockfile, Severity};
 
@@ -24,6 +25,7 @@ fn rule_concept() -> ConceptDeclaration {
         id: "rule".into(),
         source_of_truth: "RuleDefinition".into(),
         registry: "RuleRegistry".into(),
+        enforcement: ConceptEnforcement::Advisory,
     }
 }
 
@@ -32,6 +34,7 @@ fn paradigm_concept() -> ConceptDeclaration {
         id: "paradigm".into(),
         source_of_truth: "ParadigmDefinition".into(),
         registry: "ParadigmRegistry".into(),
+        enforcement: ConceptEnforcement::Advisory,
     }
 }
 
@@ -40,6 +43,7 @@ fn policy_concept() -> ConceptDeclaration {
         id: "policy".into(),
         source_of_truth: "PolicyDefinition".into(),
         registry: "PolicyRegistry".into(),
+        enforcement: ConceptEnforcement::Advisory,
     }
 }
 
@@ -48,6 +52,16 @@ fn governance_code_concept() -> ConceptDeclaration {
         id: "governance-code".into(),
         source_of_truth: "GovernanceDiagnosticRegistry".into(),
         registry: "GovernanceDiagnosticRegistry".into(),
+        enforcement: ConceptEnforcement::Advisory,
+    }
+}
+
+fn enforced_rule_concept() -> ConceptDeclaration {
+    ConceptDeclaration {
+        id: "rule".into(),
+        source_of_truth: "RuleDefinition".into(),
+        registry: "RuleRegistry".into(),
+        enforcement: ConceptEnforcement::Enforced,
     }
 }
 
@@ -68,6 +82,21 @@ fn run_isolated<F>(arch: ArchLoadOutcome, populate: F) -> Vec<RuleFinding>
 where
     F: FnOnce(&FindingIdMinter, &mut FindingStore),
 {
+    run_isolated_with_mode(arch, CheckMode::Human, populate).new_findings
+}
+
+/// Returns the full policy output (findings + decisions) under the
+/// supplied mode. Used by the enforced-mode tests to pin the rendered
+/// severity that the pipeline's materializer would emit verbatim onto
+/// the resulting `Diagnostic`.
+fn run_isolated_with_mode<F>(
+    arch: ArchLoadOutcome,
+    mode: CheckMode,
+    populate: F,
+) -> locus_core::governance::PolicyOutput
+where
+    F: FnOnce(&FindingIdMinter, &mut FindingStore),
+{
     let air = AirWorkspace::new(Vec::new());
     let lf = Lockfile::empty();
     let rules = RuleRegistry::standard();
@@ -79,7 +108,7 @@ where
     let ctx = PolicyContext {
         air: &air,
         lockfile: &lf,
-        mode: CheckMode::Human,
+        mode,
         rule_registry: &rules,
         paradigm_registry: &paradigms,
         policy_registry: &policies,
@@ -88,7 +117,7 @@ where
         finding_ids: &minter,
         arch: &arch,
     };
-    ConceptSourceOfTruthPolicy.decide(&ctx).new_findings
+    ConceptSourceOfTruthPolicy.decide(&ctx)
 }
 
 fn finding_with_diagnostic_code(
@@ -349,6 +378,7 @@ fn unknown_concept_id_emits_one_locus005() {
             id: "unknown-thing".into(),
             source_of_truth: "MysteryTrait".into(),
             registry: "MysteryRegistry".into(),
+            enforcement: ConceptEnforcement::Advisory,
         }],
     });
     let findings = run_isolated(arch, |_minter, _store| {});
@@ -393,8 +423,10 @@ fn dedupes_repeated_bypass_observations() {
 }
 
 #[test]
-fn locus005_always_advisory_under_agent_strict() {
-    // Even in --agent-strict mode, LOCUS005 stays Advisory.
+fn locus005_advisory_concept_stays_advisory_under_agent_strict() {
+    // Even in --agent-strict mode, a concept declared with Advisory
+    // enforcement (the default since #100) keeps LOCUS005 at Advisory
+    // severity. Pure-guide-signal contract preserved.
     let air = AirWorkspace::new(Vec::new());
     let lf = Lockfile::empty();
     let arch = ArchLoadOutcome::Present(ArchDeclaration {
@@ -408,6 +440,7 @@ fn locus005_always_advisory_under_agent_strict() {
             id: "unknown-thing".into(),
             source_of_truth: "X".into(),
             registry: "Y".into(),
+            enforcement: ConceptEnforcement::Advisory,
         }],
     });
     let out = governance::run_with_arch(&air, &lf, CheckMode::AgentStrict, &arch);
@@ -415,10 +448,146 @@ fn locus005_always_advisory_under_agent_strict() {
         assert_eq!(
             d.severity,
             Severity::Advisory,
-            "LOCUS005 must stay Advisory under --agent-strict; got {:?}",
+            "LOCUS005 must stay Advisory under --agent-strict for an Advisory concept; got {:?}",
             d.severity
         );
     }
+}
+
+#[test]
+fn end_to_end_enforced_concept_under_agent_strict() {
+    // Declare `rule` Enforced + inject a synthetic bypass (an
+    // unregistered RuleId finding). Under --agent-strict the resulting
+    // LOCUS005 must render at Fatal severity with an Active status —
+    // the rendered diagnostic carries the decision's severity
+    // verbatim (see `pipeline::materialize`), so pinning the decision
+    // pins the user-facing output.
+    let arch = ArchLoadOutcome::Present(ArchDeclaration {
+        policies: Vec::new(),
+        concepts: vec![enforced_rule_concept()],
+    });
+    let out = run_isolated_with_mode(arch, CheckMode::AgentStrict, |minter, store| {
+        store.insert(RuleFinding {
+            id: minter.next(),
+            source: FindingSource::RegisteredRule(RuleId::new("ZZ999")),
+            rule_id: Some(RuleId::new("ZZ999")),
+            paradigm_id: None,
+            default_severity: Severity::Warning,
+            span: None,
+            concept: None,
+            message: "m".into(),
+            evidence: Vec::new(),
+            why: Vec::new(),
+            suggested_fix: None,
+            diagnostic_code: None,
+        });
+    });
+    let locus005: Vec<_> = out
+        .new_findings
+        .iter()
+        .filter(|f| f.diagnostic_code.as_deref() == Some("LOCUS005"))
+        .collect();
+    assert_eq!(locus005.len(), 1, "expected one LOCUS005 for ZZ999 bypass");
+    assert_eq!(
+        locus005[0].default_severity,
+        Severity::Fatal,
+        "Enforced + AgentStrict must render as Fatal; got {:?}",
+        locus005[0].default_severity
+    );
+    let decision = out
+        .decisions
+        .iter()
+        .find(|d| d.finding_id == locus005[0].id)
+        .expect("decision paired with finding");
+    assert_eq!(decision.severity, Severity::Fatal);
+    assert_eq!(
+        decision.status,
+        locus_core::governance::DecisionStatus::Active,
+        "Enforced bypass should be Active, not Advisory"
+    );
+}
+
+#[test]
+fn end_to_end_advisory_concept_does_not_block() {
+    // Mirror of the enforced test: declare `rule` Advisory (default)
+    // + inject the same synthetic bypass. Even under --agent-strict,
+    // the rendered LOCUS005 stays Advisory, so the run wouldn't
+    // contribute to a non-zero error count.
+    let arch = ArchLoadOutcome::Present(ArchDeclaration {
+        policies: Vec::new(),
+        concepts: vec![rule_concept()], // Advisory enforcement
+    });
+    let out = run_isolated_with_mode(arch, CheckMode::AgentStrict, |minter, store| {
+        store.insert(RuleFinding {
+            id: minter.next(),
+            source: FindingSource::RegisteredRule(RuleId::new("ZZ999")),
+            rule_id: Some(RuleId::new("ZZ999")),
+            paradigm_id: None,
+            default_severity: Severity::Warning,
+            span: None,
+            concept: None,
+            message: "m".into(),
+            evidence: Vec::new(),
+            why: Vec::new(),
+            suggested_fix: None,
+            diagnostic_code: None,
+        });
+    });
+    let locus005: Vec<_> = out
+        .new_findings
+        .iter()
+        .filter(|f| f.diagnostic_code.as_deref() == Some("LOCUS005"))
+        .collect();
+    assert_eq!(locus005.len(), 1);
+    assert_eq!(locus005[0].default_severity, Severity::Advisory);
+    let decision = out
+        .decisions
+        .iter()
+        .find(|d| d.finding_id == locus005[0].id)
+        .expect("decision paired with finding");
+    assert_eq!(decision.severity, Severity::Advisory);
+    assert_eq!(
+        decision.status,
+        locus_core::governance::DecisionStatus::Advisory,
+    );
+}
+
+#[test]
+fn end_to_end_pipeline_with_enforced_concept_stays_clean_for_valid_locus() {
+    // Locus's own registries match all declared concepts, so even
+    // under Enforced mode + AgentStrict the run should produce zero
+    // LOCUS005 diagnostics. Guards against any accidental elevation
+    // of false positives once the mechanism ships.
+    let air = AirWorkspace::new(Vec::new());
+    let lf = Lockfile::empty();
+    let arch = ArchLoadOutcome::Present(ArchDeclaration {
+        policies: vec![
+            "registry-integrity".into(),
+            "registry-coherence".into(),
+            "concept-source-of-truth".into(),
+            "default-pass-through".into(),
+        ],
+        concepts: vec![
+            enforced_rule_concept(),
+            paradigm_concept(),
+            policy_concept(),
+            governance_code_concept(),
+        ],
+    });
+    let out = governance::run_with_arch(&air, &lf, CheckMode::AgentStrict, &arch);
+    let locus005: Vec<_> = out
+        .diagnostics
+        .iter()
+        .filter(|d| d.rule_id == "LOCUS005")
+        .collect();
+    assert!(
+        locus005.is_empty(),
+        "Locus's own valid registries must stay LOCUS005-silent even under Enforced+AgentStrict; got {:?}",
+        locus005
+            .iter()
+            .map(|d| d.message.as_str())
+            .collect::<Vec<_>>()
+    );
 }
 
 #[test]

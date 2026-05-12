@@ -46,6 +46,28 @@ Locus dogfoods its own governance via `.locus/arch.json`:
 
 Both run **advisory-only**: they surface drift without blocking CI. The MVP framing is deliberate — future iterations can elevate severity once arch-drift behavior is well-understood. This is the first architecture-governance MVP per #75, not the final observation/mutation engine — public release polish, full architecture style catalogue, and git-history observation are non-goals for the MVP.
 
+### Per-concept enforcement (`#99`)
+
+Each concept in `.locus/arch.json` accepts an optional `enforcement` field:
+
+```json
+{
+  "id": "rule",
+  "source_of_truth": "RuleDefinition",
+  "registry": "RuleRegistry",
+  "enforcement": "advisory"
+}
+```
+
+- **`advisory`** (default) — LOCUS005 bypass findings render at `Advisory` severity with `DecisionStatus::Advisory`. Visible but not a gate. Use during onboarding or when the concept's SoT contract is still evolving.
+- **`enforced`** — LOCUS005 bypass findings render at `Warning` under normal `locus check`, elevated to `Fatal` under `--agent-strict`, with `DecisionStatus::Active`. Use when the concept's SoT contract is firm and bypasses must block CI.
+
+The unknown-concept-id path (a typo in `arch.json`, e.g. `id: "ruel"`) stays pinned to Advisory regardless of any declared `enforcement` value — it's a config-quality signal, not a real SoT bypass.
+
+Legacy diagnostics (`FindingSource::LegacyDiagnostic`) are never affected by `enforcement` — they remain under LOCUS003 `KnownTransitionDebt` regardless.
+
+Locus's own four concepts (`rule`, `paradigm`, `policy`, `governance-code`) ship at `advisory` — the mechanism is in place, but no graduation is included with #99. Flipping individual concepts to `enforced` is a separate maintainer decision tracked against the dogfood audit.
+
 ## Project status
 
 20 paradigms registered; **90 rules implemented** (up from 41 — see `docs/PARADIGMS.md` "Implementation status (snapshot)" for the per-paradigm rule list). Two loaders ship: **`std-rt`** produces 6 language-level fact kinds (`SpawnedWork`, `ConfigRead`, `Logging`, `BlockingCall`, `PersistenceWrite`, `ExternalIo` from stdlib patterns); **`markers`** promotes `// locus: fact <fact_kind>` source hints into facts for the 5 kinds the loader tier can't auto-recognise (`HotPath`, `RequestContext`, `BoundaryEntry`, `RuntimeStateOwner`, `BackgroundWorker`). Highlight set:

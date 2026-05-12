@@ -14,8 +14,8 @@
 
 use std::collections::BTreeSet;
 
-use crate::diagnostics::Severity;
-use crate::governance::arch::{ArchLoadOutcome, ConceptDeclaration};
+use crate::diagnostics::{CheckMode, Severity};
+use crate::governance::arch::{ArchLoadOutcome, ConceptDeclaration, ConceptEnforcement};
 use crate::governance::decision::{Decision, DecisionStatus, SeverityChange};
 use crate::governance::finding::{FindingSource, RuleFinding};
 use crate::governance::ids::PolicyId;
@@ -271,13 +271,18 @@ fn push_unknown_concept(
         concept.id
     );
     let rationale = format!("unknown concept id `{}`", concept.id);
-    push_locus005(
+    // Unknown concept ids are a config-quality issue, not a real SoT
+    // bypass. Pin Advisory regardless of any per-concept `enforcement`
+    // value — promoting "I typo'd an arch.json entry" to Fatal would
+    // be hostile and surprising.
+    push_locus005_with_severity(
         concept,
         ctx,
         message,
         observation_line,
         suggested_fix,
         rationale,
+        (Severity::Advisory, DecisionStatus::Advisory),
         new_findings,
         decisions,
     );
@@ -304,43 +309,95 @@ fn emit_bypass(
         "{kind_label} `{identifier}` bypasses `{}`",
         concept.registry
     );
-    push_locus005(
+    let (severity, status) = severity_for(concept.enforcement, ctx.mode);
+    push_locus005_with_severity(
         concept,
         ctx,
         message,
         observation_line,
         suggested_fix,
         rationale,
+        (severity, status),
         new_findings,
         decisions,
     );
 }
 
-/// Build the LOCUS005 finding + paired decision and push them onto the
-/// caller's output vectors. Both kinds of LOCUS005 (recognised bypass +
-/// unknown concept id) share this shape — they only differ in the
-/// observation line, message, and rationale.
+/// Map a concept's declared `enforcement` mode (× the current
+/// `CheckMode`) to the `(Severity, DecisionStatus)` pair for the
+/// emitted LOCUS005:
+///
+/// - `Advisory` → `(Advisory, DecisionStatus::Advisory)` — the
+///   post-#100 MVP behavior; visible but never a gate.
+/// - `Enforced` → `(mode.elevate(Warning), DecisionStatus::Active)` —
+///   Warning under `Human`, Fatal under `AgentStrict`. Counted as a
+///   normal violation in the decision-status taxonomy.
+///
+/// The unknown-concept-id branch deliberately bypasses this and stays
+/// pinned to `Advisory` because that finding is a config-quality
+/// signal, not a SoT bypass.
+fn severity_for(enforcement: ConceptEnforcement, mode: CheckMode) -> (Severity, DecisionStatus) {
+    match enforcement {
+        ConceptEnforcement::Advisory => (Severity::Advisory, DecisionStatus::Advisory),
+        ConceptEnforcement::Enforced => (mode.elevate(Severity::Warning), DecisionStatus::Active),
+    }
+}
+
+/// Build the LOCUS005 finding + paired decision with explicit
+/// severity/status, and push them onto the caller's output vectors.
+/// `severity_change` stays `Unchanged`: LOCUS005 is the policy
+/// *making* the decision, not mutating a prior one — the severity
+/// itself carries any AgentStrict elevation.
 #[allow(clippy::too_many_arguments)]
-fn push_locus005(
+fn push_locus005_with_severity(
     concept: &ConceptDeclaration,
     ctx: &PolicyContext<'_>,
     message: String,
     observation_line: String,
     suggested_fix: String,
     rationale: String,
+    (severity, status): (Severity, DecisionStatus),
     new_findings: &mut Vec<RuleFinding>,
     decisions: &mut Vec<Decision>,
 ) {
+    let finding = build_locus005_finding(
+        concept,
+        ctx,
+        message,
+        observation_line,
+        suggested_fix,
+        severity,
+    );
+    let decision = Decision {
+        finding_id: finding.id,
+        policy: CONCEPT_SOT_ID,
+        severity,
+        status,
+        severity_change: SeverityChange::Unchanged,
+        rationale: vec![rationale],
+    };
+    new_findings.push(finding);
+    decisions.push(decision);
+}
+
+fn build_locus005_finding(
+    concept: &ConceptDeclaration,
+    ctx: &PolicyContext<'_>,
+    message: String,
+    observation_line: String,
+    suggested_fix: String,
+    severity: Severity,
+) -> RuleFinding {
     let intent_line = format!(
         "Architecture intent declares `{}` source of truth as `{}` via `{}`.",
         concept.id, concept.source_of_truth, concept.registry
     );
-    let finding = RuleFinding {
+    RuleFinding {
         id: ctx.finding_ids.next(),
         source: FindingSource::Policy(CONCEPT_SOT_ID),
         rule_id: None,
         paradigm_id: None,
-        default_severity: Severity::Advisory,
+        default_severity: severity,
         span: None,
         concept: Some(concept.id.clone()),
         message,
@@ -348,17 +405,7 @@ fn push_locus005(
         why: vec![intent_line, observation_line],
         suggested_fix: Some(suggested_fix),
         diagnostic_code: Some(LOCUS005.into()),
-    };
-    let decision = Decision {
-        finding_id: finding.id,
-        policy: CONCEPT_SOT_ID,
-        severity: Severity::Advisory,
-        status: DecisionStatus::Advisory,
-        severity_change: SeverityChange::Unchanged,
-        rationale: vec![rationale],
-    };
-    new_findings.push(finding);
-    decisions.push(decision);
+    }
 }
 
 /// Quick shape check for `LOCUS\d{3}`-style governance codes. Keeps the
@@ -423,13 +470,24 @@ mod tests {
         paradigms: &ParadigmRegistry,
         policies: &PolicyRegistry,
     ) -> PolicyOutput {
+        run_with_mode(arch, store, rules, paradigms, policies, CheckMode::Human)
+    }
+
+    fn run_with_mode(
+        arch: &ArchLoadOutcome,
+        store: FindingStore,
+        rules: &RuleRegistry,
+        paradigms: &ParadigmRegistry,
+        policies: &PolicyRegistry,
+        mode: CheckMode,
+    ) -> PolicyOutput {
         let air = AirWorkspace::new(Vec::new());
         let lf = Lockfile::empty();
         let minter = FindingIdMinter::new();
         let ctx = PolicyContext {
             air: &air,
             lockfile: &lf,
-            mode: CheckMode::Human,
+            mode,
             rule_registry: rules,
             paradigm_registry: paradigms,
             policy_registry: policies,
@@ -446,6 +504,7 @@ mod tests {
             id: "rule".into(),
             source_of_truth: "RuleDefinition".into(),
             registry: "RuleRegistry".into(),
+            enforcement: ConceptEnforcement::Advisory,
         }
     }
 
@@ -454,6 +513,7 @@ mod tests {
             id: "policy".into(),
             source_of_truth: "PolicyDefinition".into(),
             registry: "PolicyRegistry".into(),
+            enforcement: ConceptEnforcement::Advisory,
         }
     }
 
@@ -462,6 +522,16 @@ mod tests {
             id: "governance-code".into(),
             source_of_truth: "GovernanceDiagnosticRegistry".into(),
             registry: "GovernanceDiagnosticRegistry".into(),
+            enforcement: ConceptEnforcement::Advisory,
+        }
+    }
+
+    fn paradigm_concept() -> ConceptDeclaration {
+        ConceptDeclaration {
+            id: "paradigm".into(),
+            source_of_truth: "ParadigmDefinition".into(),
+            registry: "ParadigmRegistry".into(),
+            enforcement: ConceptEnforcement::Advisory,
         }
     }
 
@@ -684,6 +754,7 @@ mod tests {
                 id: "unknown-thing".into(),
                 source_of_truth: "X".into(),
                 registry: "Y".into(),
+                enforcement: ConceptEnforcement::Advisory,
             }],
         });
         let out = run_with(
@@ -715,6 +786,7 @@ mod tests {
                 id: "paradigm".into(),
                 source_of_truth: "ParadigmDefinition".into(),
                 registry: "ParadigmRegistry".into(),
+                enforcement: ConceptEnforcement::Advisory,
             }],
         });
         // CX paradigm IS in the standard registry — must not trigger LOCUS005.
@@ -743,8 +815,10 @@ mod tests {
     }
 
     #[test]
-    fn locus005_severity_always_advisory() {
-        // Even on a non-trivial finding-set, default_severity must stay Advisory.
+    fn advisory_mode_emits_advisory_severity_and_status() {
+        // All test concept helpers default to Advisory enforcement, so a
+        // non-trivial finding-set should produce Advisory severity +
+        // Advisory status across the board.
         let arch = ArchLoadOutcome::Present(ArchDeclaration {
             policies: Vec::new(),
             concepts: vec![rule_concept(), policy_concept(), governance_code_concept()],
@@ -765,5 +839,211 @@ mod tests {
             assert_eq!(d.severity, Severity::Advisory);
             assert_eq!(d.status, DecisionStatus::Advisory);
         }
+    }
+
+    fn enforced_rule_concept() -> ConceptDeclaration {
+        ConceptDeclaration {
+            id: "rule".into(),
+            source_of_truth: "RuleDefinition".into(),
+            registry: "RuleRegistry".into(),
+            enforcement: ConceptEnforcement::Enforced,
+        }
+    }
+
+    #[test]
+    fn enforced_concept_emits_warning_under_human_mode() {
+        // Rule concept declared Enforced — an unregistered RuleId
+        // finding should produce a LOCUS005 with Warning severity + an
+        // Active decision (no longer pure-guide Advisory).
+        let arch = ArchLoadOutcome::Present(ArchDeclaration {
+            policies: Vec::new(),
+            concepts: vec![enforced_rule_concept()],
+        });
+        let mut store = FindingStore::new();
+        store.insert(registered_rule_finding(0, "ZZ999")); // not registered
+        let out = run_with(
+            &arch,
+            store,
+            &RuleRegistry::standard(),
+            &ParadigmRegistry::standard(),
+            &PolicyRegistry::standard(),
+        );
+        assert_eq!(out.new_findings.len(), 1);
+        assert_eq!(out.new_findings[0].default_severity, Severity::Warning);
+        assert_eq!(out.decisions.len(), 1);
+        assert_eq!(out.decisions[0].severity, Severity::Warning);
+        assert_eq!(out.decisions[0].status, DecisionStatus::Active);
+        // severity_change stays Unchanged — LOCUS005 is the policy
+        // making the decision, not a downstream policy mutating one.
+        assert_eq!(out.decisions[0].severity_change, SeverityChange::Unchanged);
+    }
+
+    #[test]
+    fn enforced_concept_elevates_to_fatal_under_agent_strict() {
+        let arch = ArchLoadOutcome::Present(ArchDeclaration {
+            policies: Vec::new(),
+            concepts: vec![enforced_rule_concept()],
+        });
+        let mut store = FindingStore::new();
+        store.insert(registered_rule_finding(0, "ZZ999"));
+        let out = run_with_mode(
+            &arch,
+            store,
+            &RuleRegistry::standard(),
+            &ParadigmRegistry::standard(),
+            &PolicyRegistry::standard(),
+            CheckMode::AgentStrict,
+        );
+        assert_eq!(out.new_findings.len(), 1);
+        assert_eq!(out.new_findings[0].default_severity, Severity::Fatal);
+        assert_eq!(out.decisions[0].severity, Severity::Fatal);
+        assert_eq!(out.decisions[0].status, DecisionStatus::Active);
+    }
+
+    #[test]
+    fn advisory_concept_stays_advisory_under_agent_strict() {
+        // Even under --agent-strict, an Advisory-mode concept must not
+        // elevate. Pure-guide-signal contract is preserved.
+        let arch = ArchLoadOutcome::Present(ArchDeclaration {
+            policies: Vec::new(),
+            concepts: vec![rule_concept()],
+        });
+        let mut store = FindingStore::new();
+        store.insert(registered_rule_finding(0, "ZZ999"));
+        let out = run_with_mode(
+            &arch,
+            store,
+            &RuleRegistry::standard(),
+            &ParadigmRegistry::standard(),
+            &PolicyRegistry::standard(),
+            CheckMode::AgentStrict,
+        );
+        assert_eq!(out.new_findings.len(), 1);
+        assert_eq!(out.new_findings[0].default_severity, Severity::Advisory);
+        assert_eq!(out.decisions[0].severity, Severity::Advisory);
+        assert_eq!(out.decisions[0].status, DecisionStatus::Advisory);
+    }
+
+    #[test]
+    fn mode_mixing_per_concept() {
+        // arch.json declares `rule` Enforced and `paradigm` Advisory.
+        // Emitting one bypass per concept should yield two LOCUS005s
+        // with different severity/status pairs in the same run.
+        let arch = ArchLoadOutcome::Present(ArchDeclaration {
+            policies: Vec::new(),
+            concepts: vec![enforced_rule_concept(), paradigm_concept()],
+        });
+        let mut store = FindingStore::new();
+        // Unregistered rule id → emits via rule concept (Enforced).
+        store.insert(registered_rule_finding(0, "ZZ999"));
+        // Unregistered paradigm id → emits via paradigm concept (Advisory).
+        let mut paradigm_f = registered_rule_finding(1, "CX001");
+        paradigm_f.paradigm_id = Some(ParadigmId::new("ZZ"));
+        store.insert(paradigm_f);
+
+        let out = run_with(
+            &arch,
+            store,
+            &RuleRegistry::standard(),
+            &ParadigmRegistry::standard(),
+            &PolicyRegistry::standard(),
+        );
+        let by_concept: std::collections::BTreeMap<_, _> = out
+            .new_findings
+            .iter()
+            .zip(out.decisions.iter())
+            .map(|(f, d)| (f.concept.clone().unwrap_or_default(), (f, d)))
+            .collect();
+        let (rule_f, rule_d) = by_concept
+            .get("rule")
+            .expect("expected one LOCUS005 for rule concept");
+        let (par_f, par_d) = by_concept
+            .get("paradigm")
+            .expect("expected one LOCUS005 for paradigm concept");
+        assert_eq!(rule_f.default_severity, Severity::Warning);
+        assert_eq!(rule_d.severity, Severity::Warning);
+        assert_eq!(rule_d.status, DecisionStatus::Active);
+        assert_eq!(par_f.default_severity, Severity::Advisory);
+        assert_eq!(par_d.severity, Severity::Advisory);
+        assert_eq!(par_d.status, DecisionStatus::Advisory);
+    }
+
+    #[test]
+    fn unknown_concept_id_stays_advisory_even_if_enforcement_field_present() {
+        // A typo in arch.json (`unknown-thing` is not a recognised
+        // concept id) is a config-quality issue, not an SoT bypass.
+        // Even with `enforcement: enforced` declared, the resulting
+        // "unknown concept" LOCUS005 must stay Advisory+Advisory.
+        let arch = ArchLoadOutcome::Present(ArchDeclaration {
+            policies: Vec::new(),
+            concepts: vec![ConceptDeclaration {
+                id: "unknown-thing".into(),
+                source_of_truth: "X".into(),
+                registry: "Y".into(),
+                enforcement: ConceptEnforcement::Enforced,
+            }],
+        });
+        let out = run_with_mode(
+            &arch,
+            FindingStore::new(),
+            &RuleRegistry::standard(),
+            &ParadigmRegistry::standard(),
+            &PolicyRegistry::standard(),
+            CheckMode::AgentStrict,
+        );
+        assert_eq!(out.new_findings.len(), 1);
+        assert_eq!(out.new_findings[0].default_severity, Severity::Advisory);
+        assert_eq!(out.decisions[0].severity, Severity::Advisory);
+        assert_eq!(out.decisions[0].status, DecisionStatus::Advisory);
+    }
+
+    #[test]
+    fn legacy_diagnostic_still_skipped_in_enforced_mode() {
+        // Legacy diagnostics belong to LOCUS003 alone. Declaring rule
+        // Enforced must NOT cause LOCUS005 to fire for legacy entries.
+        let arch = ArchLoadOutcome::Present(ArchDeclaration {
+            policies: Vec::new(),
+            concepts: vec![enforced_rule_concept()],
+        });
+        let mut store = FindingStore::new();
+        store.insert(legacy_finding(0, "ZZ999"));
+        let out = run_with(
+            &arch,
+            store,
+            &RuleRegistry::standard(),
+            &ParadigmRegistry::standard(),
+            &PolicyRegistry::standard(),
+        );
+        assert!(
+            out.new_findings.is_empty(),
+            "legacy diagnostics must not trigger LOCUS005 even in Enforced mode; got {:?}",
+            out.new_findings
+                .iter()
+                .map(|f| f.message.as_str())
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn severity_for_helper_round_trip() {
+        // Direct unit coverage of the (enforcement × mode) → (severity,
+        // status) mapping. Pins the table so future refactors can't
+        // silently invert the semantics.
+        assert_eq!(
+            severity_for(ConceptEnforcement::Advisory, CheckMode::Human),
+            (Severity::Advisory, DecisionStatus::Advisory)
+        );
+        assert_eq!(
+            severity_for(ConceptEnforcement::Advisory, CheckMode::AgentStrict),
+            (Severity::Advisory, DecisionStatus::Advisory)
+        );
+        assert_eq!(
+            severity_for(ConceptEnforcement::Enforced, CheckMode::Human),
+            (Severity::Warning, DecisionStatus::Active)
+        );
+        assert_eq!(
+            severity_for(ConceptEnforcement::Enforced, CheckMode::AgentStrict),
+            (Severity::Fatal, DecisionStatus::Active)
+        );
     }
 }
