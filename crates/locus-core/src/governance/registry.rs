@@ -40,6 +40,9 @@ impl RuleRegistry {
             rules: vec![
                 &crate::paradigms::complexity_budget::rules::cx001::CX001_RULE,
                 &crate::paradigms::dependency_graph::rules::dg001::DG001_RULE,
+                &crate::paradigms::dependency_graph::rules::dg002::DG002_RULE,
+                &crate::paradigms::dependency_graph::rules::dg003::DG003_RULE,
+                &crate::paradigms::dependency_graph::rules::dg004::DG004_RULE,
                 &crate::paradigms::one_truth::rules::ot002::OT002_RULE,
             ],
         };
@@ -447,7 +450,15 @@ mod tests {
             .find(&ParadigmId::new("DG"))
             .expect("DG ParadigmDefinition missing");
         let rule_ids: Vec<&str> = dg.rules().iter().map(|r| r.id().as_str()).collect();
-        assert_eq!(rule_ids, vec!["DG001"]);
+        assert_eq!(rule_ids, vec!["DG001", "DG002", "DG003", "DG004"]);
+    }
+
+    #[test]
+    fn rule_registry_contains_dg002_dg003_dg004() {
+        let reg = RuleRegistry::standard();
+        assert!(reg.contains_code("DG002"), "DG002 must be in registry");
+        assert!(reg.contains_code("DG003"), "DG003 must be in registry");
+        assert!(reg.contains_code("DG004"), "DG004 must be in registry");
     }
 
     #[test]

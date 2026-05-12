@@ -42,8 +42,7 @@ impl ParadigmDefinition for OtParadigmDef {
         &RULES
     }
 }
-// DG breaks out of the macro — third paradigm with a migrated rule
-// (DG001 in P2 #71), so `rules()` returns a non-empty slice.
+// DG breaks out of the macro — four rules migrated (DG001–DG004 in P2/P4 #71).
 pub struct DgParadigmDef;
 impl ParadigmDefinition for DgParadigmDef {
     fn id(&self) -> ParadigmId {
@@ -53,8 +52,12 @@ impl ParadigmDefinition for DgParadigmDef {
         "Dependency Graph"
     }
     fn rules(&self) -> &'static [&'static dyn RuleDefinition] {
-        static RULES: [&dyn RuleDefinition; 1] =
-            [&crate::paradigms::dependency_graph::rules::dg001::DG001_RULE];
+        static RULES: [&dyn RuleDefinition; 4] = [
+            &crate::paradigms::dependency_graph::rules::dg001::DG001_RULE,
+            &crate::paradigms::dependency_graph::rules::dg002::DG002_RULE,
+            &crate::paradigms::dependency_graph::rules::dg003::DG003_RULE,
+            &crate::paradigms::dependency_graph::rules::dg004::DG004_RULE,
+        ];
         &RULES
     }
 }

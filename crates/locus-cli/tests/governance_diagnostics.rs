@@ -1,13 +1,12 @@
-//! Snapshot test: LOCUS003 advisories appear for un-migrated legacy rules.
-//!
-//! Uses the dg-public-api fixture, which triggers DG003 (still a legacy
-//! rule). LOCUS003 for DG003 appears here. The compat snapshots deliberately
-//! exclude this output (they cover pass-through only).
+//! Snapshot test: DG003 (registered rule in P4) fires on the dg-public-api
+//! fixture without LOCUS003 overhead. DG003 is now a `RuleDefinition` — it
+//! emits findings directly through the governance pipeline. The compat
+//! snapshots cover pass-through only; this fixture isolates DG3 behaviour.
 
 use assert_cmd::Command;
 
 #[test]
-fn check_dg_public_api_shows_locus003_for_dg003() {
+fn check_dg_public_api_dg003_fires_as_registered_rule() {
     let bin = env!("CARGO_BIN_EXE_locus");
     let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../tests/fixtures/dg-public-api")

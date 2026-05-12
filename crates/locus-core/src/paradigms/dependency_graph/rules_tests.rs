@@ -1,7 +1,8 @@
-use super::super::lockfile_schema::ForbiddenEdge;
+use super::super::lockfile_schema::{DgSection, FeatureDefinition, ForbiddenEdge};
 use super::*;
 use locus_air::{AIR_SCHEMA_VERSION, AirFile, AirImport, AirPackage, AirSpan, Visibility};
 
+use crate::diagnostics::{CheckMode, Severity};
 use crate::governance::finding::RuleFinding;
 use crate::governance::ids::{FindingIdMinter, RuleId};
 use crate::governance::registry::{ParadigmRegistry, RuleRegistry};
@@ -61,6 +62,58 @@ fn observe_dg001(air: &AirWorkspace, section: &DgSection, mode: CheckMode) -> Ve
         finding_ids: &minter,
     };
     dg001::Dg001Rule.observe(&ctx)
+}
+
+fn observe_dg002(air: &AirWorkspace, mode: CheckMode) -> Vec<RuleFinding> {
+    let lf = Lockfile::default();
+    let rules = RuleRegistry::standard();
+    let paradigms = ParadigmRegistry::empty();
+    let minter = FindingIdMinter::new();
+    let ctx = RuleContext {
+        air,
+        lockfile: &lf,
+        mode,
+        rule_registry: &rules,
+        paradigm_registry: &paradigms,
+        finding_ids: &minter,
+    };
+    dg002::Dg002Rule.observe(&ctx)
+}
+
+fn observe_dg003(air: &AirWorkspace, section: &DgSection, mode: CheckMode) -> Vec<RuleFinding> {
+    let mut lf = Lockfile::default();
+    lf.paradigms
+        .insert("DG".to_string(), serde_json::to_value(section).unwrap());
+    let rules = RuleRegistry::standard();
+    let paradigms = ParadigmRegistry::empty();
+    let minter = FindingIdMinter::new();
+    let ctx = RuleContext {
+        air,
+        lockfile: &lf,
+        mode,
+        rule_registry: &rules,
+        paradigm_registry: &paradigms,
+        finding_ids: &minter,
+    };
+    dg003::Dg003Rule.observe(&ctx)
+}
+
+fn observe_dg004(air: &AirWorkspace, section: &DgSection, mode: CheckMode) -> Vec<RuleFinding> {
+    let mut lf = Lockfile::default();
+    lf.paradigms
+        .insert("DG".to_string(), serde_json::to_value(section).unwrap());
+    let rules = RuleRegistry::standard();
+    let paradigms = ParadigmRegistry::empty();
+    let minter = FindingIdMinter::new();
+    let ctx = RuleContext {
+        air,
+        lockfile: &lf,
+        mode,
+        rule_registry: &rules,
+        paradigm_registry: &paradigms,
+        finding_ids: &minter,
+    };
+    dg004::Dg004Rule.observe(&ctx)
 }
 
 #[test]
@@ -162,19 +215,23 @@ fn dg002_fires_on_two_crate_cycle() {
         ("a", vec![("a/src/lib.rs", "a", vec!["b::Type1"])]),
         ("b", vec![("b/src/lib.rs", "b", vec!["a::Type2"])]),
     ]);
-    let diags = dg002(&air, CheckMode::Human);
-    assert_eq!(diags.len(), 2, "one diag per edge in SCC; got {diags:?}");
-    for d in &diags {
-        assert_eq!(d.rule_id, "DG002");
-        assert_eq!(d.severity, Severity::Fatal);
+    let findings = observe_dg002(&air, CheckMode::Human);
+    assert_eq!(
+        findings.len(),
+        2,
+        "one finding per edge in SCC; got {findings:?}"
+    );
+    for f in &findings {
+        assert_eq!(f.rule_id, Some(RuleId::new("DG002")));
+        assert_eq!(f.default_severity, Severity::Fatal);
         // 2-cycle uses ↔ shorthand in the cycle label.
         assert!(
-            d.message.contains("`a` ↔ `b`") || d.message.contains("`b` ↔ `a`"),
+            f.message.contains("`a` ↔ `b`") || f.message.contains("`b` ↔ `a`"),
             "expected ↔ label for 2-cycle; got `{}`",
-            d.message
+            f.message
         );
     }
-    let messages: Vec<&str> = diags.iter().map(|d| d.message.as_str()).collect();
+    let messages: Vec<&str> = findings.iter().map(|f| f.message.as_str()).collect();
     assert!(messages.iter().any(|m| m.contains("`a` -> `b::Type1`")));
     assert!(messages.iter().any(|m| m.contains("`b` -> `a::Type2`")));
 }
@@ -187,16 +244,16 @@ fn dg002_fires_on_three_cycle() {
         ("b", vec![("b/src/lib.rs", "b", vec!["c::T"])]),
         ("c", vec![("c/src/lib.rs", "c", vec!["a::T"])]),
     ]);
-    let diags = dg002(&air, CheckMode::Human);
+    let findings = observe_dg002(&air, CheckMode::Human);
     assert_eq!(
-        diags.len(),
+        findings.len(),
         3,
-        "3-cycle has 3 edges, 3 diagnostics; got {diags:?}"
+        "3-cycle has 3 edges, 3 findings; got {findings:?}"
     );
-    for d in &diags {
-        assert!(d.message.contains("`a`"));
-        assert!(d.message.contains("`b`"));
-        assert!(d.message.contains("`c`"));
+    for f in &findings {
+        assert!(f.message.contains("`a`"));
+        assert!(f.message.contains("`b`"));
+        assert!(f.message.contains("`c`"));
     }
 }
 
@@ -227,13 +284,13 @@ fn dg003_fires_on_cross_feature_internals_reach() {
         ],
         ..DgSection::default()
     };
-    let diags = dg003(&air, &section, CheckMode::Human);
-    assert_eq!(diags.len(), 1);
-    assert_eq!(diags[0].rule_id, "DG003");
-    assert_eq!(diags[0].severity, Severity::Fatal);
-    assert!(diags[0].message.contains("`ethics`"));
-    assert!(diags[0].message.contains("`anatom`"));
-    assert!(diags[0].message.contains("MoralAct"));
+    let findings = observe_dg003(&air, &section, CheckMode::Human);
+    assert_eq!(findings.len(), 1);
+    assert_eq!(findings[0].rule_id, Some(RuleId::new("DG003")));
+    assert_eq!(findings[0].default_severity, Severity::Fatal);
+    assert!(findings[0].message.contains("`ethics`"));
+    assert!(findings[0].message.contains("`anatom`"));
+    assert!(findings[0].message.contains("MoralAct"));
 }
 
 #[test]
@@ -253,7 +310,7 @@ fn dg003_quiet_when_target_is_in_public_api() {
         ],
         ..DgSection::default()
     };
-    assert!(dg003(&air, &section, CheckMode::Human).is_empty());
+    assert!(observe_dg003(&air, &section, CheckMode::Human).is_empty());
 }
 
 #[test]
@@ -273,7 +330,7 @@ fn dg003_quiet_for_intra_feature_imports() {
         ],
         ..DgSection::default()
     };
-    assert!(dg003(&air, &section, CheckMode::Human).is_empty());
+    assert!(observe_dg003(&air, &section, CheckMode::Human).is_empty());
 }
 
 #[test]
@@ -283,7 +340,7 @@ fn dg003_silent_when_under_two_features_defined() {
         features: vec![feature("x", "x::*", &[])],
         ..DgSection::default()
     };
-    assert!(dg003(&air, &section, CheckMode::Human).is_empty());
+    assert!(observe_dg003(&air, &section, CheckMode::Human).is_empty());
 }
 
 #[test]
@@ -303,7 +360,7 @@ fn dg003_quiet_when_importer_is_not_a_feature() {
         ],
         ..DgSection::default()
     };
-    assert!(dg003(&air, &section, CheckMode::Human).is_empty());
+    assert!(observe_dg003(&air, &section, CheckMode::Human).is_empty());
 }
 
 // ---- DG004 ----
@@ -323,12 +380,12 @@ fn dg004_fires_on_shared_to_feature_import() {
         shared_paths: vec!["core::*".into()],
         ..DgSection::default()
     };
-    let diags = dg004(&air, &section, CheckMode::Human);
-    assert_eq!(diags.len(), 1);
-    assert_eq!(diags[0].rule_id, "DG004");
-    assert_eq!(diags[0].severity, Severity::Fatal);
-    assert!(diags[0].message.contains("core::util"));
-    assert!(diags[0].message.contains("anatom"));
+    let findings = observe_dg004(&air, &section, CheckMode::Human);
+    assert_eq!(findings.len(), 1);
+    assert_eq!(findings[0].rule_id, Some(RuleId::new("DG004")));
+    assert_eq!(findings[0].default_severity, Severity::Fatal);
+    assert!(findings[0].message.contains("core::util"));
+    assert!(findings[0].message.contains("anatom"));
 }
 
 #[test]
@@ -342,7 +399,7 @@ fn dg004_quiet_when_shared_imports_non_feature() {
         shared_paths: vec!["core::*".into()],
         ..DgSection::default()
     };
-    assert!(dg004(&air, &section, CheckMode::Human).is_empty());
+    assert!(observe_dg004(&air, &section, CheckMode::Human).is_empty());
 }
 
 #[test]
@@ -359,7 +416,7 @@ fn dg004_quiet_when_importer_not_shared() {
         shared_paths: vec!["core::*".into()],
         ..DgSection::default()
     };
-    assert!(dg004(&air, &section, CheckMode::Human).is_empty());
+    assert!(observe_dg004(&air, &section, CheckMode::Human).is_empty());
 }
 
 #[test]
@@ -377,7 +434,7 @@ fn dg004_silent_without_shared_paths() {
         shared_paths: vec![],
         ..DgSection::default()
     };
-    assert!(dg004(&air, &section, CheckMode::Human).is_empty());
+    assert!(observe_dg004(&air, &section, CheckMode::Human).is_empty());
 }
 
 #[test]
@@ -388,19 +445,19 @@ fn dg002_treats_disjoint_sccs_independently() {
         ("c", vec![("c/src/lib.rs", "c", vec!["d::T"])]),
         ("d", vec![("d/src/lib.rs", "d", vec!["c::T"])]),
     ]);
-    let diags = dg002(&air, CheckMode::Human);
+    let findings = observe_dg002(&air, CheckMode::Human);
     assert_eq!(
-        diags.len(),
+        findings.len(),
         4,
-        "two disjoint 2-cycles → 4 diagnostics; got {diags:?}"
+        "two disjoint 2-cycles → 4 findings; got {findings:?}"
     );
-    let ab = diags
+    let ab = findings
         .iter()
-        .filter(|d| d.message.contains("`a` ↔ `b`") || d.message.contains("`b` ↔ `a`"))
+        .filter(|f| f.message.contains("`a` ↔ `b`") || f.message.contains("`b` ↔ `a`"))
         .count();
-    let cd = diags
+    let cd = findings
         .iter()
-        .filter(|d| d.message.contains("`c` ↔ `d`") || d.message.contains("`d` ↔ `c`"))
+        .filter(|f| f.message.contains("`c` ↔ `d`") || f.message.contains("`d` ↔ `c`"))
         .count();
     assert_eq!(ab, 2);
     assert_eq!(cd, 2);
@@ -412,7 +469,7 @@ fn dg002_silent_when_only_one_direction() {
         ("a", vec![("a/src/lib.rs", "a", vec!["b::Type"])]),
         ("b", vec![("b/src/lib.rs", "b", vec![])]),
     ]);
-    assert!(dg002(&air, CheckMode::Human).is_empty());
+    assert!(observe_dg002(&air, CheckMode::Human).is_empty());
 }
 
 #[test]
@@ -422,7 +479,7 @@ fn dg002_ignores_intra_crate_self_loops() {
         "a",
         vec![("a/src/lib.rs", "a", vec!["a::other::Thing"])],
     )]);
-    assert!(dg002(&air, CheckMode::Human).is_empty());
+    assert!(observe_dg002(&air, CheckMode::Human).is_empty());
 }
 
 #[test]
@@ -432,9 +489,9 @@ fn dg002_finds_multiple_cycles_independently() {
         ("b", vec![("b/src/lib.rs", "b", vec!["a::T"])]),
         ("c", vec![("c/src/lib.rs", "c", vec!["a::T"])]),
     ]);
-    let diags = dg002(&air, CheckMode::Human);
-    // Two separate 2-cycles (a<->b, a<->c) → 4 diagnostics total.
-    assert_eq!(diags.len(), 4, "got {diags:?}");
+    let findings = observe_dg002(&air, CheckMode::Human);
+    // Two separate 2-cycles (a<->b, a<->c) → 4 findings total.
+    assert_eq!(findings.len(), 4, "got {findings:?}");
 }
 
 #[test]
@@ -447,8 +504,12 @@ fn dg002_does_not_double_report_same_cycle() {
         ),
         ("b", vec![("b/src/lib.rs", "b", vec!["a::U1", "a::U2"])]),
     ]);
-    let diags = dg002(&air, CheckMode::Human);
-    assert_eq!(diags.len(), 2, "one diag per direction; got {diags:?}");
+    let findings = observe_dg002(&air, CheckMode::Human);
+    assert_eq!(
+        findings.len(),
+        2,
+        "one finding per direction; got {findings:?}"
+    );
 }
 
 #[test]
