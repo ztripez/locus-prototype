@@ -1,0 +1,148 @@
+---
+source: crates/locus-cli/tests/observe_smoke.rs
+expression: stdout
+---
+Architecture survey
+===================
+
+Workspace: <FIXTURE>
+Top-level modules: dto, handler, identity, shadow
+
+Candidate concept clusters (top 5):
+  User: UserDto, User, UserModel (3 members)
+
+Detected layers:
+  api/boundary candidates: sample_crate::dto::*
+
+Largest modules (top 5):
+  <FIXTURE>/src/dto.rs (<N> lines)
+  <FIXTURE>/src/identity.rs (<N> lines)
+  <FIXTURE>/src/handler.rs (<N> lines)
+  <FIXTURE>/src/lib.rs (<N> lines)
+  <FIXTURE>/src/shadow.rs (<N> lines)
+
+Cross-crate edges:
+  sample_crate -> identity
+
+Advisory pressure
+=================
+
+<N> findings across 2 paradigms (all advisory; nothing blocks):
+
+  GOV (Governance health-checks)
+    LOCUS002 — (governance: legacy-vacancy-nudge): <N> findings
+
+  OT (Canonical Domain Ownership)
+    OT002 — undeclared concept-shaped type: <N> finding
+
+Run `locus check --workspace <path>` for full diagnostic detail.
+
+Next declarations to consider
+=============================
+
+[concept] cluster `user` — sample_crate::identity::User + sample_crate::dto::UserDto
+  confidence 1.00
+  accept this cluster:
+    locus accept canonical sample_crate::identity::User --concept user
+    locus accept boundary sample_crate::dto::UserDto --concept user
+
+[feature] no features defined; DG/FO will not fire
+  top-level modules: dto, handler, identity, shadow
+  empty public_api means the feature surface is not yet declared, not that every cross-feature import is an architecture bug — DG003 only flags reaches into internals once features list a public_api
+  define:
+    locus dg define-feature --name dto --module "dto::*" --public-api "dto::*"
+    locus dg define-feature --name handler --module "handler::*" --public-api "handler::*"
+    locus dg define-feature --name identity --module "identity::*" --public-api "identity::*"
+    locus dg define-feature --name shadow --module "shadow::*" --public-api "shadow::*"
+    # (FO mirrors DG features once these are accepted)
+  or skip:
+    locus init --acknowledge-empty DG,FO
+
+[threshold] CX001 function-line p95 = 7; default = 50
+  p95 differs from default by >1.5×; consider explicit cap
+  set explicit cap:
+    locus cx set-default --max-lines 8
+
+[paradigm-vacant] AB (Abstraction Discipline) has no definitions
+  onboard:
+    locus ab accept-single-impl "<symbol>"
+  or skip:
+    locus init --acknowledge-empty AB
+
+[paradigm-vacant] BO (Boundary Ownership) has no definitions
+  onboard:
+    locus bo add-domain-path "<glob>"
+  or skip:
+    locus init --acknowledge-empty BO
+
+[paradigm-vacant] CF (Config / Data Ownership) has no definitions
+  onboard:
+    locus cf add-config-path "<glob>"
+  or skip:
+    locus init --acknowledge-empty CF
+
+[paradigm-vacant] CR (Composition Root) has no definitions
+  onboard:
+    locus cr add-composition-root "<glob>"
+  or skip:
+    locus init --acknowledge-empty CR
+
+[paradigm-vacant] DA (Demand-Driven) has no definitions
+  onboard:
+    locus da enable
+  or skip:
+    locus init --acknowledge-empty DA
+
+[paradigm-vacant] DC (Documentation) has no definitions
+  onboard:
+    locus dc enable
+  or skip:
+    locus init --acknowledge-empty DC
+
+[paradigm-vacant] ER (Error Taxonomy) has no definitions
+  onboard:
+    locus er add-domain-path "<glob>"
+  or skip:
+    locus init --acknowledge-empty ER
+
+[paradigm-vacant] FL (Failure Lineage) has no definitions
+  onboard:
+    locus fl add-domain-path "<glob>"
+  or skip:
+    locus init --acknowledge-empty FL
+
+[paradigm-vacant] OB (Observability) has no definitions
+  onboard:
+    locus ob add-observer-path "<glob>"
+  or skip:
+    locus init --acknowledge-empty OB
+
+[paradigm-vacant] PA (Port / Adapter) has no definitions
+  onboard:
+    locus pa add-application-path "<glob>"
+  or skip:
+    locus init --acknowledge-empty PA
+
+[paradigm-vacant] RM (Responsibility Mixing) has no definitions
+  onboard:
+    locus rm add-domain-path "<glob>"
+  or skip:
+    locus init --acknowledge-empty RM
+
+[paradigm-vacant] RW (Runtime Work) has no definitions
+  onboard:
+    locus rw accept-runtime-owner "<glob>"
+  or skip:
+    locus init --acknowledge-empty RW
+
+[paradigm-vacant] TA (Test Architecture) has no definitions
+  onboard:
+    locus ta add-test-path "<glob>"
+  or skip:
+    locus init --acknowledge-empty TA
+
+[paradigm-vacant] UT (Utility Discipline) has no definitions
+  onboard:
+    locus ut add-utility-path "<glob>"
+  or skip:
+    locus init --acknowledge-empty UT

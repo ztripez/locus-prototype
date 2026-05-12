@@ -8,6 +8,7 @@ use crate::commands::{
     emit_air::EmitAirArgs,
     explain::ExplainArgs,
     init::InitArgs,
+    observe::ObserveArgs,
     paradigms::{
         ab::AbCommand, bo::BoCommand, cf::CfCommand, cr::CrCommand, cx::CxCommand, da::DaCommand,
         dc::DcCommand, dg::DgCommand, er::ErCommand, fl::FlCommand, fo::FoCommand, mo::MoCommand,
@@ -94,6 +95,8 @@ pub enum Command {
     Debt(DebtArgs),
     /// Print the rule-spec section for a given rule id (e.g. `OT004`).
     Explain(ExplainArgs),
+    /// Survey architecture and advisory pressure without enforcement.
+    Observe(ObserveArgs),
     /// Remove expired lockfile exceptions from `.locus/lock.json`.
     Prune(PruneArgs),
 }

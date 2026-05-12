@@ -4,6 +4,7 @@ pub mod debt;
 pub mod emit_air;
 pub mod explain;
 pub mod init;
+pub mod observe;
 pub mod paradigms;
 pub mod prune;
 
@@ -40,6 +41,7 @@ pub fn run(cli: Cli) -> Result<()> {
         Command::Ut(cmd) => paradigms::ut::run(cmd),
         Command::Debt(args) => debt::run(args),
         Command::Explain(args) => explain::run(args),
+        Command::Observe(args) => observe::run(args),
         Command::Prune(args) => prune::run(args),
     }
 }

@@ -12,13 +12,13 @@ use locus_air::{AirItem, AirSpan, AirWorkspace};
 use super::super::lockfile_schema::{FeatureDefinition, matches_pattern};
 
 #[derive(Debug, Clone)]
-pub(super) struct EdgeEvidence {
-    pub(super) file_path: String,
-    pub(super) span: AirSpan,
-    pub(super) import_path: String,
+pub struct EdgeEvidence {
+    pub file_path: String,
+    pub span: AirSpan,
+    pub import_path: String,
 }
 
-pub(super) fn collect_crate_edges(air: &AirWorkspace) -> BTreeMap<(String, String), EdgeEvidence> {
+pub fn collect_crate_edges(air: &AirWorkspace) -> BTreeMap<(String, String), EdgeEvidence> {
     let mut edges: BTreeMap<(String, String), EdgeEvidence> = BTreeMap::new();
     for pkg in &air.packages {
         for file in &pkg.files {
