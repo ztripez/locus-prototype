@@ -120,6 +120,7 @@ fn check_rule_concept(
                  `RuleRegistry::standard()`, and add it to the owning \
                  `ParadigmDefinition::rules()` slice."
             ),
+            f.span.clone(),
             ctx,
             seen,
             new_findings,
@@ -156,6 +157,7 @@ fn check_paradigm_concept(
                 "Create a `ParadigmDefinition` for `{identifier}` and \
                  register it in `ParadigmRegistry::standard()`."
             ),
+            f.span.clone(),
             ctx,
             seen,
             new_findings,
@@ -194,6 +196,7 @@ fn check_policy_concept(
                 "Register a `PolicyDefinition` for `{identifier}` in \
                  `PolicyRegistry::standard()`."
             ),
+            f.span.clone(),
             ctx,
             seen,
             new_findings,
@@ -237,6 +240,7 @@ fn check_governance_code_concept(
                  `GovernanceDiagnosticRegistry::standard()` with the owning \
                  `PolicyId`, or change the emitter to use a registered code."
             ),
+            f.span.clone(),
             ctx,
             seen,
             new_findings,
@@ -283,6 +287,7 @@ fn push_unknown_concept(
         suggested_fix,
         rationale,
         (Severity::Advisory, DecisionStatus::Advisory),
+        None,
         new_findings,
         decisions,
     );
@@ -295,6 +300,7 @@ fn emit_bypass(
     identifier: &str,
     observation_line: String,
     suggested_fix: String,
+    triggering_span: Option<locus_air::AirSpan>,
     ctx: &PolicyContext<'_>,
     seen: &mut BTreeSet<(String, String)>,
     new_findings: &mut Vec<RuleFinding>,
@@ -318,6 +324,7 @@ fn emit_bypass(
         suggested_fix,
         rationale,
         (severity, status),
+        triggering_span,
         new_findings,
         decisions,
     );
@@ -357,6 +364,7 @@ fn push_locus005_with_severity(
     suggested_fix: String,
     rationale: String,
     (severity, status): (Severity, DecisionStatus),
+    triggering_span: Option<locus_air::AirSpan>,
     new_findings: &mut Vec<RuleFinding>,
     decisions: &mut Vec<Decision>,
 ) {
@@ -367,6 +375,7 @@ fn push_locus005_with_severity(
         observation_line,
         suggested_fix,
         severity,
+        triggering_span,
     );
     let decision = Decision {
         finding_id: finding.id,
@@ -387,6 +396,7 @@ fn build_locus005_finding(
     observation_line: String,
     suggested_fix: String,
     severity: Severity,
+    triggering_span: Option<locus_air::AirSpan>,
 ) -> RuleFinding {
     let intent_line = format!(
         "Architecture intent declares `{}` source of truth as `{}` via `{}`.",
@@ -398,7 +408,13 @@ fn build_locus005_finding(
         rule_id: None,
         paradigm_id: None,
         default_severity: severity,
-        span: None,
+        // Preserve the triggering finding's span so `locus check
+        // --changed --agent-strict` doesn't silently drop enforced
+        // bypasses introduced in modified files (Codex review of #101).
+        // Unknown-concept-id branch has no triggering finding and
+        // passes `None`; LOCUS005 there is config-quality and not
+        // subject to changed-path gating anyway.
+        span: triggering_span,
         concept: Some(concept.id.clone()),
         message,
         evidence: Vec::new(),
@@ -876,6 +892,38 @@ mod tests {
         // severity_change stays Unchanged — LOCUS005 is the policy
         // making the decision, not a downstream policy mutating one.
         assert_eq!(out.decisions[0].severity_change, SeverityChange::Unchanged);
+    }
+
+    #[test]
+    fn enforced_concept_preserves_triggering_finding_span() {
+        // Codex review of #101: enforced LOCUS005 findings without a span
+        // get a synthetic `<governance>` path in the pipeline, which
+        // `locus check --changed` filters out before fatal-exit
+        // evaluation. Verify the triggering finding's span is propagated
+        // so changed-only CI gates still catch enforced bypasses.
+        let arch = ArchLoadOutcome::Present(ArchDeclaration {
+            policies: Vec::new(),
+            concepts: vec![enforced_rule_concept()],
+        });
+        let span = locus_air::AirSpan::new("src/widget.rs", 42, 50);
+        let mut trig = registered_rule_finding(0, "ZZ999");
+        trig.span = Some(span.clone());
+        let mut store = FindingStore::new();
+        store.insert(trig);
+        let out = run_with(
+            &arch,
+            store,
+            &RuleRegistry::standard(),
+            &ParadigmRegistry::standard(),
+            &PolicyRegistry::standard(),
+        );
+        assert_eq!(out.new_findings.len(), 1);
+        assert_eq!(
+            out.new_findings[0].span,
+            Some(span),
+            "LOCUS005 must carry the triggering finding's span so \
+             changed-only filters can route it correctly"
+        );
     }
 
     #[test]
