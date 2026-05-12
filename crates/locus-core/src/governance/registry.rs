@@ -58,6 +58,17 @@ impl RuleRegistry {
                 &crate::paradigms::one_truth::rules::ot010::OT010_RULE,
                 &crate::paradigms::one_truth::rules::ot011::OT011_RULE,
                 &crate::paradigms::one_truth::rules::ot012::OT012_RULE,
+                &crate::paradigms::failure_lineage::rules::fl001::FL001_RULE,
+                &crate::paradigms::failure_lineage::rules::fl002::FL002_RULE,
+                &crate::paradigms::failure_lineage::rules::fl003::FL003_RULE,
+                &crate::paradigms::failure_lineage::rules::fl004::FL004_RULE,
+                &crate::paradigms::failure_lineage::rules::fl005::FL005_RULE,
+                &crate::paradigms::failure_lineage::rules::fl006::FL006_RULE,
+                &crate::paradigms::failure_lineage::rules::fl007::FL007_RULE,
+                &crate::paradigms::failure_lineage::rules::fl010::FL010_RULE,
+                &crate::paradigms::failure_lineage::rules::fl011::FL011_RULE,
+                &crate::paradigms::failure_lineage::rules::fl012::FL012_RULE,
+                &crate::paradigms::failure_lineage::rules::fl013::FL013_RULE,
             ],
         };
         debug_assert!(

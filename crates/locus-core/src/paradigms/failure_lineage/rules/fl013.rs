@@ -35,6 +35,9 @@ use locus_air::{AirCallSite, AirFunction, AirItem, AirWorkspace};
 use super::super::lockfile_schema::{FlSection, matches_pattern};
 use super::helpers::{callsite_in_invariant_owner, extract_result_error_type};
 use crate::diagnostics::{CheckMode, Diagnostic, Severity};
+use crate::governance::finding::{FindingSource, RuleFinding};
+use crate::governance::ids::{ParadigmId, RuleId};
+use crate::governance::rule::{RuleContext, RuleDefinition};
 
 pub fn fl013(air: &AirWorkspace, section: &FlSection, mode: CheckMode) -> Vec<Diagnostic> {
     if section.invariant_owner_paths.is_empty() {
@@ -189,5 +192,47 @@ fn capitalize_first_fl013(s: &str) -> String {
             out
         }
         _ => s.to_string(),
+    }
+}
+
+pub struct Fl013Rule;
+pub static FL013_RULE: Fl013Rule = Fl013Rule;
+
+const FL013_ID: RuleId = RuleId::new("FL013");
+const FL013_PARADIGM: ParadigmId = ParadigmId::new("FL");
+
+impl RuleDefinition for Fl013Rule {
+    fn id(&self) -> RuleId {
+        FL013_ID
+    }
+    fn paradigm(&self) -> ParadigmId {
+        FL013_PARADIGM
+    }
+    fn title(&self) -> &'static str {
+        "lossy error stringification in `Result<_, String>`"
+    }
+    fn default_severity(&self) -> crate::diagnostics::Severity {
+        crate::diagnostics::Severity::Warning
+    }
+    fn observe(&self, ctx: &RuleContext<'_>) -> Vec<RuleFinding> {
+        use super::super::lockfile_schema::FlSection;
+        let section: FlSection = ctx.lockfile.paradigm_section("FL").unwrap_or_default();
+        fl013(ctx.air, &section, ctx.mode)
+            .into_iter()
+            .map(|d| RuleFinding {
+                id: ctx.finding_ids.next(),
+                source: FindingSource::RegisteredRule(FL013_ID),
+                rule_id: Some(FL013_ID),
+                paradigm_id: Some(FL013_PARADIGM),
+                default_severity: d.severity,
+                span: Some(d.span),
+                concept: d.concept,
+                message: d.message,
+                evidence: vec![],
+                why: d.why,
+                suggested_fix: d.suggested_fix,
+                diagnostic_code: None,
+            })
+            .collect()
     }
 }

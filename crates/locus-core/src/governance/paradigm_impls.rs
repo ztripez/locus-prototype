@@ -99,7 +99,32 @@ impl ParadigmDefinition for CxParadigmDef {
 paradigm_def!(DaParadigmDef, "DA", "Demand Driven");
 paradigm_def!(DcParadigmDef, "DC", "Documentation");
 paradigm_def!(ErParadigmDef, "ER", "Error Taxonomy");
-paradigm_def!(FlParadigmDef, "FL", "Failure Lineage");
+// FL breaks out of the macro — 11 rules migrated (#71 P4).
+pub struct FlParadigmDef;
+impl ParadigmDefinition for FlParadigmDef {
+    fn id(&self) -> ParadigmId {
+        ParadigmId::new("FL")
+    }
+    fn title(&self) -> &'static str {
+        "Failure Lineage"
+    }
+    fn rules(&self) -> &'static [&'static dyn RuleDefinition] {
+        static RULES: [&dyn RuleDefinition; 11] = [
+            &crate::paradigms::failure_lineage::rules::fl001::FL001_RULE,
+            &crate::paradigms::failure_lineage::rules::fl002::FL002_RULE,
+            &crate::paradigms::failure_lineage::rules::fl003::FL003_RULE,
+            &crate::paradigms::failure_lineage::rules::fl004::FL004_RULE,
+            &crate::paradigms::failure_lineage::rules::fl005::FL005_RULE,
+            &crate::paradigms::failure_lineage::rules::fl006::FL006_RULE,
+            &crate::paradigms::failure_lineage::rules::fl007::FL007_RULE,
+            &crate::paradigms::failure_lineage::rules::fl010::FL010_RULE,
+            &crate::paradigms::failure_lineage::rules::fl011::FL011_RULE,
+            &crate::paradigms::failure_lineage::rules::fl012::FL012_RULE,
+            &crate::paradigms::failure_lineage::rules::fl013::FL013_RULE,
+        ];
+        &RULES
+    }
+}
 paradigm_def!(FoParadigmDef, "FO", "Feature Ownership");
 paradigm_def!(MoParadigmDef, "MO", "Module Ownership");
 paradigm_def!(ObParadigmDef, "OB", "Observability");

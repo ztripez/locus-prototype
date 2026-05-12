@@ -46,7 +46,7 @@
 // locus: ot canonical
 
 use super::Paradigm;
-use crate::diagnostics::{CheckMode, Diagnostic, vacant_paradigm_diagnostic};
+use crate::diagnostics::{CheckMode, Diagnostic};
 use crate::lockfile::Lockfile;
 use locus_air::AirWorkspace;
 
@@ -71,47 +71,15 @@ impl Paradigm for FailureLineage {
         // via future `locus fl ...` commands.
         serde_json::Value::Null
     }
-    fn check(&self, air: &AirWorkspace, lockfile: &Lockfile, mode: CheckMode) -> Vec<Diagnostic> {
-        let section: lockfile_schema::FlSection =
-            lockfile.paradigm_section(FL_PREFIX).unwrap_or_default();
-        let mut out = Vec::new();
-        if section.is_vacant() && !lockfile.is_acknowledged_empty(FL_PREFIX) {
-            out.push(vacant_paradigm_diagnostic(
-                FL_PREFIX,
-                "Failure Lineage Ownership",
-                &[
-                    (
-                        "invariant_owner_paths",
-                        "module patterns where panic-shaped/silent-discard callees are legitimate (typically `*::tests::*`)",
-                    ),
-                    (
-                        "domain_paths",
-                        "module patterns identifying domain code (FL001)",
-                    ),
-                    (
-                        "boundary_error_patterns",
-                        "patterns matching boundary error types (FL001)",
-                    ),
-                    (
-                        "retry_policy_owner_paths",
-                        "module patterns for declared retry-policy modules (FL012)",
-                    ),
-                ],
-            ));
-        }
-        // All FL rules run regardless: FL002+ fire on seeded callee
-        // patterns even when the vacancy nudge is also emitted.
-        out.extend(rules::fl001(air, &section, mode));
-        out.extend(rules::fl002(air, &section, mode));
-        out.extend(rules::fl003(air, &section, mode));
-        out.extend(rules::fl004(air, &section, mode));
-        out.extend(rules::fl005(air, &section, mode));
-        out.extend(rules::fl006(air, &section, mode));
-        out.extend(rules::fl007(air, &section, mode));
-        out.extend(rules::fl010(air, &section, mode));
-        out.extend(rules::fl011(air, &section, mode));
-        out.extend(rules::fl012(air, &section, mode));
-        out.extend(rules::fl013(air, &section, mode));
-        out
+    fn check(
+        &self,
+        _air: &AirWorkspace,
+        _lockfile: &Lockfile,
+        _mode: CheckMode,
+    ) -> Vec<Diagnostic> {
+        // All FL rules migrated to RuleDefinition (#71 P4).
+        // Detection runs through the governance pipeline; this legacy
+        // path is now a no-op.
+        Vec::new()
     }
 }

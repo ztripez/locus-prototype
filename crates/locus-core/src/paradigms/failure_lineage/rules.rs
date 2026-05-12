@@ -67,6 +67,18 @@ pub use fl011::fl011;
 pub use fl012::fl012;
 pub use fl013::fl013;
 
+pub use fl001::FL001_RULE;
+pub use fl002::FL002_RULE;
+pub use fl003::FL003_RULE;
+pub use fl004::FL004_RULE;
+pub use fl005::FL005_RULE;
+pub use fl006::FL006_RULE;
+pub use fl007::FL007_RULE;
+pub use fl010::FL010_RULE;
+pub use fl011::FL011_RULE;
+pub use fl012::FL012_RULE;
+pub use fl013::FL013_RULE;
+
 // Test-only re-exports so rules_tests.rs (compiled as a submodule of this
 // file) can call private helpers via `use super::*;` as before the split.
 #[cfg(test)]

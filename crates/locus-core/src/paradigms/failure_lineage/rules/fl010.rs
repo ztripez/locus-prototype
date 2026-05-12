@@ -24,6 +24,9 @@ use locus_air::{AirFallbackCall, AirItem, AirWorkspace, ArmBodyShape};
 use super::super::lockfile_schema::FlSection;
 use super::helpers::{body_shape_label, callsite_in_invariant_owner};
 use crate::diagnostics::{CheckMode, Diagnostic, Severity};
+use crate::governance::finding::{FindingSource, RuleFinding};
+use crate::governance::ids::{ParadigmId, RuleId};
+use crate::governance::rule::{RuleContext, RuleDefinition};
 
 pub fn fl010(air: &AirWorkspace, section: &FlSection, mode: CheckMode) -> Vec<Diagnostic> {
     if section.invariant_owner_paths.is_empty() {
@@ -127,5 +130,47 @@ fn fallback_shape_token(shape: ArmBodyShape) -> &'static str {
         ArmBodyShape::ErrorPropagation => "propagate",
         ArmBodyShape::Block => "block",
         ArmBodyShape::Other => "other",
+    }
+}
+
+pub struct Fl010Rule;
+pub static FL010_RULE: Fl010Rule = Fl010Rule;
+
+const FL010_ID: RuleId = RuleId::new("FL010");
+const FL010_PARADIGM: ParadigmId = ParadigmId::new("FL");
+
+impl RuleDefinition for Fl010Rule {
+    fn id(&self) -> RuleId {
+        FL010_ID
+    }
+    fn paradigm(&self) -> ParadigmId {
+        FL010_PARADIGM
+    }
+    fn title(&self) -> &'static str {
+        "fallback call with non-default argument"
+    }
+    fn default_severity(&self) -> crate::diagnostics::Severity {
+        crate::diagnostics::Severity::Warning
+    }
+    fn observe(&self, ctx: &RuleContext<'_>) -> Vec<RuleFinding> {
+        use super::super::lockfile_schema::FlSection;
+        let section: FlSection = ctx.lockfile.paradigm_section("FL").unwrap_or_default();
+        fl010(ctx.air, &section, ctx.mode)
+            .into_iter()
+            .map(|d| RuleFinding {
+                id: ctx.finding_ids.next(),
+                source: FindingSource::RegisteredRule(FL010_ID),
+                rule_id: Some(FL010_ID),
+                paradigm_id: Some(FL010_PARADIGM),
+                default_severity: d.severity,
+                span: Some(d.span),
+                concept: d.concept,
+                message: d.message,
+                evidence: vec![],
+                why: d.why,
+                suggested_fix: d.suggested_fix,
+                diagnostic_code: None,
+            })
+            .collect()
     }
 }

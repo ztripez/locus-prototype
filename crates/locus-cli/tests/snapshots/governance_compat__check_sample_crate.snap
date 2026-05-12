@@ -1,6 +1,5 @@
 ---
 source: crates/locus-cli/tests/governance_compat.rs
-assertion_line: 31
 expression: "format!(\"STDOUT:\\n{stdout}\\nSTDERR:\\n{stderr}\")"
 ---
 STDOUT:
@@ -53,16 +52,6 @@ info[LOCUS002]: paradigm ER (Error Taxonomy Ownership) has no definitions; rules
   - `paradigms.ER.error_collapse_owner_paths` is empty — module patterns where catch-all `Err(_) => default` is legitimate (ER005)
   - vacant-by-definition: rules under ER cannot fire until at least one declaration list is populated
   fix: populate `paradigms.ER` in `locus.lock` (use the matching `locus er ...` mutators, or hand-edit), or add `"ER"` to `acknowledged_empty` in `locus.lock` to silence this paradigm
-
-info[LOCUS002]: paradigm FL (Failure Lineage Ownership) has no definitions; rules cannot fire until you declare its concepts
-  --> locus.lock:1
-  concept: FL
-  - `paradigms.FL.invariant_owner_paths` is empty — module patterns where panic-shaped/silent-discard callees are legitimate (typically `*::tests::*`)
-  - `paradigms.FL.domain_paths` is empty — module patterns identifying domain code (FL001)
-  - `paradigms.FL.boundary_error_patterns` is empty — patterns matching boundary error types (FL001)
-  - `paradigms.FL.retry_policy_owner_paths` is empty — module patterns for declared retry-policy modules (FL012)
-  - vacant-by-definition: rules under FL cannot fire until at least one declaration list is populated
-  fix: populate `paradigms.FL` in `locus.lock` (use the matching `locus fl ...` mutators, or hand-edit), or add `"FL"` to `acknowledged_empty` in `locus.lock` to silence this paradigm
 
 info[LOCUS002]: paradigm FO (Feature Ownership) has no definitions; rules cannot fire until you declare its concepts
   --> locus.lock:1
@@ -127,6 +116,6 @@ warning[PG007]: new exempt path `*::test::*` in `paradigms.CX.exempt_paths` lack
   - PG007 is unaffected by `--allow-policy-calibration`: calibration accepts the addition itself (PG003), but does not waive the requirement to record why, when to revisit, and who owns it
   fix: populate `reason` (why this exemption exists), `expires` (`YYYY-MM-DD` review date), and `owner` (team/individual). Use the struct form: `{"pattern": "…", "reason": "…", "expires": "YYYY-MM-DD", "owner": "…"}`.
 
-summary: 0 error(s), 3 warning(s), 12 advisory.
+summary: 0 error(s), 3 warning(s), 11 advisory.
 
 STDERR:
