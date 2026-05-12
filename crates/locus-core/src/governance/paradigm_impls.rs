@@ -72,11 +72,41 @@ impl ParadigmDefinition for DgParadigmDef {
         &RULES
     }
 }
-paradigm_def!(AbParadigmDef, "AB", "Abstraction Discipline");
+pub struct AbParadigmDef;
+impl ParadigmDefinition for AbParadigmDef {
+    fn id(&self) -> ParadigmId {
+        ParadigmId::new("AB")
+    }
+    fn title(&self) -> &'static str {
+        "Abstraction Discipline"
+    }
+    fn rules(&self) -> &'static [&'static dyn RuleDefinition] {
+        static RULES: [&dyn RuleDefinition; 2] = [
+            &crate::paradigms::abstraction_discipline::rules::AB001_RULE,
+            &crate::paradigms::abstraction_discipline::rules::AB002_RULE,
+        ];
+        &RULES
+    }
+}
+
+pub struct ClParadigmDef;
+impl ParadigmDefinition for ClParadigmDef {
+    fn id(&self) -> ParadigmId {
+        ParadigmId::new("CL")
+    }
+    fn title(&self) -> &'static str {
+        "Composition Root"
+    }
+    fn rules(&self) -> &'static [&'static dyn RuleDefinition] {
+        static RULES: [&dyn RuleDefinition; 1] =
+            [&crate::paradigms::claim_ownership::rules::CL001_RULE];
+        &RULES
+    }
+}
+
 paradigm_def!(BoParadigmDef, "BO", "Boundary Ownership");
 paradigm_def!(CfParadigmDef, "CF", "Config Data");
 paradigm_def!(CrParadigmDef, "CR", "Claim Ownership");
-paradigm_def!(ClParadigmDef, "CL", "Composition Root");
 // CX breaks out of the macro pattern — four rules migrated (CX001–CX002–CX007–CX008 in P2/P4 #71).
 pub struct CxParadigmDef;
 impl ParadigmDefinition for CxParadigmDef {
@@ -126,7 +156,27 @@ impl ParadigmDefinition for FlParadigmDef {
     }
 }
 paradigm_def!(FoParadigmDef, "FO", "Feature Ownership");
-paradigm_def!(MoParadigmDef, "MO", "Module Ownership");
+
+pub struct MoParadigmDef;
+impl ParadigmDefinition for MoParadigmDef {
+    fn id(&self) -> ParadigmId {
+        ParadigmId::new("MO")
+    }
+    fn title(&self) -> &'static str {
+        "Module Ownership"
+    }
+    fn rules(&self) -> &'static [&'static dyn RuleDefinition] {
+        static RULES: [&dyn RuleDefinition; 5] = [
+            &crate::paradigms::module_ownership::rules::MO001_RULE,
+            &crate::paradigms::module_ownership::rules::MO002_RULE,
+            &crate::paradigms::module_ownership::rules::MO003_RULE,
+            &crate::paradigms::module_ownership::rules::MO004_RULE,
+            &crate::paradigms::module_ownership::rules::MO005_RULE,
+        ];
+        &RULES
+    }
+}
+
 paradigm_def!(ObParadigmDef, "OB", "Observability");
 paradigm_def!(PaParadigmDef, "PA", "Port-Adapter");
 paradigm_def!(RmParadigmDef, "RM", "Responsibility");

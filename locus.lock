@@ -608,6 +608,12 @@
       "target": "crates/locus-core/src/paradigms/one_truth/init.rs",
       "reason": "doc says 'returned later' as part of the function's contract; legitimate temporal phrasing",
       "expires": "2027-05-09"
+    },
+    {
+      "rule": "MO001",
+      "target": "crates/locus-core/src/governance/paradigm_impls.rs",
+      "reason": "intentional registry file: every ParadigmDefinition singleton lives here by design; density grows with each rule migration and is architectural, not accidental",
+      "expires": "2027-05-12"
     }
   ],
   "acknowledged_empty": [

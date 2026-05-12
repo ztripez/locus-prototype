@@ -841,6 +841,210 @@ pub fn mo005(air: &AirWorkspace, mode: CheckMode) -> Vec<Diagnostic> {
     out
 }
 
+// ── RuleDefinition impls (governance spine migration, epic #71) ──────────────
+
+use crate::governance::finding::{FindingSource, RuleFinding};
+use crate::governance::ids::{ParadigmId, RuleId};
+use crate::governance::rule::{RuleContext, RuleDefinition};
+
+const MO_PARADIGM: ParadigmId = ParadigmId::new("MO");
+const MO001_ID: RuleId = RuleId::new("MO001");
+const MO002_ID: RuleId = RuleId::new("MO002");
+const MO003_ID: RuleId = RuleId::new("MO003");
+const MO004_ID: RuleId = RuleId::new("MO004");
+const MO005_ID: RuleId = RuleId::new("MO005");
+
+pub struct Mo001Rule;
+pub static MO001_RULE: Mo001Rule = Mo001Rule;
+
+impl RuleDefinition for Mo001Rule {
+    fn id(&self) -> RuleId {
+        MO001_ID
+    }
+    fn paradigm(&self) -> ParadigmId {
+        MO_PARADIGM
+    }
+    fn title(&self) -> &'static str {
+        "module has too many public types"
+    }
+    fn default_severity(&self) -> crate::diagnostics::Severity {
+        crate::diagnostics::Severity::Warning
+    }
+    fn observe(&self, ctx: &RuleContext<'_>) -> Vec<RuleFinding> {
+        use super::lockfile_schema::MoSection;
+        let section: MoSection = ctx.lockfile.paradigm_section("MO").unwrap_or_default();
+        mo001(ctx.air, &section, ctx.mode)
+            .into_iter()
+            .map(|d| RuleFinding {
+                id: ctx.finding_ids.next(),
+                source: FindingSource::RegisteredRule(MO001_ID),
+                rule_id: Some(MO001_ID),
+                paradigm_id: Some(MO_PARADIGM),
+                default_severity: d.severity,
+                span: Some(d.span),
+                concept: d.concept,
+                message: d.message,
+                evidence: vec![],
+                why: d.why,
+                suggested_fix: d.suggested_fix,
+                diagnostic_code: None,
+            })
+            .collect()
+    }
+}
+
+pub struct Mo002Rule;
+pub static MO002_RULE: Mo002Rule = Mo002Rule;
+
+impl RuleDefinition for Mo002Rule {
+    fn id(&self) -> RuleId {
+        MO002_ID
+    }
+    fn paradigm(&self) -> ParadigmId {
+        MO_PARADIGM
+    }
+    fn title(&self) -> &'static str {
+        "module carries too many architectural roles"
+    }
+    fn default_severity(&self) -> crate::diagnostics::Severity {
+        crate::diagnostics::Severity::Warning
+    }
+    fn observe(&self, ctx: &RuleContext<'_>) -> Vec<RuleFinding> {
+        use super::lockfile_schema::MoSection;
+        let section: MoSection = ctx.lockfile.paradigm_section("MO").unwrap_or_default();
+        mo002(ctx.air, &section, ctx.mode)
+            .into_iter()
+            .map(|d| RuleFinding {
+                id: ctx.finding_ids.next(),
+                source: FindingSource::RegisteredRule(MO002_ID),
+                rule_id: Some(MO002_ID),
+                paradigm_id: Some(MO_PARADIGM),
+                default_severity: d.severity,
+                span: Some(d.span),
+                concept: d.concept,
+                message: d.message,
+                evidence: vec![],
+                why: d.why,
+                suggested_fix: d.suggested_fix,
+                diagnostic_code: None,
+            })
+            .collect()
+    }
+}
+
+pub struct Mo003Rule;
+pub static MO003_RULE: Mo003Rule = Mo003Rule;
+
+impl RuleDefinition for Mo003Rule {
+    fn id(&self) -> RuleId {
+        MO003_ID
+    }
+    fn paradigm(&self) -> ParadigmId {
+        MO_PARADIGM
+    }
+    fn title(&self) -> &'static str {
+        "canonical and boundary hints co-located in same module"
+    }
+    fn default_severity(&self) -> crate::diagnostics::Severity {
+        crate::diagnostics::Severity::Warning
+    }
+    fn observe(&self, ctx: &RuleContext<'_>) -> Vec<RuleFinding> {
+        mo003(ctx.air, ctx.mode)
+            .into_iter()
+            .map(|d| RuleFinding {
+                id: ctx.finding_ids.next(),
+                source: FindingSource::RegisteredRule(MO003_ID),
+                rule_id: Some(MO003_ID),
+                paradigm_id: Some(MO_PARADIGM),
+                default_severity: d.severity,
+                span: Some(d.span),
+                concept: d.concept,
+                message: d.message,
+                evidence: vec![],
+                why: d.why,
+                suggested_fix: d.suggested_fix,
+                diagnostic_code: None,
+            })
+            .collect()
+    }
+}
+
+pub struct Mo004Rule;
+pub static MO004_RULE: Mo004Rule = Mo004Rule;
+
+impl RuleDefinition for Mo004Rule {
+    fn id(&self) -> RuleId {
+        MO004_ID
+    }
+    fn paradigm(&self) -> ParadigmId {
+        MO_PARADIGM
+    }
+    fn title(&self) -> &'static str {
+        "handler co-located with canonical concept"
+    }
+    fn default_severity(&self) -> crate::diagnostics::Severity {
+        crate::diagnostics::Severity::Warning
+    }
+    fn observe(&self, ctx: &RuleContext<'_>) -> Vec<RuleFinding> {
+        use super::lockfile_schema::MoSection;
+        let section: MoSection = ctx.lockfile.paradigm_section("MO").unwrap_or_default();
+        mo004(ctx.air, &section, ctx.mode)
+            .into_iter()
+            .map(|d| RuleFinding {
+                id: ctx.finding_ids.next(),
+                source: FindingSource::RegisteredRule(MO004_ID),
+                rule_id: Some(MO004_ID),
+                paradigm_id: Some(MO_PARADIGM),
+                default_severity: d.severity,
+                span: Some(d.span),
+                concept: d.concept,
+                message: d.message,
+                evidence: vec![],
+                why: d.why,
+                suggested_fix: d.suggested_fix,
+                diagnostic_code: None,
+            })
+            .collect()
+    }
+}
+
+pub struct Mo005Rule;
+pub static MO005_RULE: Mo005Rule = Mo005Rule;
+
+impl RuleDefinition for Mo005Rule {
+    fn id(&self) -> RuleId {
+        MO005_ID
+    }
+    fn paradigm(&self) -> ParadigmId {
+        MO_PARADIGM
+    }
+    fn title(&self) -> &'static str {
+        "substantial declaration in entrypoint module"
+    }
+    fn default_severity(&self) -> crate::diagnostics::Severity {
+        crate::diagnostics::Severity::Warning
+    }
+    fn observe(&self, ctx: &RuleContext<'_>) -> Vec<RuleFinding> {
+        mo005(ctx.air, ctx.mode)
+            .into_iter()
+            .map(|d| RuleFinding {
+                id: ctx.finding_ids.next(),
+                source: FindingSource::RegisteredRule(MO005_ID),
+                rule_id: Some(MO005_ID),
+                paradigm_id: Some(MO_PARADIGM),
+                default_severity: d.severity,
+                span: Some(d.span),
+                concept: d.concept,
+                message: d.message,
+                evidence: vec![],
+                why: d.why,
+                suggested_fix: d.suggested_fix,
+                diagnostic_code: None,
+            })
+            .collect()
+    }
+}
+
 #[cfg(test)]
 #[path = "rules_tests.rs"]
 mod rules_tests;

@@ -37,7 +37,8 @@ impl RuleDefinition for Dg003Rule {
                 let Some(module_path) = file.module_path.as_deref() else {
                     continue;
                 };
-                let Some(importer_feature) = super::helpers::owning_feature(&section.features, module_path)
+                let Some(importer_feature) =
+                    super::helpers::owning_feature(&section.features, module_path)
                 else {
                     continue;
                 };
@@ -45,7 +46,8 @@ impl RuleDefinition for Dg003Rule {
                     let AirItem::Import(imp) = item else {
                         continue;
                     };
-                    let Some(target_feature) = super::helpers::owning_feature(&section.features, &imp.path)
+                    let Some(target_feature) =
+                        super::helpers::owning_feature(&section.features, &imp.path)
                     else {
                         continue;
                     };

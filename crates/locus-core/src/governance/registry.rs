@@ -69,6 +69,14 @@ impl RuleRegistry {
                 &crate::paradigms::failure_lineage::rules::fl011::FL011_RULE,
                 &crate::paradigms::failure_lineage::rules::fl012::FL012_RULE,
                 &crate::paradigms::failure_lineage::rules::fl013::FL013_RULE,
+                &crate::paradigms::module_ownership::rules::MO001_RULE,
+                &crate::paradigms::module_ownership::rules::MO002_RULE,
+                &crate::paradigms::module_ownership::rules::MO003_RULE,
+                &crate::paradigms::module_ownership::rules::MO004_RULE,
+                &crate::paradigms::module_ownership::rules::MO005_RULE,
+                &crate::paradigms::abstraction_discipline::rules::AB001_RULE,
+                &crate::paradigms::abstraction_discipline::rules::AB002_RULE,
+                &crate::paradigms::claim_ownership::rules::CL001_RULE,
             ],
         };
         debug_assert!(

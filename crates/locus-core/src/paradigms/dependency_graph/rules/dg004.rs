@@ -48,7 +48,8 @@ impl RuleDefinition for Dg004Rule {
                     let AirItem::Import(imp) = item else {
                         continue;
                     };
-                    let Some(target_feature) = super::helpers::owning_feature(&section.features, &imp.path)
+                    let Some(target_feature) =
+                        super::helpers::owning_feature(&section.features, &imp.path)
                     else {
                         continue;
                     };

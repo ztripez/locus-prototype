@@ -42,11 +42,13 @@ impl Paradigm for AbstractionDiscipline {
     fn init(&self, _air: &AirWorkspace) -> serde_json::Value {
         serde_json::Value::Null
     }
-    fn check(&self, air: &AirWorkspace, lockfile: &Lockfile, mode: CheckMode) -> Vec<Diagnostic> {
-        let section: lockfile_schema::AbSection =
-            lockfile.paradigm_section(AB_PREFIX).unwrap_or_default();
-        let mut diags = rules::ab001(air, &section, mode);
-        diags.extend(rules::ab002(air, &section, mode));
-        diags
+    fn check(
+        &self,
+        _air: &AirWorkspace,
+        _lockfile: &Lockfile,
+        _mode: CheckMode,
+    ) -> Vec<Diagnostic> {
+        // Migrated to RuleDefinition (AB001–AB002). Legacy path is now a no-op.
+        Vec::new()
     }
 }

@@ -231,6 +231,54 @@ fn is_word_char(c: char) -> bool {
     c.is_alphanumeric() || c == '_'
 }
 
+// ── RuleDefinition impls (governance spine migration, epic #71) ──────────────
+
+use crate::governance::finding::{FindingSource, RuleFinding};
+use crate::governance::ids::{ParadigmId, RuleId};
+use crate::governance::rule::{RuleContext, RuleDefinition};
+
+const CL_PARADIGM: ParadigmId = ParadigmId::new("CL");
+const CL001_ID: RuleId = RuleId::new("CL001");
+
+pub struct Cl001Rule;
+pub static CL001_RULE: Cl001Rule = Cl001Rule;
+
+impl RuleDefinition for Cl001Rule {
+    fn id(&self) -> RuleId {
+        CL001_ID
+    }
+    fn paradigm(&self) -> ParadigmId {
+        CL_PARADIGM
+    }
+    fn title(&self) -> &'static str {
+        "orphan external reference in doc comment"
+    }
+    fn default_severity(&self) -> crate::diagnostics::Severity {
+        crate::diagnostics::Severity::Warning
+    }
+    fn observe(&self, ctx: &RuleContext<'_>) -> Vec<RuleFinding> {
+        use super::lockfile_schema::ClSection;
+        let section: ClSection = ctx.lockfile.paradigm_section("CL").unwrap_or_default();
+        cl001(ctx.air, &section, ctx.mode)
+            .into_iter()
+            .map(|d| RuleFinding {
+                id: ctx.finding_ids.next(),
+                source: FindingSource::RegisteredRule(CL001_ID),
+                rule_id: Some(CL001_ID),
+                paradigm_id: Some(CL_PARADIGM),
+                default_severity: d.severity,
+                span: Some(d.span),
+                concept: d.concept,
+                message: d.message,
+                evidence: vec![],
+                why: d.why,
+                suggested_fix: d.suggested_fix,
+                diagnostic_code: None,
+            })
+            .collect()
+    }
+}
+
 #[cfg(test)]
 #[path = "rules_tests.rs"]
 mod rules_tests;

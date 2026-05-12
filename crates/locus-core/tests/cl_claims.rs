@@ -2,7 +2,7 @@
 //! exactly on the doc comments designed to be orphan references.
 
 use locus_core::paradigms::claim_ownership::CL_PREFIX;
-use locus_core::{CheckMode, Lockfile, Severity, registry};
+use locus_core::{CheckMode, Lockfile, Severity, governance, registry};
 
 fn fixture_path() -> std::path::PathBuf {
     let manifest = std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR");
@@ -28,11 +28,8 @@ fn cl001_silent_without_toggle_on_fixture() {
     // silent even though the fixture has obvious orphan references.
     let air = locus_rust::scan(&fixture_path()).expect("scan succeeds");
     let lockfile = Lockfile::empty();
-    let mut cl_diags = Vec::new();
-    for paradigm in registry() {
-        let diags = paradigm.check(&air, &lockfile, CheckMode::Human);
-        cl_diags.extend(diags.into_iter().filter(|d| d.rule_id == "CL001"));
-    }
+    let diags = governance::run(&air, &lockfile, CheckMode::Human).diagnostics;
+    let cl_diags: Vec<_> = diags.into_iter().filter(|d| d.rule_id == "CL001").collect();
     assert!(
         cl_diags.is_empty(),
         "CL001 must be silent until `require_local_rationale = true`; got {cl_diags:#?}",
@@ -50,11 +47,8 @@ fn cl001_fires_on_orphan_references_in_fixture() {
         serde_json::json!({"require_local_rationale": true}),
     );
 
-    let mut cl_diags = Vec::new();
-    for paradigm in registry() {
-        let diags = paradigm.check(&air, &lockfile, CheckMode::Human);
-        cl_diags.extend(diags.into_iter().filter(|d| d.rule_id == "CL001"));
-    }
+    let diags = governance::run(&air, &lockfile, CheckMode::Human).diagnostics;
+    let cl_diags: Vec<_> = diags.into_iter().filter(|d| d.rule_id == "CL001").collect();
 
     let messages: Vec<&str> = cl_diags.iter().map(|d| d.message.as_str()).collect();
 
@@ -111,11 +105,8 @@ fn cl001_agent_strict_elevates_on_fixture() {
         serde_json::json!({"require_local_rationale": true}),
     );
 
-    let mut cl_diags = Vec::new();
-    for paradigm in registry() {
-        let diags = paradigm.check(&air, &lockfile, CheckMode::AgentStrict);
-        cl_diags.extend(diags.into_iter().filter(|d| d.rule_id == "CL001"));
-    }
+    let diags = governance::run(&air, &lockfile, CheckMode::AgentStrict).diagnostics;
+    let cl_diags: Vec<_> = diags.into_iter().filter(|d| d.rule_id == "CL001").collect();
     assert!(!cl_diags.is_empty());
     assert!(
         cl_diags.iter().all(|d| d.severity == Severity::Fatal),
