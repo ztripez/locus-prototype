@@ -86,6 +86,15 @@ impl RuleRegistry {
                 &crate::paradigms::documentation::rules::DC001_RULE,
                 &crate::paradigms::documentation::rules::DC002_RULE,
                 &crate::paradigms::documentation::rules::DC004_RULE,
+                &crate::paradigms::error_taxonomy::rules::ER001_RULE,
+                &crate::paradigms::error_taxonomy::rules::ER002_RULE,
+                &crate::paradigms::error_taxonomy::rules::ER003_RULE,
+                &crate::paradigms::error_taxonomy::rules::ER005_RULE,
+                &crate::paradigms::error_taxonomy::rules::ER007_RULE,
+                &crate::paradigms::port_adapter::rules::PA001_RULE,
+                &crate::paradigms::port_adapter::rules::PA002_RULE,
+                &crate::paradigms::port_adapter::rules::PA003_RULE,
+                &crate::paradigms::port_adapter::rules::PA004_RULE,
             ],
         };
         debug_assert!(

@@ -464,6 +464,174 @@ pub fn pa004(air: &AirWorkspace, section: &PaSection, mode: CheckMode) -> Vec<Di
     out
 }
 
+// ── RuleDefinition impls (governance spine migration, epic #71) ──────────────
+
+use crate::governance::finding::{FindingSource, RuleFinding};
+use crate::governance::ids::{ParadigmId, RuleId};
+use crate::governance::rule::{RuleContext, RuleDefinition};
+
+const PA_PARADIGM: ParadigmId = ParadigmId::new("PA");
+const PA001_ID: RuleId = RuleId::new("PA001");
+const PA002_ID: RuleId = RuleId::new("PA002");
+const PA003_ID: RuleId = RuleId::new("PA003");
+const PA004_ID: RuleId = RuleId::new("PA004");
+
+pub struct Pa001Rule;
+pub static PA001_RULE: Pa001Rule = Pa001Rule;
+
+impl RuleDefinition for Pa001Rule {
+    fn id(&self) -> RuleId {
+        PA001_ID
+    }
+    fn paradigm(&self) -> ParadigmId {
+        PA_PARADIGM
+    }
+    fn title(&self) -> &'static str {
+        "port and its sole impl co-located in same file"
+    }
+    fn default_severity(&self) -> crate::diagnostics::Severity {
+        crate::diagnostics::Severity::Warning
+    }
+    fn observe(&self, ctx: &RuleContext<'_>) -> Vec<RuleFinding> {
+        use super::lockfile_schema::PaSection;
+        let section: PaSection = ctx.lockfile.paradigm_section("PA").unwrap_or_default();
+        pa001(ctx.air, &section, ctx.mode)
+            .into_iter()
+            .map(|d| RuleFinding {
+                id: ctx.finding_ids.next(),
+                source: FindingSource::RegisteredRule(PA001_ID),
+                rule_id: Some(PA001_ID),
+                paradigm_id: Some(PA_PARADIGM),
+                default_severity: d.severity,
+                span: Some(d.span),
+                concept: d.concept,
+                message: d.message,
+                evidence: vec![],
+                why: d.why,
+                suggested_fix: d.suggested_fix,
+                diagnostic_code: None,
+            })
+            .collect()
+    }
+}
+
+pub struct Pa002Rule;
+pub static PA002_RULE: Pa002Rule = Pa002Rule;
+
+impl RuleDefinition for Pa002Rule {
+    fn id(&self) -> RuleId {
+        PA002_ID
+    }
+    fn paradigm(&self) -> ParadigmId {
+        PA_PARADIGM
+    }
+    fn title(&self) -> &'static str {
+        "concrete adapter import in application/domain layer"
+    }
+    fn default_severity(&self) -> crate::diagnostics::Severity {
+        crate::diagnostics::Severity::Fatal
+    }
+    fn observe(&self, ctx: &RuleContext<'_>) -> Vec<RuleFinding> {
+        use super::lockfile_schema::PaSection;
+        let section: PaSection = ctx.lockfile.paradigm_section("PA").unwrap_or_default();
+        pa002(ctx.air, &section, ctx.mode)
+            .into_iter()
+            .map(|d| RuleFinding {
+                id: ctx.finding_ids.next(),
+                source: FindingSource::RegisteredRule(PA002_ID),
+                rule_id: Some(PA002_ID),
+                paradigm_id: Some(PA_PARADIGM),
+                default_severity: d.severity,
+                span: Some(d.span),
+                concept: d.concept,
+                message: d.message,
+                evidence: vec![],
+                why: d.why,
+                suggested_fix: d.suggested_fix,
+                diagnostic_code: None,
+            })
+            .collect()
+    }
+}
+
+pub struct Pa003Rule;
+pub static PA003_RULE: Pa003Rule = Pa003Rule;
+
+impl RuleDefinition for Pa003Rule {
+    fn id(&self) -> RuleId {
+        PA003_ID
+    }
+    fn paradigm(&self) -> ParadigmId {
+        PA_PARADIGM
+    }
+    fn title(&self) -> &'static str {
+        "external IO in application without port"
+    }
+    fn default_severity(&self) -> crate::diagnostics::Severity {
+        crate::diagnostics::Severity::Fatal
+    }
+    fn observe(&self, ctx: &RuleContext<'_>) -> Vec<RuleFinding> {
+        use super::lockfile_schema::PaSection;
+        let section: PaSection = ctx.lockfile.paradigm_section("PA").unwrap_or_default();
+        pa003(ctx.air, &section, ctx.mode)
+            .into_iter()
+            .map(|d| RuleFinding {
+                id: ctx.finding_ids.next(),
+                source: FindingSource::RegisteredRule(PA003_ID),
+                rule_id: Some(PA003_ID),
+                paradigm_id: Some(PA_PARADIGM),
+                default_severity: d.severity,
+                span: Some(d.span),
+                concept: d.concept,
+                message: d.message,
+                evidence: vec![],
+                why: d.why,
+                suggested_fix: d.suggested_fix,
+                diagnostic_code: None,
+            })
+            .collect()
+    }
+}
+
+pub struct Pa004Rule;
+pub static PA004_RULE: Pa004Rule = Pa004Rule;
+
+impl RuleDefinition for Pa004Rule {
+    fn id(&self) -> RuleId {
+        PA004_ID
+    }
+    fn paradigm(&self) -> ParadigmId {
+        PA_PARADIGM
+    }
+    fn title(&self) -> &'static str {
+        "adapter construction outside composition root"
+    }
+    fn default_severity(&self) -> crate::diagnostics::Severity {
+        crate::diagnostics::Severity::Fatal
+    }
+    fn observe(&self, ctx: &RuleContext<'_>) -> Vec<RuleFinding> {
+        use super::lockfile_schema::PaSection;
+        let section: PaSection = ctx.lockfile.paradigm_section("PA").unwrap_or_default();
+        pa004(ctx.air, &section, ctx.mode)
+            .into_iter()
+            .map(|d| RuleFinding {
+                id: ctx.finding_ids.next(),
+                source: FindingSource::RegisteredRule(PA004_ID),
+                rule_id: Some(PA004_ID),
+                paradigm_id: Some(PA_PARADIGM),
+                default_severity: d.severity,
+                span: Some(d.span),
+                concept: d.concept,
+                message: d.message,
+                evidence: vec![],
+                why: d.why,
+                suggested_fix: d.suggested_fix,
+                diagnostic_code: None,
+            })
+            .collect()
+    }
+}
+
 #[cfg(test)]
 #[path = "rules_tests.rs"]
 mod rules_tests;

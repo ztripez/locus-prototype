@@ -176,7 +176,26 @@ impl ParadigmDefinition for DcParadigmDef {
         &RULES
     }
 }
-paradigm_def!(ErParadigmDef, "ER", "Error Taxonomy");
+// ER breaks out of the macro — 5 rules migrated (ER001/002/003/005/007 in #71 P4).
+pub struct ErParadigmDef;
+impl ParadigmDefinition for ErParadigmDef {
+    fn id(&self) -> ParadigmId {
+        ParadigmId::new("ER")
+    }
+    fn title(&self) -> &'static str {
+        "Error Taxonomy"
+    }
+    fn rules(&self) -> &'static [&'static dyn RuleDefinition] {
+        static RULES: [&dyn RuleDefinition; 5] = [
+            &crate::paradigms::error_taxonomy::rules::ER001_RULE,
+            &crate::paradigms::error_taxonomy::rules::ER002_RULE,
+            &crate::paradigms::error_taxonomy::rules::ER003_RULE,
+            &crate::paradigms::error_taxonomy::rules::ER005_RULE,
+            &crate::paradigms::error_taxonomy::rules::ER007_RULE,
+        ];
+        &RULES
+    }
+}
 // FL breaks out of the macro — 11 rules migrated (#71 P4).
 pub struct FlParadigmDef;
 impl ParadigmDefinition for FlParadigmDef {
@@ -226,7 +245,25 @@ impl ParadigmDefinition for MoParadigmDef {
 }
 
 paradigm_def!(ObParadigmDef, "OB", "Observability");
-paradigm_def!(PaParadigmDef, "PA", "Port-Adapter");
+// PA breaks out of the macro — 4 rules migrated (PA001/002/003/004 in #71 P4).
+pub struct PaParadigmDef;
+impl ParadigmDefinition for PaParadigmDef {
+    fn id(&self) -> ParadigmId {
+        ParadigmId::new("PA")
+    }
+    fn title(&self) -> &'static str {
+        "Port-Adapter"
+    }
+    fn rules(&self) -> &'static [&'static dyn RuleDefinition] {
+        static RULES: [&dyn RuleDefinition; 4] = [
+            &crate::paradigms::port_adapter::rules::PA001_RULE,
+            &crate::paradigms::port_adapter::rules::PA002_RULE,
+            &crate::paradigms::port_adapter::rules::PA003_RULE,
+            &crate::paradigms::port_adapter::rules::PA004_RULE,
+        ];
+        &RULES
+    }
+}
 paradigm_def!(RmParadigmDef, "RM", "Responsibility");
 paradigm_def!(RwParadigmDef, "RW", "Runtime Work");
 paradigm_def!(TaParadigmDef, "TA", "Test Architecture");

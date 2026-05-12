@@ -691,6 +691,212 @@ fn has_error_suffix(name: &str) -> bool {
     name.ends_with("Error") || name.ends_with("Err")
 }
 
+// ── RuleDefinition impls (governance spine migration, epic #71) ──────────────
+
+use crate::governance::finding::{FindingSource, RuleFinding};
+use crate::governance::ids::{ParadigmId, RuleId};
+use crate::governance::rule::{RuleContext, RuleDefinition};
+
+const ER_PARADIGM: ParadigmId = ParadigmId::new("ER");
+const ER001_ID: RuleId = RuleId::new("ER001");
+const ER002_ID: RuleId = RuleId::new("ER002");
+const ER003_ID: RuleId = RuleId::new("ER003");
+const ER005_ID: RuleId = RuleId::new("ER005");
+const ER007_ID: RuleId = RuleId::new("ER007");
+
+pub struct Er001Rule;
+pub static ER001_RULE: Er001Rule = Er001Rule;
+
+impl RuleDefinition for Er001Rule {
+    fn id(&self) -> RuleId {
+        ER001_ID
+    }
+    fn paradigm(&self) -> ParadigmId {
+        ER_PARADIGM
+    }
+    fn title(&self) -> &'static str {
+        "multiple public error types in one file"
+    }
+    fn default_severity(&self) -> crate::diagnostics::Severity {
+        crate::diagnostics::Severity::Warning
+    }
+    fn observe(&self, ctx: &RuleContext<'_>) -> Vec<RuleFinding> {
+        use super::lockfile_schema::ErSection;
+        let section: ErSection = ctx.lockfile.paradigm_section("ER").unwrap_or_default();
+        er001(ctx.air, &section, ctx.mode)
+            .into_iter()
+            .map(|d| RuleFinding {
+                id: ctx.finding_ids.next(),
+                source: FindingSource::RegisteredRule(ER001_ID),
+                rule_id: Some(ER001_ID),
+                paradigm_id: Some(ER_PARADIGM),
+                default_severity: d.severity,
+                span: Some(d.span),
+                concept: d.concept,
+                message: d.message,
+                evidence: vec![],
+                why: d.why,
+                suggested_fix: d.suggested_fix,
+                diagnostic_code: None,
+            })
+            .collect()
+    }
+}
+
+pub struct Er002Rule;
+pub static ER002_RULE: Er002Rule = Er002Rule;
+
+impl RuleDefinition for Er002Rule {
+    fn id(&self) -> RuleId {
+        ER002_ID
+    }
+    fn paradigm(&self) -> ParadigmId {
+        ER_PARADIGM
+    }
+    fn title(&self) -> &'static str {
+        "string-shaped error in Result return type"
+    }
+    fn default_severity(&self) -> crate::diagnostics::Severity {
+        crate::diagnostics::Severity::Fatal
+    }
+    fn observe(&self, ctx: &RuleContext<'_>) -> Vec<RuleFinding> {
+        use super::lockfile_schema::ErSection;
+        let section: ErSection = ctx.lockfile.paradigm_section("ER").unwrap_or_default();
+        er002(ctx.air, &section, ctx.mode)
+            .into_iter()
+            .map(|d| RuleFinding {
+                id: ctx.finding_ids.next(),
+                source: FindingSource::RegisteredRule(ER002_ID),
+                rule_id: Some(ER002_ID),
+                paradigm_id: Some(ER_PARADIGM),
+                default_severity: d.severity,
+                span: Some(d.span),
+                concept: d.concept,
+                message: d.message,
+                evidence: vec![],
+                why: d.why,
+                suggested_fix: d.suggested_fix,
+                diagnostic_code: None,
+            })
+            .collect()
+    }
+}
+
+pub struct Er003Rule;
+pub static ER003_RULE: Er003Rule = Er003Rule;
+
+impl RuleDefinition for Er003Rule {
+    fn id(&self) -> RuleId {
+        ER003_ID
+    }
+    fn paradigm(&self) -> ParadigmId {
+        ER_PARADIGM
+    }
+    fn title(&self) -> &'static str {
+        "boundary error type embedded in domain error enum"
+    }
+    fn default_severity(&self) -> crate::diagnostics::Severity {
+        crate::diagnostics::Severity::Fatal
+    }
+    fn observe(&self, ctx: &RuleContext<'_>) -> Vec<RuleFinding> {
+        use super::lockfile_schema::ErSection;
+        let section: ErSection = ctx.lockfile.paradigm_section("ER").unwrap_or_default();
+        er003(ctx.air, &section, ctx.mode)
+            .into_iter()
+            .map(|d| RuleFinding {
+                id: ctx.finding_ids.next(),
+                source: FindingSource::RegisteredRule(ER003_ID),
+                rule_id: Some(ER003_ID),
+                paradigm_id: Some(ER_PARADIGM),
+                default_severity: d.severity,
+                span: Some(d.span),
+                concept: d.concept,
+                message: d.message,
+                evidence: vec![],
+                why: d.why,
+                suggested_fix: d.suggested_fix,
+                diagnostic_code: None,
+            })
+            .collect()
+    }
+}
+
+pub struct Er005Rule;
+pub static ER005_RULE: Er005Rule = Er005Rule;
+
+impl RuleDefinition for Er005Rule {
+    fn id(&self) -> RuleId {
+        ER005_ID
+    }
+    fn paradigm(&self) -> ParadigmId {
+        ER_PARADIGM
+    }
+    fn title(&self) -> &'static str {
+        "catch-all Err arm collapses error taxonomy"
+    }
+    fn default_severity(&self) -> crate::diagnostics::Severity {
+        crate::diagnostics::Severity::Warning
+    }
+    fn observe(&self, ctx: &RuleContext<'_>) -> Vec<RuleFinding> {
+        use super::lockfile_schema::ErSection;
+        let section: ErSection = ctx.lockfile.paradigm_section("ER").unwrap_or_default();
+        er005(ctx.air, &section, ctx.mode)
+            .into_iter()
+            .map(|d| RuleFinding {
+                id: ctx.finding_ids.next(),
+                source: FindingSource::RegisteredRule(ER005_ID),
+                rule_id: Some(ER005_ID),
+                paradigm_id: Some(ER_PARADIGM),
+                default_severity: d.severity,
+                span: Some(d.span),
+                concept: d.concept,
+                message: d.message,
+                evidence: vec![],
+                why: d.why,
+                suggested_fix: d.suggested_fix,
+                diagnostic_code: None,
+            })
+            .collect()
+    }
+}
+
+pub struct Er007Rule;
+pub static ER007_RULE: Er007Rule = Er007Rule;
+
+impl RuleDefinition for Er007Rule {
+    fn id(&self) -> RuleId {
+        ER007_ID
+    }
+    fn paradigm(&self) -> ParadigmId {
+        ER_PARADIGM
+    }
+    fn title(&self) -> &'static str {
+        "duplicate error variant across error enums"
+    }
+    fn default_severity(&self) -> crate::diagnostics::Severity {
+        crate::diagnostics::Severity::Warning
+    }
+    fn observe(&self, ctx: &RuleContext<'_>) -> Vec<RuleFinding> {
+        er007(ctx.air, ctx.mode)
+            .into_iter()
+            .map(|d| RuleFinding {
+                id: ctx.finding_ids.next(),
+                source: FindingSource::RegisteredRule(ER007_ID),
+                rule_id: Some(ER007_ID),
+                paradigm_id: Some(ER_PARADIGM),
+                default_severity: d.severity,
+                span: Some(d.span),
+                concept: d.concept,
+                message: d.message,
+                evidence: vec![],
+                why: d.why,
+                suggested_fix: d.suggested_fix,
+                diagnostic_code: None,
+            })
+            .collect()
+    }
+}
+
 #[cfg(test)]
 #[path = "rules_tests.rs"]
 mod rules_tests;
