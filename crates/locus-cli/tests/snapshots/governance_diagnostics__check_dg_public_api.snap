@@ -112,18 +112,6 @@ info[LOCUS002]: paradigm UT (Utility / Shared Module Discipline) has no definiti
   - vacant-by-definition: rules under UT cannot fire until at least one declaration list is populated
   fix: populate `paradigms.UT` in `.locus/lock.json` (use the matching `locus ut ...` mutators, or hand-edit), or add `"UT"` to `acknowledged_empty` in `.locus/lock.json` to silence this paradigm
 
-warning[PG003]: new exempt path `*::test::*` in `paradigms.CX.exempt_paths`
-  --> .locus/lock.json:1
-  - exemption silences the rule entirely for matching modules; prefer narrowing the rule via overrides with debt metadata, or fixing the underlying code
-  fix: if this is a deliberate calibration, re-run `locus check` with `--allow-policy-calibration`. The exempt-paths schema will gain debt metadata in a follow-up; until then exemptions are visible additions.
-
-warning[PG007]: new exempt path `*::test::*` in `paradigms.CX.exempt_paths` lacks debt metadata (reason, expires, owner)
-  --> .locus/lock.json:1
-  - an exempt-path silences a rule for matching modules; without `reason` / `expires` / `owner` it becomes invisible debt
-  - missing field(s): reason, expires, owner
-  - PG007 is unaffected by `--allow-policy-calibration`: calibration accepts the addition itself (PG003), but does not waive the requirement to record why, when to revisit, and who owns it
-  fix: populate `reason` (why this exemption exists), `expires` (`YYYY-MM-DD` review date), and `owner` (team/individual). Use the struct form: `{"pattern": "…", "reason": "…", "expires": "YYYY-MM-DD", "owner": "…"}`.
-
-summary: 1 error(s), 2 warning(s), 12 advisory.
+summary: 1 error(s), 0 warning(s), 12 advisory.
 
 STDERR:

@@ -162,6 +162,24 @@ impl Lockfile {
         }
     }
 
+    /// Like [`Lockfile::paradigm_section`], but returns `None` when the section
+    /// is not explicitly present in the lockfile. Use this when defaults must
+    /// be distinguishable from explicit user configuration (e.g. Policy Guard
+    /// auditing).
+    ///
+    /// `Some(Ok(T))` — the section was present and parsed cleanly.
+    /// `Some(Err(_))` — the section was present but malformed for `T`.
+    /// `None` — the section was absent; caller should treat this as
+    /// "no explicit user policy" rather than silently injecting defaults.
+    pub fn paradigm_section_explicit<T>(&self, prefix: &str) -> Option<Result<T, serde_json::Error>>
+    where
+        T: for<'de> Deserialize<'de>,
+    {
+        self.paradigms
+            .get(prefix)
+            .map(|v| serde_json::from_value(v.clone()))
+    }
+
     /// Persist `.locus/lock.json` under the workspace root, pretty-printed for
     /// review. Creates the `.locus/` directory if it does not already exist.
     /// Overwrites the existing file.
@@ -228,6 +246,29 @@ mod tests {
         let lf = Lockfile::empty();
         let v: serde_json::Value = lf.paradigm_section("OT").unwrap();
         assert_eq!(v, serde_json::Value::Null);
+    }
+
+    #[test]
+    fn paradigm_section_explicit_returns_none_when_missing() {
+        let lf = Lockfile::empty();
+        let res: Option<Result<serde_json::Value, _>> = lf.paradigm_section_explicit("OT");
+        assert!(
+            res.is_none(),
+            "absent section must return None so callers can distinguish \
+             user-set-empty from defaulted",
+        );
+    }
+
+    #[test]
+    fn paradigm_section_explicit_returns_some_ok_when_present() {
+        let mut lf = Lockfile::empty();
+        lf.paradigms
+            .insert("OT".to_string(), serde_json::json!({"concepts": {}}));
+        let res: Option<Result<serde_json::Value, _>> = lf.paradigm_section_explicit("OT");
+        let parsed = res
+            .expect("section is explicitly present; expected Some(_)")
+            .expect("section parses as serde_json::Value");
+        assert_eq!(parsed, serde_json::json!({"concepts": {}}));
     }
 
     #[test]

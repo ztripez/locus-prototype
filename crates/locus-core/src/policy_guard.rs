@@ -298,63 +298,76 @@ fn check_default_budget_changes(
     calibration: bool,
 ) -> Vec<Diagnostic> {
     let mut out = Vec::new();
-    let cur_cx: CxSection = current.paradigm_section("CX").unwrap_or_default();
-    let base_cx: CxSection = baseline.paradigm_section("CX").unwrap_or_default();
-    diff_optional_budget(
-        "paradigms.CX.default_max_function_lines",
-        base_cx.default_max_function_lines,
-        cur_cx.default_max_function_lines,
-        crate::paradigms::complexity_budget::lockfile_schema::DEFAULT_MAX_FUNCTION_LINES,
-        mode,
-        calibration,
-        &mut out,
-    );
-    diff_optional_budget(
-        "paradigms.CX.default_max_module_lines",
-        base_cx.default_max_module_lines,
-        cur_cx.default_max_module_lines,
-        crate::paradigms::complexity_budget::lockfile_schema::DEFAULT_MAX_MODULE_LINES,
-        mode,
-        calibration,
-        &mut out,
-    );
-    diff_required_budget(
-        "paradigms.CX.max_public_items",
-        base_cx.max_public_items,
-        cur_cx.max_public_items,
-        mode,
-        calibration,
-        &mut out,
-    );
-    diff_required_budget(
-        "paradigms.CX.max_fan_out",
-        base_cx.max_fan_out,
-        cur_cx.max_fan_out,
-        mode,
-        calibration,
-        &mut out,
-    );
+    // CX — audit only when current explicitly sets `paradigms.CX`.
+    // Without this gate, `paradigm_section.unwrap_or_default()` silently
+    // injects `CxSection::default()` and PG compares hardcoded defaults
+    // against an explicit baseline, surfacing false-positive widenings.
+    if let Some(cur_cx) = current
+        .paradigm_section_explicit::<CxSection>("CX")
+        .and_then(Result::ok)
+    {
+        let base_cx: CxSection = baseline.paradigm_section("CX").unwrap_or_default();
+        diff_optional_budget(
+            "paradigms.CX.default_max_function_lines",
+            base_cx.default_max_function_lines,
+            cur_cx.default_max_function_lines,
+            crate::paradigms::complexity_budget::lockfile_schema::DEFAULT_MAX_FUNCTION_LINES,
+            mode,
+            calibration,
+            &mut out,
+        );
+        diff_optional_budget(
+            "paradigms.CX.default_max_module_lines",
+            base_cx.default_max_module_lines,
+            cur_cx.default_max_module_lines,
+            crate::paradigms::complexity_budget::lockfile_schema::DEFAULT_MAX_MODULE_LINES,
+            mode,
+            calibration,
+            &mut out,
+        );
+        diff_required_budget(
+            "paradigms.CX.max_public_items",
+            base_cx.max_public_items,
+            cur_cx.max_public_items,
+            mode,
+            calibration,
+            &mut out,
+        );
+        diff_required_budget(
+            "paradigms.CX.max_fan_out",
+            base_cx.max_fan_out,
+            cur_cx.max_fan_out,
+            mode,
+            calibration,
+            &mut out,
+        );
+    }
 
-    let cur_mo: MoSection = current.paradigm_section("MO").unwrap_or_default();
-    let base_mo: MoSection = baseline.paradigm_section("MO").unwrap_or_default();
-    diff_optional_budget(
-        "paradigms.MO.default_max_public_types",
-        base_mo.default_max_public_types,
-        cur_mo.default_max_public_types,
-        crate::paradigms::module_ownership::lockfile_schema::DEFAULT_MAX_PUBLIC_TYPES,
-        mode,
-        calibration,
-        &mut out,
-    );
-    diff_optional_budget(
-        "paradigms.MO.entropy_threshold",
-        base_mo.entropy_threshold,
-        cur_mo.entropy_threshold,
-        crate::paradigms::module_ownership::lockfile_schema::DEFAULT_ENTROPY_THRESHOLD,
-        mode,
-        calibration,
-        &mut out,
-    );
+    // MO — same gating as CX.
+    if let Some(cur_mo) = current
+        .paradigm_section_explicit::<MoSection>("MO")
+        .and_then(Result::ok)
+    {
+        let base_mo: MoSection = baseline.paradigm_section("MO").unwrap_or_default();
+        diff_optional_budget(
+            "paradigms.MO.default_max_public_types",
+            base_mo.default_max_public_types,
+            cur_mo.default_max_public_types,
+            crate::paradigms::module_ownership::lockfile_schema::DEFAULT_MAX_PUBLIC_TYPES,
+            mode,
+            calibration,
+            &mut out,
+        );
+        diff_optional_budget(
+            "paradigms.MO.entropy_threshold",
+            base_mo.entropy_threshold,
+            cur_mo.entropy_threshold,
+            crate::paradigms::module_ownership::lockfile_schema::DEFAULT_ENTROPY_THRESHOLD,
+            mode,
+            calibration,
+            &mut out,
+        );
+    }
     out
 }
 
@@ -372,60 +385,70 @@ fn check_existing_override_budget_changes(
     calibration: bool,
 ) -> Vec<Diagnostic> {
     let mut out = Vec::new();
-    let cur_cx: CxSection = current.paradigm_section("CX").unwrap_or_default();
-    let base_cx: CxSection = baseline.paradigm_section("CX").unwrap_or_default();
 
-    // CX function-line overrides.
-    for cur_o in &cur_cx.overrides {
-        if let Some(base_o) = base_cx.overrides.iter().find(|o| o.module == cur_o.module)
-            && cur_o.max_function_lines > base_o.max_function_lines
-        {
-            out.push(override_budget_raised_diagnostic(
-                "paradigms.CX.overrides",
-                &cur_o.module,
-                "max_function_lines",
-                base_o.max_function_lines,
-                cur_o.max_function_lines,
-                mode,
-                calibration,
-            ));
+    // CX — audit only when current explicitly sets `paradigms.CX`.
+    if let Some(cur_cx) = current
+        .paradigm_section_explicit::<CxSection>("CX")
+        .and_then(Result::ok)
+    {
+        let base_cx: CxSection = baseline.paradigm_section("CX").unwrap_or_default();
+        // CX function-line overrides.
+        for cur_o in &cur_cx.overrides {
+            if let Some(base_o) = base_cx.overrides.iter().find(|o| o.module == cur_o.module)
+                && cur_o.max_function_lines > base_o.max_function_lines
+            {
+                out.push(override_budget_raised_diagnostic(
+                    "paradigms.CX.overrides",
+                    &cur_o.module,
+                    "max_function_lines",
+                    base_o.max_function_lines,
+                    cur_o.max_function_lines,
+                    mode,
+                    calibration,
+                ));
+            }
+        }
+        // CX module-line overrides.
+        for cur_o in &cur_cx.module_overrides {
+            if let Some(base_o) = base_cx
+                .module_overrides
+                .iter()
+                .find(|o| o.module == cur_o.module)
+                && cur_o.max_module_lines > base_o.max_module_lines
+            {
+                out.push(override_budget_raised_diagnostic(
+                    "paradigms.CX.module_overrides",
+                    &cur_o.module,
+                    "max_module_lines",
+                    base_o.max_module_lines,
+                    cur_o.max_module_lines,
+                    mode,
+                    calibration,
+                ));
+            }
         }
     }
-    // CX module-line overrides.
-    for cur_o in &cur_cx.module_overrides {
-        if let Some(base_o) = base_cx
-            .module_overrides
-            .iter()
-            .find(|o| o.module == cur_o.module)
-            && cur_o.max_module_lines > base_o.max_module_lines
-        {
-            out.push(override_budget_raised_diagnostic(
-                "paradigms.CX.module_overrides",
-                &cur_o.module,
-                "max_module_lines",
-                base_o.max_module_lines,
-                cur_o.max_module_lines,
-                mode,
-                calibration,
-            ));
-        }
-    }
 
-    let cur_mo: MoSection = current.paradigm_section("MO").unwrap_or_default();
-    let base_mo: MoSection = baseline.paradigm_section("MO").unwrap_or_default();
-    for cur_o in &cur_mo.overrides {
-        if let Some(base_o) = base_mo.overrides.iter().find(|o| o.module == cur_o.module)
-            && cur_o.max_public_types > base_o.max_public_types
-        {
-            out.push(override_budget_raised_diagnostic(
-                "paradigms.MO.overrides",
-                &cur_o.module,
-                "max_public_types",
-                base_o.max_public_types,
-                cur_o.max_public_types,
-                mode,
-                calibration,
-            ));
+    // MO — same gating as CX.
+    if let Some(cur_mo) = current
+        .paradigm_section_explicit::<MoSection>("MO")
+        .and_then(Result::ok)
+    {
+        let base_mo: MoSection = baseline.paradigm_section("MO").unwrap_or_default();
+        for cur_o in &cur_mo.overrides {
+            if let Some(base_o) = base_mo.overrides.iter().find(|o| o.module == cur_o.module)
+                && cur_o.max_public_types > base_o.max_public_types
+            {
+                out.push(override_budget_raised_diagnostic(
+                    "paradigms.MO.overrides",
+                    &cur_o.module,
+                    "max_public_types",
+                    base_o.max_public_types,
+                    cur_o.max_public_types,
+                    mode,
+                    calibration,
+                ));
+            }
         }
     }
     out
@@ -558,83 +581,94 @@ fn check_new_overrides(
     calibration: bool,
 ) -> Vec<Diagnostic> {
     let mut out = Vec::new();
-    let cur_cx: CxSection = current.paradigm_section("CX").unwrap_or_default();
-    let base_cx: CxSection = baseline.paradigm_section("CX").unwrap_or_default();
 
-    let base_cx_modules: std::collections::HashSet<&str> = base_cx
-        .overrides
-        .iter()
-        .map(|o| o.module.as_str())
-        .collect();
-    for o in &cur_cx.overrides {
-        if base_cx_modules.contains(o.module.as_str()) {
-            continue;
+    // CX — audit only when current explicitly sets `paradigms.CX`.
+    if let Some(cur_cx) = current
+        .paradigm_section_explicit::<CxSection>("CX")
+        .and_then(Result::ok)
+    {
+        let base_cx: CxSection = baseline.paradigm_section("CX").unwrap_or_default();
+
+        let base_cx_modules: std::collections::HashSet<&str> = base_cx
+            .overrides
+            .iter()
+            .map(|o| o.module.as_str())
+            .collect();
+        for o in &cur_cx.overrides {
+            if base_cx_modules.contains(o.module.as_str()) {
+                continue;
+            }
+            out.push(override_added_diagnostic(
+                "paradigms.CX.overrides",
+                &o.module,
+                mode,
+                calibration,
+            ));
+            if let Some(d) = override_metadata_diagnostic(
+                "paradigms.CX.overrides",
+                &o.module,
+                cx_override_debt(o),
+                mode,
+            ) {
+                out.push(d);
+            }
         }
-        out.push(override_added_diagnostic(
-            "paradigms.CX.overrides",
-            &o.module,
-            mode,
-            calibration,
-        ));
-        if let Some(d) = override_metadata_diagnostic(
-            "paradigms.CX.overrides",
-            &o.module,
-            cx_override_debt(o),
-            mode,
-        ) {
-            out.push(d);
+
+        let base_cx_module_overrides: std::collections::HashSet<&str> = base_cx
+            .module_overrides
+            .iter()
+            .map(|o| o.module.as_str())
+            .collect();
+        for o in &cur_cx.module_overrides {
+            if base_cx_module_overrides.contains(o.module.as_str()) {
+                continue;
+            }
+            out.push(override_added_diagnostic(
+                "paradigms.CX.module_overrides",
+                &o.module,
+                mode,
+                calibration,
+            ));
+            if let Some(d) = override_metadata_diagnostic(
+                "paradigms.CX.module_overrides",
+                &o.module,
+                cx_module_override_debt(o),
+                mode,
+            ) {
+                out.push(d);
+            }
         }
     }
 
-    let base_cx_module_overrides: std::collections::HashSet<&str> = base_cx
-        .module_overrides
-        .iter()
-        .map(|o| o.module.as_str())
-        .collect();
-    for o in &cur_cx.module_overrides {
-        if base_cx_module_overrides.contains(o.module.as_str()) {
-            continue;
-        }
-        out.push(override_added_diagnostic(
-            "paradigms.CX.module_overrides",
-            &o.module,
-            mode,
-            calibration,
-        ));
-        if let Some(d) = override_metadata_diagnostic(
-            "paradigms.CX.module_overrides",
-            &o.module,
-            cx_module_override_debt(o),
-            mode,
-        ) {
-            out.push(d);
-        }
-    }
-
-    let cur_mo: MoSection = current.paradigm_section("MO").unwrap_or_default();
-    let base_mo: MoSection = baseline.paradigm_section("MO").unwrap_or_default();
-    let base_mo_modules: std::collections::HashSet<&str> = base_mo
-        .overrides
-        .iter()
-        .map(|o| o.module.as_str())
-        .collect();
-    for o in &cur_mo.overrides {
-        if base_mo_modules.contains(o.module.as_str()) {
-            continue;
-        }
-        out.push(override_added_diagnostic(
-            "paradigms.MO.overrides",
-            &o.module,
-            mode,
-            calibration,
-        ));
-        if let Some(d) = override_metadata_diagnostic(
-            "paradigms.MO.overrides",
-            &o.module,
-            mo_override_debt(o),
-            mode,
-        ) {
-            out.push(d);
+    // MO — audit only when current explicitly sets `paradigms.MO`.
+    if let Some(cur_mo) = current
+        .paradigm_section_explicit::<MoSection>("MO")
+        .and_then(Result::ok)
+    {
+        let base_mo: MoSection = baseline.paradigm_section("MO").unwrap_or_default();
+        let base_mo_modules: std::collections::HashSet<&str> = base_mo
+            .overrides
+            .iter()
+            .map(|o| o.module.as_str())
+            .collect();
+        for o in &cur_mo.overrides {
+            if base_mo_modules.contains(o.module.as_str()) {
+                continue;
+            }
+            out.push(override_added_diagnostic(
+                "paradigms.MO.overrides",
+                &o.module,
+                mode,
+                calibration,
+            ));
+            if let Some(d) = override_metadata_diagnostic(
+                "paradigms.MO.overrides",
+                &o.module,
+                mo_override_debt(o),
+                mode,
+            ) {
+                out.push(d);
+            }
         }
     }
     out
@@ -760,71 +794,84 @@ fn check_new_exempt_paths(
     calibration: bool,
 ) -> Vec<Diagnostic> {
     let mut out = Vec::new();
-    let cur_cx: CxSection = current.paradigm_section("CX").unwrap_or_default();
-    let base_cx: CxSection = baseline.paradigm_section("CX").unwrap_or_default();
-    // Key the baseline set by the raw pattern string. Both legacy `String`
-    // entries and struct entries use `.pattern()` as their identity.
-    let base_set: std::collections::HashSet<&str> =
-        base_cx.exempt_paths.iter().map(|e| e.pattern()).collect();
-    for entry in &cur_cx.exempt_paths {
-        let pattern = entry.pattern();
-        if base_set.contains(pattern) {
-            continue;
-        }
-        out.push(exempt_path_added_diagnostic(
-            "paradigms.CX.exempt_paths",
-            pattern,
-            mode,
-            calibration,
-        ));
-        // PG007 — new entries must carry debt metadata regardless of form.
-        // Grandfather-by-pattern: only patterns NOT present in the baseline
-        // are subject to PG007. Patterns already in the baseline (in any
-        // form) are silently grandfathered; legacy baseline strings also
-        // surface in `locus debt` as "legacy-no-metadata" rows.
-        //
-        // For new Legacy-string entries (not in baseline), we synthesise a
-        // metadata-check against a pattern-only struct — all fields will be
-        // None, so PG007 fires listing all three missing fields.
-        let pg007_target: crate::paradigms::complexity_budget::lockfile_schema::CxExemptPath =
-            match entry {
-                crate::paradigms::complexity_budget::lockfile_schema::CxExemptPathEntry::Full(
-                    ep,
-                ) => ep.clone(),
-                crate::paradigms::complexity_budget::lockfile_schema::CxExemptPathEntry::Legacy(
-                    s,
-                ) => crate::paradigms::complexity_budget::lockfile_schema::CxExemptPath {
-                    pattern: s.clone(),
-                    ..Default::default()
-                },
-            };
-        if let Some(d) =
-            exempt_path_metadata_diagnostic("paradigms.CX.exempt_paths", &pg007_target, mode)
-        {
-            out.push(d);
+
+    // CX exempt_paths — audit only when current explicitly sets `paradigms.CX`.
+    // Without this gate, `CxSection::default()` injects `["*::tests::*",
+    // "*::test::*"]` and PG fires non-deterministically against any explicit
+    // baseline (see PR #89 review: sample-crate fixture snapshot flip).
+    if let Some(cur_cx) = current
+        .paradigm_section_explicit::<CxSection>("CX")
+        .and_then(Result::ok)
+    {
+        let base_cx: CxSection = baseline.paradigm_section("CX").unwrap_or_default();
+        // Key the baseline set by the raw pattern string. Both legacy `String`
+        // entries and struct entries use `.pattern()` as their identity.
+        let base_set: std::collections::HashSet<&str> =
+            base_cx.exempt_paths.iter().map(|e| e.pattern()).collect();
+        for entry in &cur_cx.exempt_paths {
+            let pattern = entry.pattern();
+            if base_set.contains(pattern) {
+                continue;
+            }
+            out.push(exempt_path_added_diagnostic(
+                "paradigms.CX.exempt_paths",
+                pattern,
+                mode,
+                calibration,
+            ));
+            // PG007 — new entries must carry debt metadata regardless of form.
+            // Grandfather-by-pattern: only patterns NOT present in the baseline
+            // are subject to PG007. Patterns already in the baseline (in any
+            // form) are silently grandfathered; legacy baseline strings also
+            // surface in `locus debt` as "legacy-no-metadata" rows.
+            //
+            // For new Legacy-string entries (not in baseline), we synthesise a
+            // metadata-check against a pattern-only struct — all fields will be
+            // None, so PG007 fires listing all three missing fields.
+            let pg007_target: crate::paradigms::complexity_budget::lockfile_schema::CxExemptPath =
+                match entry {
+                    crate::paradigms::complexity_budget::lockfile_schema::CxExemptPathEntry::Full(
+                        ep,
+                    ) => ep.clone(),
+                    crate::paradigms::complexity_budget::lockfile_schema::CxExemptPathEntry::Legacy(
+                        s,
+                    ) => crate::paradigms::complexity_budget::lockfile_schema::CxExemptPath {
+                        pattern: s.clone(),
+                        ..Default::default()
+                    },
+                };
+            if let Some(d) =
+                exempt_path_metadata_diagnostic("paradigms.CX.exempt_paths", &pg007_target, mode)
+            {
+                out.push(d);
+            }
         }
     }
-    // DC's exempt_paths is the only other paradigm with one today.
-    let cur_dc: serde_json::Value = current
-        .paradigm_section("DC")
-        .unwrap_or(serde_json::Value::Null);
-    let base_dc: serde_json::Value = baseline
-        .paradigm_section("DC")
-        .unwrap_or(serde_json::Value::Null);
-    let cur_dc_paths = json_string_array(&cur_dc, "exempt_paths");
-    let base_dc_paths = json_string_array(&base_dc, "exempt_paths");
-    let base_dc_set: std::collections::HashSet<&str> =
-        base_dc_paths.iter().map(String::as_str).collect();
-    for entry in &cur_dc_paths {
-        if base_dc_set.contains(entry.as_str()) {
-            continue;
+
+    // DC exempt_paths — same gating as CX. Skip when current has no explicit
+    // `paradigms.DC` section.
+    if let Some(cur_dc) = current
+        .paradigm_section_explicit::<serde_json::Value>("DC")
+        .and_then(Result::ok)
+    {
+        let base_dc: serde_json::Value = baseline
+            .paradigm_section("DC")
+            .unwrap_or(serde_json::Value::Null);
+        let cur_dc_paths = json_string_array(&cur_dc, "exempt_paths");
+        let base_dc_paths = json_string_array(&base_dc, "exempt_paths");
+        let base_dc_set: std::collections::HashSet<&str> =
+            base_dc_paths.iter().map(String::as_str).collect();
+        for entry in &cur_dc_paths {
+            if base_dc_set.contains(entry.as_str()) {
+                continue;
+            }
+            out.push(exempt_path_added_diagnostic(
+                "paradigms.DC.exempt_paths",
+                entry,
+                mode,
+                calibration,
+            ));
         }
-        out.push(exempt_path_added_diagnostic(
-            "paradigms.DC.exempt_paths",
-            entry,
-            mode,
-            calibration,
-        ));
     }
     out
 }
@@ -931,6 +978,13 @@ fn check_new_acknowledged_empty(
     mode: CheckMode,
     calibration: bool,
 ) -> Vec<Diagnostic> {
+    // Audit only when the user has explicitly populated
+    // `acknowledged_empty`. An empty list on the current side is the
+    // default state (Lockfile::empty()) and must not be audited as
+    // "narrowing vs baseline" — PG audits widening, not user-set-empty.
+    if current.acknowledged_empty.is_empty() {
+        return Vec::new();
+    }
     let base: std::collections::HashSet<&str> = baseline
         .acknowledged_empty
         .iter()
@@ -976,6 +1030,12 @@ fn check_acknowledged_empty_metadata(
     baseline: &Lockfile,
     mode: CheckMode,
 ) -> Vec<Diagnostic> {
+    // Audit only when the user has explicitly populated
+    // `acknowledged_empty`. An empty list on the current side is the
+    // default state and must not surface PG009 false-positives.
+    if current.acknowledged_empty.is_empty() {
+        return Vec::new();
+    }
     // Build the set of grandfathered prefixes from the baseline (both forms).
     let base_prefixes: std::collections::HashSet<&str> = baseline
         .acknowledged_empty
@@ -1061,7 +1121,17 @@ fn check_new_converter_paths(
     mode: CheckMode,
     calibration: bool,
 ) -> Vec<Diagnostic> {
-    let cur_ot: OtSection = current.paradigm_section("OT").unwrap_or_default();
+    // Audit only when current explicitly sets `paradigms.OT`. Without this
+    // gate, `OtSection::default()` is injected and any baseline `converter_paths`
+    // entry would surface as a "removal" — silent for PG, but the asymmetric
+    // semantic (defaults vs user policy) is the same shape that produced the
+    // PG003/PG007 false-positive on the CX side.
+    let Some(cur_ot) = current
+        .paradigm_section_explicit::<OtSection>("OT")
+        .and_then(Result::ok)
+    else {
+        return Vec::new();
+    };
     let base_ot: OtSection = baseline.paradigm_section("OT").unwrap_or_default();
     let base_set: std::collections::HashSet<&str> =
         base_ot.converter_paths.iter().map(String::as_str).collect();
