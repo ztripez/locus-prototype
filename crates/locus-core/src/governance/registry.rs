@@ -95,6 +95,15 @@ impl RuleRegistry {
                 &crate::paradigms::port_adapter::rules::PA002_RULE,
                 &crate::paradigms::port_adapter::rules::PA003_RULE,
                 &crate::paradigms::port_adapter::rules::PA004_RULE,
+                &crate::paradigms::runtime_work::rules::RW001_RULE,
+                &crate::paradigms::runtime_work::rules::RW002_RULE,
+                &crate::paradigms::runtime_work::rules::RW003_RULE,
+                &crate::paradigms::runtime_work::rules::RW004_RULE,
+                &crate::paradigms::runtime_work::rules::RW005_RULE,
+                &crate::paradigms::runtime_work::rules::RW006_RULE,
+                &crate::paradigms::demand_driven::rules::DA001_RULE,
+                &crate::paradigms::demand_driven::rules::DA002_RULE,
+                &crate::paradigms::demand_driven::rules::DA007_RULE,
             ],
         };
         debug_assert!(

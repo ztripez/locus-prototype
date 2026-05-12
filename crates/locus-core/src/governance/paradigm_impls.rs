@@ -158,7 +158,24 @@ impl ParadigmDefinition for CxParadigmDef {
         &RULES
     }
 }
-paradigm_def!(DaParadigmDef, "DA", "Demand Driven");
+// DA breaks out of the macro — 3 rules migrated (DA001/002/007 in #71 P4).
+pub struct DaParadigmDef;
+impl ParadigmDefinition for DaParadigmDef {
+    fn id(&self) -> ParadigmId {
+        ParadigmId::new("DA")
+    }
+    fn title(&self) -> &'static str {
+        "Demand Driven"
+    }
+    fn rules(&self) -> &'static [&'static dyn RuleDefinition] {
+        static RULES: [&dyn RuleDefinition; 3] = [
+            &crate::paradigms::demand_driven::rules::DA001_RULE,
+            &crate::paradigms::demand_driven::rules::DA002_RULE,
+            &crate::paradigms::demand_driven::rules::DA007_RULE,
+        ];
+        &RULES
+    }
+}
 pub struct DcParadigmDef;
 impl ParadigmDefinition for DcParadigmDef {
     fn id(&self) -> ParadigmId {
@@ -265,7 +282,27 @@ impl ParadigmDefinition for PaParadigmDef {
     }
 }
 paradigm_def!(RmParadigmDef, "RM", "Responsibility");
-paradigm_def!(RwParadigmDef, "RW", "Runtime Work");
+// RW breaks out of the macro — 6 rules migrated (RW001–RW006 in #71 P4).
+pub struct RwParadigmDef;
+impl ParadigmDefinition for RwParadigmDef {
+    fn id(&self) -> ParadigmId {
+        ParadigmId::new("RW")
+    }
+    fn title(&self) -> &'static str {
+        "Runtime Work"
+    }
+    fn rules(&self) -> &'static [&'static dyn RuleDefinition] {
+        static RULES: [&dyn RuleDefinition; 6] = [
+            &crate::paradigms::runtime_work::rules::RW001_RULE,
+            &crate::paradigms::runtime_work::rules::RW002_RULE,
+            &crate::paradigms::runtime_work::rules::RW003_RULE,
+            &crate::paradigms::runtime_work::rules::RW004_RULE,
+            &crate::paradigms::runtime_work::rules::RW005_RULE,
+            &crate::paradigms::runtime_work::rules::RW006_RULE,
+        ];
+        &RULES
+    }
+}
 paradigm_def!(TaParadigmDef, "TA", "Test Architecture");
 paradigm_def!(UtParadigmDef, "UT", "Utility Discipline");
 
