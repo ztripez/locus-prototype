@@ -353,7 +353,7 @@ fn push_locus005(
         finding_id: finding.id,
         policy: CONCEPT_SOT_ID,
         severity: Severity::Advisory,
-        status: DecisionStatus::Active,
+        status: DecisionStatus::Advisory,
         severity_change: SeverityChange::Unchanged,
         rationale: vec![rationale],
     };
@@ -763,7 +763,7 @@ mod tests {
         }
         for d in &out.decisions {
             assert_eq!(d.severity, Severity::Advisory);
-            assert_eq!(d.status, DecisionStatus::Active);
+            assert_eq!(d.status, DecisionStatus::Advisory);
         }
     }
 }
