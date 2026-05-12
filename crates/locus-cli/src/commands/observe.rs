@@ -105,11 +105,11 @@ fn render_concept_clusters<W: Write>(
         return Ok(());
     }
     for cluster in clusters.iter().take(5) {
-        let names: Vec<&str> = cluster
-            .members
-            .iter()
-            .map(|m| m.name.as_str())
-            .collect();
+        // Two crates that each declare a type with the same short name
+        // (e.g. re-exports, parallel-named concepts) produce a cluster with
+        // duplicate `name`s. Show qualified `symbol` for the colliding
+        // members so the survey distinguishes them.
+        let names = cluster_member_labels(&cluster.members);
         writeln!(
             out,
             "  {}: {} ({} members)",
@@ -119,6 +119,27 @@ fn render_concept_clusters<W: Write>(
         )?;
     }
     Ok(())
+}
+
+/// Render cluster members, falling back to the qualified `symbol` when
+/// multiple members share the same short `name`.
+fn cluster_member_labels(
+    members: &[locus_core::paradigms::one_truth::infer::ClusterMember],
+) -> Vec<String> {
+    let mut name_counts: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
+    for m in members {
+        *name_counts.entry(m.name.as_str()).or_default() += 1;
+    }
+    members
+        .iter()
+        .map(|m| {
+            if name_counts.get(m.name.as_str()).copied().unwrap_or(0) > 1 {
+                m.symbol.clone()
+            } else {
+                m.name.clone()
+            }
+        })
+        .collect()
 }
 
 fn render_layers<W: Write>(out: &mut W, air: &locus_air::AirWorkspace) -> io::Result<()> {
@@ -378,6 +399,12 @@ fn rule_title(
             return format!("(governance: {})", owner.as_str());
         }
         return "(governance)".to_string();
+    }
+    // Policy Guard codes (PG000-PG008) are not registered as RuleDefinitions
+    // — they come from `check_policy_mutation`. Give them a meaningful label
+    // instead of the generic "(legacy)".
+    if rule_id.starts_with("PG") && rule_id[2..].chars().all(|c| c.is_ascii_digit()) {
+        return "(policy guard)".to_string();
     }
     "(legacy)".to_string()
 }
