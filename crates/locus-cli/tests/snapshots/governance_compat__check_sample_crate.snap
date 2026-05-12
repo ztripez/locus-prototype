@@ -12,33 +12,6 @@ warning[OT002]: `sample_crate::shadow::UserModel` is concept-shaped but not acce
   - field overlap with `User`: 100%
   fix: annotate as boundary: `// locus: ot boundary user <boundary-name>` above `UserModel`, or remove and use `sample_crate::identity::User` directly
 
-info[LOCUS002]: paradigm CF (Config/Data Ownership) has no definitions; rules cannot fire until you declare its concepts
-  --> locus.lock:1
-  concept: CF
-  - `paradigms.CF.config_paths` is empty — module patterns identifying the config layer (where env reads / decision constants legitimately live)
-  - vacant-by-definition: rules under CF cannot fire until at least one declaration list is populated
-  fix: populate `paradigms.CF` in `locus.lock` (use the matching `locus cf ...` mutators, or hand-edit), or add `"CF"` to `acknowledged_empty` in `locus.lock` to silence this paradigm
-
-info[LOCUS002]: paradigm FO (Feature Ownership) has no definitions; rules cannot fire until you declare its concepts
-  --> locus.lock:1
-  concept: FO
-  - `paradigms.FO.features` is empty — named feature regions (`name` + `module` pattern)
-  - `paradigms.FO.shared_paths` is empty — module patterns identifying shared cross-feature regions (FO004)
-  - vacant-by-definition: rules under FO cannot fire until at least one declaration list is populated
-  fix: populate `paradigms.FO` in `locus.lock` (use the matching `locus fo ...` mutators, or hand-edit), or add `"FO"` to `acknowledged_empty` in `locus.lock` to silence this paradigm
-
-info[LOCUS002]: paradigm RM (Responsibility Mixing) has no definitions; rules cannot fire until you declare its concepts
-  --> locus.lock:1
-  concept: RM
-  - `paradigms.RM.default_max_action_kinds` is empty — per-function cap on distinct action kinds (RM001)
-  - `paradigms.RM.converter_paths` is empty — module patterns for converter modules (RM002)
-  - `paradigms.RM.handler_paths` is empty — module patterns for orchestration handlers (RM003)
-  - `paradigms.RM.repository_paths` is empty — module patterns for repository modules (RM004)
-  - `paradigms.RM.validator_paths` is empty — module patterns for validator modules (RM005)
-  - `paradigms.RM.domain_paths_rm` is empty — module patterns for domain types (RM006)
-  - vacant-by-definition: rules under RM cannot fire until at least one declaration list is populated
-  fix: populate `paradigms.RM` in `locus.lock` (use the matching `locus rm ...` mutators, or hand-edit), or add `"RM"` to `acknowledged_empty` in `locus.lock` to silence this paradigm
-
 info[LOCUS002]: paradigm TA (Test Architecture Ownership) has no definitions; rules cannot fire until you declare its concepts
   --> locus.lock:1
   concept: TA
@@ -66,6 +39,6 @@ warning[PG007]: new exempt path `*::test::*` in `paradigms.CX.exempt_paths` lack
   - PG007 is unaffected by `--allow-policy-calibration`: calibration accepts the addition itself (PG003), but does not waive the requirement to record why, when to revisit, and who owns it
   fix: populate `reason` (why this exemption exists), `expires` (`YYYY-MM-DD` review date), and `owner` (team/individual). Use the struct form: `{"pattern": "…", "reason": "…", "expires": "YYYY-MM-DD", "owner": "…"}`.
 
-summary: 0 error(s), 3 warning(s), 5 advisory.
+summary: 0 error(s), 3 warning(s), 2 advisory.
 
 STDERR:

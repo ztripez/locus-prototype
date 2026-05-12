@@ -18,7 +18,7 @@
 // locus: ot canonical
 
 use super::Paradigm;
-use crate::diagnostics::{CheckMode, Diagnostic, vacant_paradigm_diagnostic};
+use crate::diagnostics::{CheckMode, Diagnostic};
 use crate::lockfile::Lockfile;
 use locus_air::AirWorkspace;
 
@@ -41,27 +41,15 @@ impl Paradigm for FeatureOwnership {
         // No automatic inference — feature regions are user-declared.
         serde_json::Value::Null
     }
-    fn check(&self, air: &AirWorkspace, lockfile: &Lockfile, mode: CheckMode) -> Vec<Diagnostic> {
-        let section: lockfile_schema::FoSection =
-            lockfile.paradigm_section(FO_PREFIX).unwrap_or_default();
-        if section.is_vacant() && !lockfile.is_acknowledged_empty(FO_PREFIX) {
-            return vec![vacant_paradigm_diagnostic(
-                FO_PREFIX,
-                "Feature Ownership",
-                &[
-                    (
-                        "features",
-                        "named feature regions (`name` + `module` pattern)",
-                    ),
-                    (
-                        "shared_paths",
-                        "module patterns identifying shared cross-feature regions (FO004)",
-                    ),
-                ],
-            )];
-        }
-        let mut diags = rules::fo001(air, &section, mode);
-        diags.extend(rules::fo004(air, &section, mode));
-        diags
+    fn check(
+        &self,
+        _air: &AirWorkspace,
+        _lockfile: &Lockfile,
+        _mode: CheckMode,
+    ) -> Vec<Diagnostic> {
+        // All FO rules migrated to RuleDefinition (#71 P4).
+        // Detection runs through the governance pipeline; this legacy
+        // path is now a no-op.
+        Vec::new()
     }
 }

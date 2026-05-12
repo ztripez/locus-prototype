@@ -122,7 +122,24 @@ impl ParadigmDefinition for BoParadigmDef {
         &RULES
     }
 }
-paradigm_def!(CfParadigmDef, "CF", "Config Data");
+// CF breaks out of the macro — 3 rules migrated (CF001/002/003 in #71 P4).
+pub struct CfParadigmDef;
+impl ParadigmDefinition for CfParadigmDef {
+    fn id(&self) -> ParadigmId {
+        ParadigmId::new("CF")
+    }
+    fn title(&self) -> &'static str {
+        "Config Data"
+    }
+    fn rules(&self) -> &'static [&'static dyn RuleDefinition] {
+        static RULES: [&dyn RuleDefinition; 3] = [
+            &crate::paradigms::config_data::rules::CF001_RULE,
+            &crate::paradigms::config_data::rules::CF002_RULE,
+            &crate::paradigms::config_data::rules::CF003_RULE,
+        ];
+        &RULES
+    }
+}
 pub struct CrParadigmDef;
 impl ParadigmDefinition for CrParadigmDef {
     fn id(&self) -> ParadigmId {
@@ -239,7 +256,23 @@ impl ParadigmDefinition for FlParadigmDef {
         &RULES
     }
 }
-paradigm_def!(FoParadigmDef, "FO", "Feature Ownership");
+// FO breaks out of the macro — 2 rules migrated (FO001/004 in #71 P4).
+pub struct FoParadigmDef;
+impl ParadigmDefinition for FoParadigmDef {
+    fn id(&self) -> ParadigmId {
+        ParadigmId::new("FO")
+    }
+    fn title(&self) -> &'static str {
+        "Feature Ownership"
+    }
+    fn rules(&self) -> &'static [&'static dyn RuleDefinition] {
+        static RULES: [&dyn RuleDefinition; 2] = [
+            &crate::paradigms::feature_ownership::rules::FO001_RULE,
+            &crate::paradigms::feature_ownership::rules::FO004_RULE,
+        ];
+        &RULES
+    }
+}
 
 pub struct MoParadigmDef;
 impl ParadigmDefinition for MoParadigmDef {
@@ -261,7 +294,25 @@ impl ParadigmDefinition for MoParadigmDef {
     }
 }
 
-paradigm_def!(ObParadigmDef, "OB", "Observability");
+// OB breaks out of the macro — 4 rules migrated (OB001/002/003/004 in #71 P4).
+pub struct ObParadigmDef;
+impl ParadigmDefinition for ObParadigmDef {
+    fn id(&self) -> ParadigmId {
+        ParadigmId::new("OB")
+    }
+    fn title(&self) -> &'static str {
+        "Observability"
+    }
+    fn rules(&self) -> &'static [&'static dyn RuleDefinition] {
+        static RULES: [&dyn RuleDefinition; 4] = [
+            &crate::paradigms::observability::rules::OB001_RULE,
+            &crate::paradigms::observability::rules::OB002_RULE,
+            &crate::paradigms::observability::rules::OB003_RULE,
+            &crate::paradigms::observability::rules::OB004_RULE,
+        ];
+        &RULES
+    }
+}
 // PA breaks out of the macro — 4 rules migrated (PA001/002/003/004 in #71 P4).
 pub struct PaParadigmDef;
 impl ParadigmDefinition for PaParadigmDef {
@@ -281,7 +332,27 @@ impl ParadigmDefinition for PaParadigmDef {
         &RULES
     }
 }
-paradigm_def!(RmParadigmDef, "RM", "Responsibility");
+// RM breaks out of the macro — 6 rules migrated (RM001–RM006 in #71 P4).
+pub struct RmParadigmDef;
+impl ParadigmDefinition for RmParadigmDef {
+    fn id(&self) -> ParadigmId {
+        ParadigmId::new("RM")
+    }
+    fn title(&self) -> &'static str {
+        "Responsibility"
+    }
+    fn rules(&self) -> &'static [&'static dyn RuleDefinition] {
+        static RULES: [&dyn RuleDefinition; 6] = [
+            &crate::paradigms::responsibility::rules::RM001_RULE,
+            &crate::paradigms::responsibility::rules::RM002_RULE,
+            &crate::paradigms::responsibility::rules::RM003_RULE,
+            &crate::paradigms::responsibility::rules::RM004_RULE,
+            &crate::paradigms::responsibility::rules::RM005_RULE,
+            &crate::paradigms::responsibility::rules::RM006_RULE,
+        ];
+        &RULES
+    }
+}
 // RW breaks out of the macro — 6 rules migrated (RW001–RW006 in #71 P4).
 pub struct RwParadigmDef;
 impl ParadigmDefinition for RwParadigmDef {

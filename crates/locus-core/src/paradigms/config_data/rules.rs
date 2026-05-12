@@ -376,6 +376,134 @@ fn strip_string_quotes(value: &str) -> &str {
     }
 }
 
+// ── RuleDefinition impls (governance spine migration, epic #71) ──────────────
+
+use crate::governance::finding::{FindingSource, RuleFinding};
+use crate::governance::ids::{ParadigmId, RuleId};
+use crate::governance::rule::{RuleContext, RuleDefinition};
+
+const CF_PARADIGM: ParadigmId = ParadigmId::new("CF");
+const CF001_ID: RuleId = RuleId::new("CF001");
+const CF002_ID: RuleId = RuleId::new("CF002");
+const CF003_ID: RuleId = RuleId::new("CF003");
+
+pub struct Cf001Rule;
+pub static CF001_RULE: Cf001Rule = Cf001Rule;
+
+impl RuleDefinition for Cf001Rule {
+    fn id(&self) -> RuleId {
+        CF001_ID
+    }
+    fn paradigm(&self) -> ParadigmId {
+        CF_PARADIGM
+    }
+    fn title(&self) -> &'static str {
+        "environment-variable read outside the config layer"
+    }
+    fn default_severity(&self) -> crate::diagnostics::Severity {
+        crate::diagnostics::Severity::Fatal
+    }
+    fn observe(&self, ctx: &RuleContext<'_>) -> Vec<RuleFinding> {
+        use super::lockfile_schema::CfSection;
+        let section: CfSection = ctx.lockfile.paradigm_section("CF").unwrap_or_default();
+        cf001(ctx.air, &section, ctx.mode)
+            .into_iter()
+            .map(|d| RuleFinding {
+                id: ctx.finding_ids.next(),
+                source: FindingSource::RegisteredRule(CF001_ID),
+                rule_id: Some(CF001_ID),
+                paradigm_id: Some(CF_PARADIGM),
+                default_severity: d.severity,
+                span: Some(d.span),
+                concept: d.concept,
+                message: d.message,
+                evidence: vec![],
+                why: d.why,
+                suggested_fix: d.suggested_fix,
+                diagnostic_code: None,
+            })
+            .collect()
+    }
+}
+
+pub struct Cf002Rule;
+pub static CF002_RULE: Cf002Rule = Cf002Rule;
+
+impl RuleDefinition for Cf002Rule {
+    fn id(&self) -> RuleId {
+        CF002_ID
+    }
+    fn paradigm(&self) -> ParadigmId {
+        CF_PARADIGM
+    }
+    fn title(&self) -> &'static str {
+        "magic decision constant in scrutinee outside the config layer"
+    }
+    fn default_severity(&self) -> crate::diagnostics::Severity {
+        crate::diagnostics::Severity::Warning
+    }
+    fn observe(&self, ctx: &RuleContext<'_>) -> Vec<RuleFinding> {
+        use super::lockfile_schema::CfSection;
+        let section: CfSection = ctx.lockfile.paradigm_section("CF").unwrap_or_default();
+        cf002(ctx.air, &section, ctx.mode)
+            .into_iter()
+            .map(|d| RuleFinding {
+                id: ctx.finding_ids.next(),
+                source: FindingSource::RegisteredRule(CF002_ID),
+                rule_id: Some(CF002_ID),
+                paradigm_id: Some(CF_PARADIGM),
+                default_severity: d.severity,
+                span: Some(d.span),
+                concept: d.concept,
+                message: d.message,
+                evidence: vec![],
+                why: d.why,
+                suggested_fix: d.suggested_fix,
+                diagnostic_code: None,
+            })
+            .collect()
+    }
+}
+
+pub struct Cf003Rule;
+pub static CF003_RULE: Cf003Rule = Cf003Rule;
+
+impl RuleDefinition for Cf003Rule {
+    fn id(&self) -> RuleId {
+        CF003_ID
+    }
+    fn paradigm(&self) -> ParadigmId {
+        CF_PARADIGM
+    }
+    fn title(&self) -> &'static str {
+        "hardcoded provider/model/topic ID outside the config layer"
+    }
+    fn default_severity(&self) -> crate::diagnostics::Severity {
+        crate::diagnostics::Severity::Warning
+    }
+    fn observe(&self, ctx: &RuleContext<'_>) -> Vec<RuleFinding> {
+        use super::lockfile_schema::CfSection;
+        let section: CfSection = ctx.lockfile.paradigm_section("CF").unwrap_or_default();
+        cf003(ctx.air, &section, ctx.mode)
+            .into_iter()
+            .map(|d| RuleFinding {
+                id: ctx.finding_ids.next(),
+                source: FindingSource::RegisteredRule(CF003_ID),
+                rule_id: Some(CF003_ID),
+                paradigm_id: Some(CF_PARADIGM),
+                default_severity: d.severity,
+                span: Some(d.span),
+                concept: d.concept,
+                message: d.message,
+                evidence: vec![],
+                why: d.why,
+                suggested_fix: d.suggested_fix,
+                diagnostic_code: None,
+            })
+            .collect()
+    }
+}
+
 #[cfg(test)]
 #[path = "rules_tests.rs"]
 mod rules_tests;
