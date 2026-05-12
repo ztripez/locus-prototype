@@ -7,12 +7,190 @@ use locus_air::AirSpan;
 // runs the same logic as `Ot002Rule::observe` post-cluster-build.
 use crate::governance::evidence::{Confidence, Evidence};
 use crate::governance::finding::RuleFinding;
-use crate::governance::ids::FindingIdMinter;
+use crate::governance::ids::{FindingIdMinter, RuleId};
+use crate::governance::registry::{ParadigmRegistry, RuleRegistry};
+use crate::governance::rule::{RuleContext, RuleDefinition};
+use crate::lockfile::Lockfile;
 use crate::paradigms::one_truth::rules::ot002::produce_findings_from_clusters;
 
 fn observe_ot002(clusters: &[ConceptCluster], mode: CheckMode) -> Vec<RuleFinding> {
     let minter = FindingIdMinter::new();
     produce_findings_from_clusters(clusters, mode, &minter)
+}
+
+fn observe_ot001(clusters: &[ConceptCluster]) -> Vec<RuleFinding> {
+    use crate::paradigms::one_truth::rules::ot001::produce_findings_from_clusters as ot001_clusters;
+    let minter = FindingIdMinter::new();
+    ot001_clusters(clusters, &minter)
+}
+
+fn make_lockfile_for_section(section: &OtSection) -> Lockfile {
+    let mut lf = Lockfile::default();
+    lf.paradigms.insert(
+        "OT".to_string(),
+        serde_json::to_value(section).expect("OtSection serializes"),
+    );
+    lf
+}
+
+fn ot003(air: &locus_air::AirWorkspace, section: &OtSection, mode: CheckMode) -> Vec<RuleFinding> {
+    let lf = make_lockfile_for_section(section);
+    let rules = RuleRegistry::standard();
+    let paradigms = ParadigmRegistry::empty();
+    let minter = FindingIdMinter::new();
+    let ctx = RuleContext {
+        air,
+        lockfile: &lf,
+        mode,
+        rule_registry: &rules,
+        paradigm_registry: &paradigms,
+        finding_ids: &minter,
+    };
+    ot003::Ot003Rule.observe(&ctx)
+}
+
+fn ot004(air: &locus_air::AirWorkspace, section: &OtSection, mode: CheckMode) -> Vec<RuleFinding> {
+    let lf = make_lockfile_for_section(section);
+    let rules = RuleRegistry::standard();
+    let paradigms = ParadigmRegistry::empty();
+    let minter = FindingIdMinter::new();
+    let ctx = RuleContext {
+        air,
+        lockfile: &lf,
+        mode,
+        rule_registry: &rules,
+        paradigm_registry: &paradigms,
+        finding_ids: &minter,
+    };
+    ot004::Ot004Rule.observe(&ctx)
+}
+
+fn ot005(air: &locus_air::AirWorkspace, section: &OtSection, mode: CheckMode) -> Vec<RuleFinding> {
+    let lf = make_lockfile_for_section(section);
+    let rules = RuleRegistry::standard();
+    let paradigms = ParadigmRegistry::empty();
+    let minter = FindingIdMinter::new();
+    let ctx = RuleContext {
+        air,
+        lockfile: &lf,
+        mode,
+        rule_registry: &rules,
+        paradigm_registry: &paradigms,
+        finding_ids: &minter,
+    };
+    ot005::Ot005Rule.observe(&ctx)
+}
+
+fn ot006(air: &locus_air::AirWorkspace, section: &OtSection, mode: CheckMode) -> Vec<RuleFinding> {
+    let lf = make_lockfile_for_section(section);
+    let rules = RuleRegistry::standard();
+    let paradigms = ParadigmRegistry::empty();
+    let minter = FindingIdMinter::new();
+    let ctx = RuleContext {
+        air,
+        lockfile: &lf,
+        mode,
+        rule_registry: &rules,
+        paradigm_registry: &paradigms,
+        finding_ids: &minter,
+    };
+    ot006::Ot006Rule.observe(&ctx)
+}
+
+fn ot007(air: &locus_air::AirWorkspace, section: &OtSection, mode: CheckMode) -> Vec<RuleFinding> {
+    let lf = make_lockfile_for_section(section);
+    let rules = RuleRegistry::standard();
+    let paradigms = ParadigmRegistry::empty();
+    let minter = FindingIdMinter::new();
+    let ctx = RuleContext {
+        air,
+        lockfile: &lf,
+        mode,
+        rule_registry: &rules,
+        paradigm_registry: &paradigms,
+        finding_ids: &minter,
+    };
+    ot007::Ot007Rule.observe(&ctx)
+}
+
+fn ot008(air: &locus_air::AirWorkspace, section: &OtSection, mode: CheckMode) -> Vec<RuleFinding> {
+    let lf = make_lockfile_for_section(section);
+    let rules = RuleRegistry::standard();
+    let paradigms = ParadigmRegistry::empty();
+    let minter = FindingIdMinter::new();
+    let ctx = RuleContext {
+        air,
+        lockfile: &lf,
+        mode,
+        rule_registry: &rules,
+        paradigm_registry: &paradigms,
+        finding_ids: &minter,
+    };
+    ot008::Ot008Rule.observe(&ctx)
+}
+
+fn ot009(air: &locus_air::AirWorkspace, section: &OtSection, mode: CheckMode) -> Vec<RuleFinding> {
+    let lf = make_lockfile_for_section(section);
+    let rules = RuleRegistry::standard();
+    let paradigms = ParadigmRegistry::empty();
+    let minter = FindingIdMinter::new();
+    let ctx = RuleContext {
+        air,
+        lockfile: &lf,
+        mode,
+        rule_registry: &rules,
+        paradigm_registry: &paradigms,
+        finding_ids: &minter,
+    };
+    ot009::Ot009Rule.observe(&ctx)
+}
+
+fn ot010(air: &locus_air::AirWorkspace, section: &OtSection, mode: CheckMode) -> Vec<RuleFinding> {
+    let lf = make_lockfile_for_section(section);
+    let rules = RuleRegistry::standard();
+    let paradigms = ParadigmRegistry::empty();
+    let minter = FindingIdMinter::new();
+    let ctx = RuleContext {
+        air,
+        lockfile: &lf,
+        mode,
+        rule_registry: &rules,
+        paradigm_registry: &paradigms,
+        finding_ids: &minter,
+    };
+    ot010::Ot010Rule.observe(&ctx)
+}
+
+fn ot011(air: &locus_air::AirWorkspace, section: &OtSection, mode: CheckMode) -> Vec<RuleFinding> {
+    let lf = make_lockfile_for_section(section);
+    let rules = RuleRegistry::standard();
+    let paradigms = ParadigmRegistry::empty();
+    let minter = FindingIdMinter::new();
+    let ctx = RuleContext {
+        air,
+        lockfile: &lf,
+        mode,
+        rule_registry: &rules,
+        paradigm_registry: &paradigms,
+        finding_ids: &minter,
+    };
+    ot011::Ot011Rule.observe(&ctx)
+}
+
+fn ot012(air: &locus_air::AirWorkspace, section: &OtSection, mode: CheckMode) -> Vec<RuleFinding> {
+    let lf = make_lockfile_for_section(section);
+    let rules = RuleRegistry::standard();
+    let paradigms = ParadigmRegistry::empty();
+    let minter = FindingIdMinter::new();
+    let ctx = RuleContext {
+        air,
+        lockfile: &lf,
+        mode,
+        rule_registry: &rules,
+        paradigm_registry: &paradigms,
+        finding_ids: &minter,
+    };
+    ot012::Ot012Rule.observe(&ctx)
 }
 
 fn member(
@@ -181,19 +359,19 @@ fn ot001_fires_on_two_canonicals_in_one_cluster() {
         ],
         confidence: 0.0,
     };
-    let diags = ot001(&[cluster], CheckMode::Human);
-    assert_eq!(diags.len(), 1, "one extra canonical → one diagnostic");
-    assert_eq!(diags[0].rule_id, "OT001");
-    assert_eq!(diags[0].severity, Severity::Fatal);
+    let findings = observe_ot001(&[cluster]);
+    assert_eq!(findings.len(), 1, "one extra canonical → one finding");
+    assert_eq!(findings[0].rule_id, Some(RuleId::new("OT001")));
+    assert_eq!(findings[0].default_severity, Severity::Fatal);
     assert!(
-        diags[0].message.contains("crate::b::User"),
+        findings[0].message.contains("crate::b::User"),
         "should flag the second canonical; got {}",
-        diags[0].message
+        findings[0].message
     );
     assert!(
-        diags[0].message.contains("crate::a::User"),
+        findings[0].message.contains("crate::a::User"),
         "should reference the incumbent; got {}",
-        diags[0].message
+        findings[0].message
     );
 }
 
@@ -209,11 +387,11 @@ fn ot001_emits_one_diag_per_extra_canonical() {
         ],
         confidence: 0.0,
     };
-    let diags = ot001(&[cluster], CheckMode::Human);
+    let findings = observe_ot001(&[cluster]);
     assert_eq!(
-        diags.len(),
+        findings.len(),
         2,
-        "three canonicals → two duplicate diagnostics"
+        "three canonicals → two duplicate findings"
     );
 }
 
@@ -234,7 +412,7 @@ fn ot001_silent_on_single_canonical() {
         ],
         confidence: 0.0,
     };
-    assert!(ot001(&[cluster], CheckMode::Human).is_empty());
+    assert!(observe_ot001(&[cluster]).is_empty());
 }
 
 // ---- OT006 ----
@@ -308,11 +486,11 @@ fn ot_section_with_user_concept(extra_converters: &[&str]) -> OtSection {
 fn ot006_fires_on_unaccepted_conversion_between_accepted_endpoints() {
     let air = air_with_conversion("crate::dto::sneaky_map", "UserDto", "User");
     let section = ot_section_with_user_concept(&[]);
-    let diags = ot006(&air, &section, CheckMode::Human);
-    assert_eq!(diags.len(), 1);
-    assert_eq!(diags[0].rule_id, "OT006");
-    assert_eq!(diags[0].severity, Severity::Warning);
-    assert!(diags[0].message.contains("crate::dto::sneaky_map"));
+    let findings = ot006(&air, &section, CheckMode::Human);
+    assert_eq!(findings.len(), 1);
+    assert_eq!(findings[0].rule_id, Some(RuleId::new("OT006")));
+    assert_eq!(findings[0].default_severity, Severity::Warning);
+    assert!(findings[0].message.contains("crate::dto::sneaky_map"));
 }
 
 #[test]
@@ -359,8 +537,8 @@ fn ot006_quiet_on_cross_concept_conversion() {
 fn ot006_agent_strict_elevates_to_fatal() {
     let air = air_with_conversion("crate::dto::sneaky_map", "UserDto", "User");
     let section = ot_section_with_user_concept(&[]);
-    let diags = ot006(&air, &section, CheckMode::AgentStrict);
-    assert_eq!(diags[0].severity, Severity::Fatal);
+    let findings = ot006(&air, &section, CheckMode::AgentStrict);
+    assert_eq!(findings[0].default_severity, Severity::Fatal);
 }
 
 // ---- type_text_references helper ----
@@ -506,12 +684,12 @@ fn ot003_fires_on_boundary_param_in_non_boundary_file() {
     ]);
     let section =
         section_with_canonical_and_boundary("crate::identity::User", "crate::dto::UserDto", &[]);
-    let diags = ot003(&air, &section, CheckMode::Human);
-    assert_eq!(diags.len(), 1);
-    assert_eq!(diags[0].rule_id, "OT003");
-    assert_eq!(diags[0].severity, Severity::Fatal);
-    assert!(diags[0].message.contains("UserDto"));
-    assert!(diags[0].message.contains("create_user"));
+    let findings = ot003(&air, &section, CheckMode::Human);
+    assert_eq!(findings.len(), 1);
+    assert_eq!(findings[0].rule_id, Some(RuleId::new("OT003")));
+    assert_eq!(findings[0].default_severity, Severity::Fatal);
+    assert!(findings[0].message.contains("UserDto"));
+    assert!(findings[0].message.contains("create_user"));
 }
 
 #[test]
@@ -612,9 +790,9 @@ fn ot003_emits_one_diag_per_boundary_per_function() {
     ]);
     let section =
         section_with_canonical_and_boundary("crate::identity::User", "crate::dto::UserDto", &[]);
-    let diags = ot003(&air, &section, CheckMode::Human);
+    let findings = ot003(&air, &section, CheckMode::Human);
     assert_eq!(
-        diags.len(),
+        findings.len(),
         1,
         "expected exactly one OT003 per (fn, boundary)"
     );
@@ -657,11 +835,11 @@ fn ot004_fires_on_canonical_construction_outside_owner_and_converter() {
     ]);
     let section =
         section_with_canonical_and_boundary("crate::identity::User", "crate::dto::UserDto", &[]);
-    let diags = ot004(&air, &section, CheckMode::Human);
-    assert_eq!(diags.len(), 1);
-    assert_eq!(diags[0].rule_id, "OT004");
-    assert_eq!(diags[0].severity, Severity::Fatal);
-    assert!(diags[0].message.contains("crate::identity::User"));
+    let findings = ot004(&air, &section, CheckMode::Human);
+    assert_eq!(findings.len(), 1);
+    assert_eq!(findings[0].rule_id, Some(RuleId::new("OT004")));
+    assert_eq!(findings[0].default_severity, Severity::Fatal);
+    assert!(findings[0].message.contains("crate::identity::User"));
 }
 
 #[test]
@@ -749,11 +927,11 @@ fn ot004_quiet_for_crate_level_converter_path() {
     // One pattern covers the whole adapter crate.
     section.converter_paths.push("adapter_crate::*".into());
 
-    let diags = ot004(&air, &section, CheckMode::Human);
+    let findings = ot004(&air, &section, CheckMode::Human);
     assert!(
-        diags.is_empty(),
+        findings.is_empty(),
         "crate-level converter_paths pattern `adapter_crate::*` must silence \
-         every OT004 inside the adapter crate; got {diags:#?}",
+         every OT004 inside the adapter crate; got {findings:#?}",
     );
 }
 
@@ -788,14 +966,14 @@ fn ot004_fires_outside_crate_level_converter_path() {
     );
     section.converter_paths.push("adapter_crate::*".into());
 
-    let diags = ot004(&air, &section, CheckMode::Human);
+    let findings = ot004(&air, &section, CheckMode::Human);
     assert_eq!(
-        diags.len(),
+        findings.len(),
         1,
         "construction in `other_crate` is outside the `adapter_crate::*` grant \
-         and must still fire OT004; got {diags:#?}",
+         and must still fire OT004; got {findings:#?}",
     );
-    assert!(diags[0].message.contains("User"));
+    assert!(findings[0].message.contains("User"));
 }
 
 #[test]
@@ -861,15 +1039,18 @@ fn ot005_fires_when_boundary_has_no_converter() {
         "crate::dto::UserDto",
         &[], // no converters accepted
     );
-    let diags = ot005(&air, &section, CheckMode::Human);
-    assert_eq!(diags.len(), 1);
-    assert_eq!(diags[0].rule_id, "OT005");
-    assert_eq!(diags[0].severity, Severity::Fatal);
-    assert!(diags[0].message.contains("UserDto"));
+    let findings = ot005(&air, &section, CheckMode::Human);
+    assert_eq!(findings.len(), 1);
+    assert_eq!(findings[0].rule_id, Some(RuleId::new("OT005")));
+    assert_eq!(findings[0].default_severity, Severity::Fatal);
+    assert!(findings[0].message.contains("UserDto"));
     assert!(
-        diags[0].span.file.ends_with("src/dto.rs"),
-        "should pin to the boundary's defining file; got {}",
-        diags[0].span.file
+        findings[0]
+            .span
+            .as_ref()
+            .is_some_and(|s| s.file.ends_with("src/dto.rs")),
+        "should pin to the boundary's defining file; got {:?}",
+        findings[0].span
     );
 }
 
@@ -989,14 +1170,14 @@ fn ot007_fires_on_adapter_to_adapter() {
         ("crate::api::v1::UserDtoV1", "api.v1"),
         ("crate::api::v2::UserDtoV2", "api.v2"),
     );
-    let diags = ot007(&air, &section, CheckMode::Human);
-    assert_eq!(diags.len(), 1);
-    assert_eq!(diags[0].rule_id, "OT007");
-    assert_eq!(diags[0].severity, Severity::Fatal);
+    let findings = ot007(&air, &section, CheckMode::Human);
+    assert_eq!(findings.len(), 1);
+    assert_eq!(findings[0].rule_id, Some(RuleId::new("OT007")));
+    assert_eq!(findings[0].default_severity, Severity::Fatal);
     assert!(
-        diags[0].message.contains("UserDtoV1") && diags[0].message.contains("UserDtoV2"),
+        findings[0].message.contains("UserDtoV1") && findings[0].message.contains("UserDtoV2"),
         "message: {}",
-        diags[0].message
+        findings[0].message
     );
 }
 
@@ -1103,8 +1284,8 @@ fn ot004_matches_path_qualified_target() {
     ]);
     let section =
         section_with_canonical_and_boundary("crate::identity::User", "crate::dto::UserDto", &[]);
-    let diags = ot004(&air, &section, CheckMode::Human);
-    assert_eq!(diags.len(), 1);
+    let findings = ot004(&air, &section, CheckMode::Human);
+    assert_eq!(findings.len(), 1);
 }
 
 // ---- OT008 / OT009 / OT010 / OT011 / OT012 helpers ----
@@ -1188,11 +1369,11 @@ fn ot008_fires_on_domain_method_on_boundary_inherent_impl() {
     )]);
     let section =
         section_with_canonical_and_boundary("crate::identity::User", "crate::dto::UserDto", &[]);
-    let diags = ot008(&air, &section, CheckMode::Human);
-    assert_eq!(diags.len(), 1, "expected one diagnostic; got {diags:?}");
-    assert_eq!(diags[0].rule_id, "OT008");
-    assert_eq!(diags[0].severity, Severity::Warning);
-    assert!(diags[0].message.contains("is_active"));
+    let findings = ot008(&air, &section, CheckMode::Human);
+    assert_eq!(findings.len(), 1, "expected one finding; got {findings:?}");
+    assert_eq!(findings[0].rule_id, Some(RuleId::new("OT008")));
+    assert_eq!(findings[0].default_severity, Severity::Warning);
+    assert!(findings[0].message.contains("is_active"));
 }
 
 #[test]
@@ -1245,9 +1426,9 @@ fn ot008_agent_strict_elevates_to_fatal() {
     )]);
     let section =
         section_with_canonical_and_boundary("crate::identity::User", "crate::dto::UserDto", &[]);
-    let diags = ot008(&air, &section, CheckMode::AgentStrict);
-    assert_eq!(diags.len(), 1);
-    assert_eq!(diags[0].severity, Severity::Fatal);
+    let findings = ot008(&air, &section, CheckMode::AgentStrict);
+    assert_eq!(findings.len(), 1);
+    assert_eq!(findings[0].default_severity, Severity::Fatal);
 }
 
 // ---- OT009 ----
@@ -1275,10 +1456,14 @@ fn ot009_fires_on_validate_function_outside_owner_module() {
     ]);
     let section =
         section_with_canonical_and_boundary("crate::identity::User", "crate::dto::UserDto", &[]);
-    let diags = ot009(&air, &section, CheckMode::Human);
-    assert_eq!(diags.len(), 1, "expected OT009 to fire; got {diags:?}");
-    assert_eq!(diags[0].rule_id, "OT009");
-    assert_eq!(diags[0].severity, Severity::Warning);
+    let findings = ot009(&air, &section, CheckMode::Human);
+    assert_eq!(
+        findings.len(),
+        1,
+        "expected OT009 to fire; got {findings:?}"
+    );
+    assert_eq!(findings[0].rule_id, Some(RuleId::new("OT009")));
+    assert_eq!(findings[0].default_severity, Severity::Warning);
 }
 
 #[test]
@@ -1380,9 +1565,9 @@ fn ot009_agent_strict_elevates_to_fatal() {
     ]);
     let section =
         section_with_canonical_and_boundary("crate::identity::User", "crate::dto::UserDto", &[]);
-    let diags = ot009(&air, &section, CheckMode::AgentStrict);
-    assert_eq!(diags.len(), 1);
-    assert_eq!(diags[0].severity, Severity::Fatal);
+    let findings = ot009(&air, &section, CheckMode::AgentStrict);
+    assert_eq!(findings.len(), 1);
+    assert_eq!(findings[0].default_severity, Severity::Fatal);
 }
 
 // ---- OT010 ----
@@ -1428,11 +1613,11 @@ fn ot010_fires_on_overlapping_unaccepted_enum() {
             ..Default::default()
         }
     };
-    let diags = ot010(&air, &section, CheckMode::Human);
-    assert_eq!(diags.len(), 1);
-    assert_eq!(diags[0].rule_id, "OT010");
-    assert_eq!(diags[0].severity, Severity::Warning);
-    assert!(diags[0].message.contains("UserState"));
+    let findings = ot010(&air, &section, CheckMode::Human);
+    assert_eq!(findings.len(), 1);
+    assert_eq!(findings[0].rule_id, Some(RuleId::new("OT010")));
+    assert_eq!(findings[0].default_severity, Severity::Warning);
+    assert!(findings[0].message.contains("UserState"));
 }
 
 #[test]
@@ -1538,10 +1723,10 @@ fn ot011_fires_on_shadow_newtype_with_same_name() {
             ..Default::default()
         }
     };
-    let diags = ot011(&air, &section, CheckMode::Human);
-    assert_eq!(diags.len(), 1);
-    assert_eq!(diags[0].rule_id, "OT011");
-    assert!(diags[0].message.contains("crate::dto::UserId"));
+    let findings = ot011(&air, &section, CheckMode::Human);
+    assert_eq!(findings.len(), 1);
+    assert_eq!(findings[0].rule_id, Some(RuleId::new("OT011")));
+    assert!(findings[0].message.contains("crate::dto::UserId"));
 }
 
 #[test]
@@ -1620,12 +1805,12 @@ fn ot012_fires_on_primitive_field_named_after_canonical() {
             ..Default::default()
         }
     };
-    let diags = ot012(&air, &section, CheckMode::Human);
-    assert_eq!(diags.len(), 1);
-    assert_eq!(diags[0].rule_id, "OT012");
-    assert_eq!(diags[0].severity, Severity::Warning);
-    assert!(diags[0].message.contains("user_id"));
-    assert!(diags[0].message.contains("String"));
+    let findings = ot012(&air, &section, CheckMode::Human);
+    assert_eq!(findings.len(), 1);
+    assert_eq!(findings[0].rule_id, Some(RuleId::new("OT012")));
+    assert_eq!(findings[0].default_severity, Severity::Warning);
+    assert!(findings[0].message.contains("user_id"));
+    assert!(findings[0].message.contains("String"));
 }
 
 #[test]

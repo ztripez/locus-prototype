@@ -12,9 +12,43 @@ use std::collections::BTreeMap;
 use locus_air::{AirItem, AirWorkspace, TypeKind};
 
 use super::super::lockfile_schema::OtSection;
-use crate::diagnostics::{CheckMode, Diagnostic, Severity};
+use crate::diagnostics::{CheckMode, Severity};
+use crate::governance::finding::{FindingSource, RuleFinding};
+use crate::governance::ids::{FindingIdMinter, ParadigmId, RuleId};
+use crate::governance::rule::{RuleContext, RuleDefinition};
 
-pub fn ot011(air: &AirWorkspace, section: &OtSection, mode: CheckMode) -> Vec<Diagnostic> {
+pub struct Ot011Rule;
+
+pub static OT011_RULE: Ot011Rule = Ot011Rule;
+
+const OT011_ID: RuleId = RuleId::new("OT011");
+const OT_PARADIGM: ParadigmId = ParadigmId::new("OT");
+
+impl RuleDefinition for Ot011Rule {
+    fn id(&self) -> RuleId {
+        OT011_ID
+    }
+    fn paradigm(&self) -> ParadigmId {
+        OT_PARADIGM
+    }
+    fn title(&self) -> &'static str {
+        "shadow newtype / value object"
+    }
+    fn default_severity(&self) -> Severity {
+        Severity::Warning
+    }
+    fn observe(&self, ctx: &RuleContext<'_>) -> Vec<RuleFinding> {
+        let section: OtSection = ctx.lockfile.paradigm_section("OT").unwrap_or_default();
+        produce_findings(ctx.air, &section, ctx.mode, ctx.finding_ids)
+    }
+}
+
+pub(crate) fn produce_findings(
+    air: &AirWorkspace,
+    section: &OtSection,
+    mode: CheckMode,
+    finding_ids: &FindingIdMinter,
+) -> Vec<RuleFinding> {
     let mut canonical_short: BTreeMap<String, (String, String)> = BTreeMap::new(); // short → (concept, full)
     for (concept_id, entry) in &section.concepts {
         let symbol = &entry.canonical.symbol;
@@ -50,12 +84,13 @@ pub fn ot011(air: &AirWorkspace, section: &OtSection, mode: CheckMode) -> Vec<Di
                 if &ty.symbol == canonical_symbol {
                     continue; // canonical itself, just not accepted under that concept yet
                 }
-                out.push(ot011_diagnostic(
+                out.push(ot011_finding(
                     ty,
                     concept_id,
                     canonical_symbol,
                     confidence,
                     severity,
+                    finding_ids,
                 ));
             }
         }
@@ -63,23 +98,28 @@ pub fn ot011(air: &AirWorkspace, section: &OtSection, mode: CheckMode) -> Vec<Di
     out
 }
 
-fn ot011_diagnostic(
+fn ot011_finding(
     ty: &locus_air::AirType,
     concept_id: &str,
     canonical_symbol: &str,
     confidence: f32,
     severity: Severity,
-) -> Diagnostic {
-    Diagnostic {
-        rule_id: "OT011".to_string(),
-        severity,
-        span: ty.span.clone(),
+    finding_ids: &FindingIdMinter,
+) -> RuleFinding {
+    RuleFinding {
+        id: finding_ids.next(),
+        source: FindingSource::RegisteredRule(OT011_ID),
+        rule_id: Some(OT011_ID),
+        paradigm_id: Some(OT_PARADIGM),
+        default_severity: severity,
+        span: Some(ty.span.clone()),
         concept: Some(concept_id.to_string()),
         message: format!(
             "newtype `{}` shadows accepted canonical `{canonical_symbol}` \
              (concept `{concept_id}`)",
             ty.symbol
         ),
+        evidence: vec![],
         why: vec![
             format!("single-field struct named `{}`", ty.name),
             format!("canonical for `{concept_id}`: `{canonical_symbol}`"),
@@ -91,5 +131,6 @@ fn ot011_diagnostic(
              `// locus: ot boundary {concept_id} <name>` then rerun `locus init`",
             ty.symbol
         )),
+        diagnostic_code: None,
     }
 }

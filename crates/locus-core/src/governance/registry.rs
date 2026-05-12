@@ -46,7 +46,18 @@ impl RuleRegistry {
                 &crate::paradigms::dependency_graph::rules::dg002::DG002_RULE,
                 &crate::paradigms::dependency_graph::rules::dg003::DG003_RULE,
                 &crate::paradigms::dependency_graph::rules::dg004::DG004_RULE,
+                &crate::paradigms::one_truth::rules::ot001::OT001_RULE,
                 &crate::paradigms::one_truth::rules::ot002::OT002_RULE,
+                &crate::paradigms::one_truth::rules::ot003::OT003_RULE,
+                &crate::paradigms::one_truth::rules::ot004::OT004_RULE,
+                &crate::paradigms::one_truth::rules::ot005::OT005_RULE,
+                &crate::paradigms::one_truth::rules::ot006::OT006_RULE,
+                &crate::paradigms::one_truth::rules::ot007::OT007_RULE,
+                &crate::paradigms::one_truth::rules::ot008::OT008_RULE,
+                &crate::paradigms::one_truth::rules::ot009::OT009_RULE,
+                &crate::paradigms::one_truth::rules::ot010::OT010_RULE,
+                &crate::paradigms::one_truth::rules::ot011::OT011_RULE,
+                &crate::paradigms::one_truth::rules::ot012::OT012_RULE,
             ],
         };
         debug_assert!(
@@ -437,7 +448,24 @@ mod tests {
             .find(&ParadigmId::new("OT"))
             .expect("OT ParadigmDefinition missing");
         let rule_ids: Vec<&str> = ot.rules().iter().map(|r| r.id().as_str()).collect();
-        assert_eq!(rule_ids, vec!["OT002"]);
+        assert_eq!(
+            rule_ids,
+            vec![
+                "OT001", "OT002", "OT003", "OT004", "OT005", "OT006", "OT007", "OT008", "OT009",
+                "OT010", "OT011", "OT012"
+            ]
+        );
+    }
+
+    #[test]
+    fn rule_registry_contains_all_ot_rules() {
+        let reg = RuleRegistry::standard();
+        for code in [
+            "OT001", "OT003", "OT004", "OT005", "OT006", "OT007", "OT008", "OT009", "OT010",
+            "OT011", "OT012",
+        ] {
+            assert!(reg.contains_code(code), "{code} missing from registry");
+        }
     }
 
     #[test]

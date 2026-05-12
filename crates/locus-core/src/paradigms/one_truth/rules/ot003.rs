@@ -16,7 +16,36 @@ use locus_air::{AirItem, AirWorkspace};
 
 use super::super::lockfile_schema::OtSection;
 use super::helpers::{file_of_symbol, type_text_references};
-use crate::diagnostics::{CheckMode, Diagnostic, Severity};
+use crate::diagnostics::{CheckMode, Severity};
+use crate::governance::finding::{FindingSource, RuleFinding};
+use crate::governance::ids::{FindingIdMinter, ParadigmId, RuleId};
+use crate::governance::rule::{RuleContext, RuleDefinition};
+
+pub struct Ot003Rule;
+
+pub static OT003_RULE: Ot003Rule = Ot003Rule;
+
+const OT003_ID: RuleId = RuleId::new("OT003");
+const OT_PARADIGM: ParadigmId = ParadigmId::new("OT");
+
+impl RuleDefinition for Ot003Rule {
+    fn id(&self) -> RuleId {
+        OT003_ID
+    }
+    fn paradigm(&self) -> ParadigmId {
+        OT_PARADIGM
+    }
+    fn title(&self) -> &'static str {
+        "boundary adapter leak"
+    }
+    fn default_severity(&self) -> Severity {
+        Severity::Fatal
+    }
+    fn observe(&self, ctx: &RuleContext<'_>) -> Vec<RuleFinding> {
+        let section: OtSection = ctx.lockfile.paradigm_section("OT").unwrap_or_default();
+        produce_findings(ctx.air, &section, ctx.mode, ctx.finding_ids)
+    }
+}
 
 /// Collect the boundary context for OT003:
 /// - boundary_files: set of file paths that define accepted boundary symbols
@@ -40,19 +69,20 @@ fn collect_ot003_boundaries(
     (boundary_files, boundary_short_names)
 }
 
-/// Scan one function for OT003 hits; push diagnostics into `out`.
+/// Scan one function for OT003 hits; push findings into `out`.
 fn ot003_scan_function(
     f: &locus_air::AirFunction,
     boundary_short_names: &[(String, String)],
     accepted_converters: &BTreeSet<&str>,
     mode: CheckMode,
-    out: &mut Vec<Diagnostic>,
+    finding_ids: &FindingIdMinter,
+    out: &mut Vec<RuleFinding>,
 ) {
     if accepted_converters.contains(f.symbol.as_str()) {
         return;
     }
     // Aggregate every boundary referenced in any signature slot; one
-    // diagnostic per (function, boundary) is enough.
+    // finding per (function, boundary) is enough.
     let mut hits: BTreeMap<String, String> = BTreeMap::new();
     for (_, ty_text) in &f.params {
         for (short, concept) in boundary_short_names {
@@ -69,11 +99,16 @@ fn ot003_scan_function(
         }
     }
     for (short, concept) in hits {
-        out.push(ot003_diagnostic(f, &short, &concept, mode));
+        out.push(ot003_finding(f, &short, &concept, mode, finding_ids));
     }
 }
 
-pub fn ot003(air: &AirWorkspace, section: &OtSection, mode: CheckMode) -> Vec<Diagnostic> {
+pub(crate) fn produce_findings(
+    air: &AirWorkspace,
+    section: &OtSection,
+    mode: CheckMode,
+    finding_ids: &FindingIdMinter,
+) -> Vec<RuleFinding> {
     let (boundary_files, boundary_short_names) = collect_ot003_boundaries(air, section);
     if boundary_short_names.is_empty() {
         return Vec::new();
@@ -99,6 +134,7 @@ pub fn ot003(air: &AirWorkspace, section: &OtSection, mode: CheckMode) -> Vec<Di
                     &boundary_short_names,
                     &accepted_converters,
                     mode,
+                    finding_ids,
                     &mut out,
                 );
             }
@@ -107,16 +143,20 @@ pub fn ot003(air: &AirWorkspace, section: &OtSection, mode: CheckMode) -> Vec<Di
     out
 }
 
-fn ot003_diagnostic(
+fn ot003_finding(
     f: &locus_air::AirFunction,
     short: &str,
     concept: &str,
     mode: CheckMode,
-) -> Diagnostic {
-    Diagnostic {
-        rule_id: "OT003".to_string(),
-        severity: mode.elevate(Severity::Fatal),
-        span: f.span.clone(),
+    finding_ids: &FindingIdMinter,
+) -> RuleFinding {
+    RuleFinding {
+        id: finding_ids.next(),
+        source: FindingSource::RegisteredRule(OT003_ID),
+        rule_id: Some(OT003_ID),
+        paradigm_id: Some(OT_PARADIGM),
+        default_severity: mode.elevate(Severity::Fatal),
+        span: Some(f.span.clone()),
         concept: Some(concept.to_string()),
         message: format!(
             "function `{}` exposes boundary type `{}` in its signature; \
@@ -124,6 +164,7 @@ fn ot003_diagnostic(
              domain/application code",
             f.symbol, short
         ),
+        evidence: vec![],
         why: vec![
             format!(
                 "file `{}` is not a boundary file (no accepted boundary lives here)",
@@ -137,5 +178,6 @@ fn ot003_diagnostic(
              `let domain = canonical_for_{concept}::try_from(value)?;`, \
              then take the canonical type in this signature instead"
         )),
+        diagnostic_code: None,
     }
 }

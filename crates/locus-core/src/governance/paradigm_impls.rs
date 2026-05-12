@@ -26,8 +26,7 @@ macro_rules! paradigm_def {
     };
 }
 
-// OT breaks out of the macro — second paradigm with a migrated rule
-// (OT002 in P2 #71), so `rules()` returns a non-empty slice.
+// OT breaks out of the macro — all 12 rules migrated to RuleDefinition (#71 P4).
 pub struct OtParadigmDef;
 impl ParadigmDefinition for OtParadigmDef {
     fn id(&self) -> ParadigmId {
@@ -37,8 +36,20 @@ impl ParadigmDefinition for OtParadigmDef {
         "Canonical Domain Ownership"
     }
     fn rules(&self) -> &'static [&'static dyn RuleDefinition] {
-        static RULES: [&dyn RuleDefinition; 1] =
-            [&crate::paradigms::one_truth::rules::ot002::OT002_RULE];
+        static RULES: [&dyn RuleDefinition; 12] = [
+            &crate::paradigms::one_truth::rules::ot001::OT001_RULE,
+            &crate::paradigms::one_truth::rules::ot002::OT002_RULE,
+            &crate::paradigms::one_truth::rules::ot003::OT003_RULE,
+            &crate::paradigms::one_truth::rules::ot004::OT004_RULE,
+            &crate::paradigms::one_truth::rules::ot005::OT005_RULE,
+            &crate::paradigms::one_truth::rules::ot006::OT006_RULE,
+            &crate::paradigms::one_truth::rules::ot007::OT007_RULE,
+            &crate::paradigms::one_truth::rules::ot008::OT008_RULE,
+            &crate::paradigms::one_truth::rules::ot009::OT009_RULE,
+            &crate::paradigms::one_truth::rules::ot010::OT010_RULE,
+            &crate::paradigms::one_truth::rules::ot011::OT011_RULE,
+            &crate::paradigms::one_truth::rules::ot012::OT012_RULE,
+        ];
         &RULES
     }
 }

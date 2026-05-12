@@ -17,9 +17,43 @@ use locus_air::{AirItem, AirSpan, AirWorkspace, HintKind};
 
 use super::super::lockfile_schema::OtSection;
 use super::helpers::short_name;
-use crate::diagnostics::{CheckMode, Diagnostic, Severity};
+use crate::diagnostics::{CheckMode, Severity};
+use crate::governance::finding::{FindingSource, RuleFinding};
+use crate::governance::ids::{FindingIdMinter, ParadigmId, RuleId};
+use crate::governance::rule::{RuleContext, RuleDefinition};
 
-pub fn ot007(air: &AirWorkspace, section: &OtSection, mode: CheckMode) -> Vec<Diagnostic> {
+pub struct Ot007Rule;
+
+pub static OT007_RULE: Ot007Rule = Ot007Rule;
+
+const OT007_ID: RuleId = RuleId::new("OT007");
+const OT_PARADIGM: ParadigmId = ParadigmId::new("OT");
+
+impl RuleDefinition for Ot007Rule {
+    fn id(&self) -> RuleId {
+        OT007_ID
+    }
+    fn paradigm(&self) -> ParadigmId {
+        OT_PARADIGM
+    }
+    fn title(&self) -> &'static str {
+        "adapter-to-adapter conversion"
+    }
+    fn default_severity(&self) -> Severity {
+        Severity::Fatal
+    }
+    fn observe(&self, ctx: &RuleContext<'_>) -> Vec<RuleFinding> {
+        let section: OtSection = ctx.lockfile.paradigm_section("OT").unwrap_or_default();
+        produce_findings(ctx.air, &section, ctx.mode, ctx.finding_ids)
+    }
+}
+
+pub(crate) fn produce_findings(
+    air: &AirWorkspace,
+    section: &OtSection,
+    mode: CheckMode,
+    finding_ids: &FindingIdMinter,
+) -> Vec<RuleFinding> {
     let mut boundary_to_concept: BTreeMap<String, String> = BTreeMap::new();
     for (concept_id, entry) in &section.concepts {
         for b in &entry.boundaries {
@@ -50,13 +84,14 @@ pub fn ot007(air: &AirWorkspace, section: &OtSection, mode: CheckMode) -> Vec<Di
                     continue;
                 }
 
-                out.push(ot007_diagnostic(
+                out.push(ot007_finding(
                     c,
                     from_short,
                     to_short,
                     from_concept,
                     to_concept,
                     mode,
+                    finding_ids,
                 ));
             }
         }
@@ -64,29 +99,34 @@ pub fn ot007(air: &AirWorkspace, section: &OtSection, mode: CheckMode) -> Vec<Di
     out
 }
 
-fn ot007_diagnostic(
+fn ot007_finding(
     c: &locus_air::AirConversion,
     from_short: &str,
     to_short: &str,
     from_concept: &str,
     to_concept: &str,
     mode: CheckMode,
-) -> Diagnostic {
+    finding_ids: &FindingIdMinter,
+) -> RuleFinding {
     let cross_label = if from_concept == to_concept {
         "within the same concept".to_string()
     } else {
         format!("across concepts (`{from_concept}` → `{to_concept}`)")
     };
-    Diagnostic {
-        rule_id: "OT007".to_string(),
-        severity: mode.elevate(Severity::Fatal),
-        span: c.span.clone(),
+    RuleFinding {
+        id: finding_ids.next(),
+        source: FindingSource::RegisteredRule(OT007_ID),
+        rule_id: Some(OT007_ID),
+        paradigm_id: Some(OT_PARADIGM),
+        default_severity: mode.elevate(Severity::Fatal),
+        span: Some(c.span.clone()),
         concept: Some(from_concept.to_string()),
         message: format!(
             "adapter-to-adapter conversion `{}` ({} → {}) — both endpoints \
              are accepted boundaries",
             c.symbol, c.from, c.to
         ),
+        evidence: vec![],
         why: vec![
             format!("`{from_short}` is a boundary for `{from_concept}`"),
             format!("`{to_short}` is a boundary for `{to_concept}`"),
@@ -100,6 +140,7 @@ fn ot007_diagnostic(
              intentional shortcut"
                 .into(),
         ),
+        diagnostic_code: None,
     }
 }
 

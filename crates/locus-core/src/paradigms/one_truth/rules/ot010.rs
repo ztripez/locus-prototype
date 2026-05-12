@@ -15,9 +15,43 @@ use locus_air::{AirItem, AirWorkspace, TypeKind};
 
 use super::super::infer::FIELD_OVERLAP_THRESHOLD;
 use super::super::lockfile_schema::OtSection;
-use crate::diagnostics::{CheckMode, Diagnostic, Severity};
+use crate::diagnostics::{CheckMode, Severity};
+use crate::governance::finding::{FindingSource, RuleFinding};
+use crate::governance::ids::{FindingIdMinter, ParadigmId, RuleId};
+use crate::governance::rule::{RuleContext, RuleDefinition};
 
-pub fn ot010(air: &AirWorkspace, section: &OtSection, mode: CheckMode) -> Vec<Diagnostic> {
+pub struct Ot010Rule;
+
+pub static OT010_RULE: Ot010Rule = Ot010Rule;
+
+const OT010_ID: RuleId = RuleId::new("OT010");
+const OT_PARADIGM: ParadigmId = ParadigmId::new("OT");
+
+impl RuleDefinition for Ot010Rule {
+    fn id(&self) -> RuleId {
+        OT010_ID
+    }
+    fn paradigm(&self) -> ParadigmId {
+        OT_PARADIGM
+    }
+    fn title(&self) -> &'static str {
+        "shadow enum"
+    }
+    fn default_severity(&self) -> Severity {
+        Severity::Warning
+    }
+    fn observe(&self, ctx: &RuleContext<'_>) -> Vec<RuleFinding> {
+        let section: OtSection = ctx.lockfile.paradigm_section("OT").unwrap_or_default();
+        produce_findings(ctx.air, &section, ctx.mode, ctx.finding_ids)
+    }
+}
+
+pub(crate) fn produce_findings(
+    air: &AirWorkspace,
+    section: &OtSection,
+    mode: CheckMode,
+    finding_ids: &FindingIdMinter,
+) -> Vec<RuleFinding> {
     // Collect every accepted canonical enum's variant set.
     let mut canonical_enums: Vec<(String, String, BTreeSet<String>)> = Vec::new(); // (concept, symbol, variants)
     for (concept_id, entry) in &section.concepts {
@@ -64,7 +98,7 @@ pub fn ot010(air: &AirWorkspace, section: &OtSection, mode: CheckMode) -> Vec<Di
                     if overlap < FIELD_OVERLAP_THRESHOLD {
                         continue;
                     }
-                    out.push(ot010_diagnostic(
+                    out.push(ot010_finding(
                         ty,
                         &candidate_variants,
                         canonical_symbol,
@@ -73,6 +107,7 @@ pub fn ot010(air: &AirWorkspace, section: &OtSection, mode: CheckMode) -> Vec<Di
                         overlap,
                         confidence,
                         severity,
+                        finding_ids,
                     ));
                     break;
                 }
@@ -83,7 +118,7 @@ pub fn ot010(air: &AirWorkspace, section: &OtSection, mode: CheckMode) -> Vec<Di
 }
 
 #[allow(clippy::too_many_arguments)]
-fn ot010_diagnostic(
+fn ot010_finding(
     ty: &locus_air::AirType,
     candidate_variants: &BTreeSet<String>,
     canonical_symbol: &str,
@@ -92,11 +127,15 @@ fn ot010_diagnostic(
     overlap: f32,
     confidence: f32,
     severity: Severity,
-) -> Diagnostic {
-    Diagnostic {
-        rule_id: "OT010".to_string(),
-        severity,
-        span: ty.span.clone(),
+    finding_ids: &FindingIdMinter,
+) -> RuleFinding {
+    RuleFinding {
+        id: finding_ids.next(),
+        source: FindingSource::RegisteredRule(OT010_ID),
+        rule_id: Some(OT010_ID),
+        paradigm_id: Some(OT_PARADIGM),
+        default_severity: severity,
+        span: Some(ty.span.clone()),
         concept: Some(concept_id.to_string()),
         message: format!(
             "enum `{}` overlaps {:.0}% with accepted canonical `{canonical_symbol}` \
@@ -104,6 +143,7 @@ fn ot010_diagnostic(
             ty.symbol,
             overlap * 100.0
         ),
+        evidence: vec![],
         why: vec![
             format!("variants: {{{}}}", join_sorted(candidate_variants)),
             format!(
@@ -119,6 +159,7 @@ fn ot010_diagnostic(
              `// locus: ot boundary {concept_id} <name>` then rerun `locus init`",
             ty.name
         )),
+        diagnostic_code: None,
     }
 }
 
