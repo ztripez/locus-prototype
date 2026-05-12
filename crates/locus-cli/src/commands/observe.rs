@@ -224,8 +224,10 @@ fn render_pressure<W: Write>(
 }
 
 /// Collect the post-exception, severity-overridden diagnostics for
-/// `render_pressure`. Runs governance in `CheckMode::Human` then forces
-/// every diagnostic's severity to Advisory — `observe` is read-only.
+/// `render_pressure`. Runs governance in `CheckMode::Human`, appends
+/// Policy Guard diagnostics (so observe's pressure mirrors what
+/// `locus check` would surface), then forces every severity to
+/// Advisory — `observe` is read-only.
 fn collect_advisory_diagnostics(
     air: &locus_air::AirWorkspace,
     lockfile: &Lockfile,
@@ -235,6 +237,19 @@ fn collect_advisory_diagnostics(
         governance::run_with_workspace_root(air, lockfile, CheckMode::Human, workspace);
     let today = today_utc();
     let mut all = apply_exceptions(governance_out.diagnostics, air, lockfile, Some(&today));
+
+    // Policy Guard — mirrors `check::append_policy_guard`. Use default
+    // baseline resolution; never elevate (we force Advisory below anyway).
+    let baseline_lockfile = crate::diff::read_baseline_lockfile(workspace, None);
+    let pg = locus_core::check_policy_mutation(
+        lockfile,
+        baseline_lockfile.as_ref(),
+        CheckMode::Human,
+        false,
+        false,
+    );
+    all.extend(pg);
+
     for d in all.iter_mut() {
         d.severity = Severity::Advisory;
     }
