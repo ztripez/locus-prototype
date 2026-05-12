@@ -193,6 +193,21 @@ changes), `git diff HEAD` (working-tree changes), `git ls-files --others --exclu
 `master` → `HEAD~1`. The filter is applied after exception suppression so `// locus: allow`
 hints on changed code still suppress, and `LOCUS001` expired-exception warnings still surface.
 
+### `locus observe` — survey + advisory pressure
+
+Read-only mode for understanding a workspace before enforcing anything:
+
+```bash
+locus observe --workspace .
+```
+
+Three sections in order: architecture survey (detected concepts, layers, hot files, crate
+edges), advisory pressure (rule findings grouped by paradigm, all rendered as Advisory
+regardless of underlying severity), and next declarations to consider (suggestions for
+`.locus/lock.json` and `.locus/arch.json`). Always exits 0 — observe is not a gate.
+
+Use `locus check` once you're ready to enforce.
+
 ## Implementation roadmap
 
 - ✅ AIR emission v13 (language-agnostic naming pass on top of v12 — `EnumMatch` → `DiscriminatedMatch`, `Visibility::Crate` → `Module`, `CallKind::Macro`/`DiscardKind::Macro` → `Meta`, `ArmBodyShape::Propagate` → `ErrorPropagation`, `AirItem::PartialIfLet` → `PartialResultMatch` with typed enum variant, `ConversionMechanism::From/TryFrom/InherentMethod/FreeFn` → `InfallibleAdapter/FallibleAdapter/InstanceMethod/FreeFunction` plus new `FactoryFunction`, `AirImpl` → `AirImplBlock` with `interface`/`target_type`/`dispatch`, unified `decorators` field replacing `derives`+`attrs`, added `path_segments` and `symbol_segments` for delimiter-portable matching, added `FallbackPattern` enum on `AirFallbackCall`. The Rust adapter remains the only adapter today; the schema is now ready for TS / Python / Go / Swift adapters to plug in without parallel-AIR shapes for shared concepts).

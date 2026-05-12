@@ -22,6 +22,8 @@ pub mod init;
 pub mod lockfile_schema;
 pub mod rules;
 
+pub use rules::helpers::{EdgeEvidence, collect_crate_edges};
+
 pub const DG_PREFIX: &str = "DG";
 
 pub struct DependencyGraph;
