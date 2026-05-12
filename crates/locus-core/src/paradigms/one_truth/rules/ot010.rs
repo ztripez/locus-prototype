@@ -46,6 +46,7 @@ impl RuleDefinition for Ot010Rule {
     }
 }
 
+// locus: allow CX001 — rule finding helper; inherently spans >50 lines due to full RuleFinding construction
 pub(crate) fn produce_findings(
     air: &AirWorkspace,
     section: &OtSection,

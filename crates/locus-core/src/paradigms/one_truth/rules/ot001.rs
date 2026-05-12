@@ -45,6 +45,7 @@ impl RuleDefinition for Ot001Rule {
     }
 }
 
+// locus: allow CX001 — rule finding helper; inherently spans >50 lines due to full RuleFinding construction per cluster member
 /// Cluster-level helper exposed for tests. Walks pre-computed clusters
 /// and emits findings — same logic as `Ot001Rule::observe` minus the
 /// AIR-to-clusters step.
