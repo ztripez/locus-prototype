@@ -502,6 +502,134 @@ fn matched_phrasing(
     None
 }
 
+// ── RuleDefinition impls (governance spine migration, epic #71) ──────────────
+
+use crate::governance::finding::{FindingSource, RuleFinding};
+use crate::governance::ids::{ParadigmId, RuleId};
+use crate::governance::rule::{RuleContext, RuleDefinition};
+
+const DC_PARADIGM: ParadigmId = ParadigmId::new("DC");
+const DC001_ID: RuleId = RuleId::new("DC001");
+const DC002_ID: RuleId = RuleId::new("DC002");
+const DC004_ID: RuleId = RuleId::new("DC004");
+
+pub struct Dc001Rule;
+pub static DC001_RULE: Dc001Rule = Dc001Rule;
+
+impl RuleDefinition for Dc001Rule {
+    fn id(&self) -> RuleId {
+        DC001_ID
+    }
+    fn paradigm(&self) -> ParadigmId {
+        DC_PARADIGM
+    }
+    fn title(&self) -> &'static str {
+        "missing public-API doc comment"
+    }
+    fn default_severity(&self) -> crate::diagnostics::Severity {
+        crate::diagnostics::Severity::Warning
+    }
+    fn observe(&self, ctx: &RuleContext<'_>) -> Vec<RuleFinding> {
+        use super::lockfile_schema::DcSection;
+        let section: DcSection = ctx.lockfile.paradigm_section("DC").unwrap_or_default();
+        dc001(ctx.air, &section, ctx.mode)
+            .into_iter()
+            .map(|d| RuleFinding {
+                id: ctx.finding_ids.next(),
+                source: FindingSource::RegisteredRule(DC001_ID),
+                rule_id: Some(DC001_ID),
+                paradigm_id: Some(DC_PARADIGM),
+                default_severity: d.severity,
+                span: Some(d.span),
+                concept: d.concept,
+                message: d.message,
+                evidence: vec![],
+                why: d.why,
+                suggested_fix: d.suggested_fix,
+                diagnostic_code: None,
+            })
+            .collect()
+    }
+}
+
+pub struct Dc002Rule;
+pub static DC002_RULE: Dc002Rule = Dc002Rule;
+
+impl RuleDefinition for Dc002Rule {
+    fn id(&self) -> RuleId {
+        DC002_ID
+    }
+    fn paradigm(&self) -> ParadigmId {
+        DC_PARADIGM
+    }
+    fn title(&self) -> &'static str {
+        "doc residue / stale phrasing"
+    }
+    fn default_severity(&self) -> crate::diagnostics::Severity {
+        crate::diagnostics::Severity::Warning
+    }
+    fn observe(&self, ctx: &RuleContext<'_>) -> Vec<RuleFinding> {
+        use super::lockfile_schema::DcSection;
+        let section: DcSection = ctx.lockfile.paradigm_section("DC").unwrap_or_default();
+        dc002(ctx.air, &section, ctx.mode)
+            .into_iter()
+            .map(|d| RuleFinding {
+                id: ctx.finding_ids.next(),
+                source: FindingSource::RegisteredRule(DC002_ID),
+                rule_id: Some(DC002_ID),
+                paradigm_id: Some(DC_PARADIGM),
+                default_severity: d.severity,
+                span: Some(d.span),
+                concept: d.concept,
+                message: d.message,
+                evidence: vec![],
+                why: d.why,
+                suggested_fix: d.suggested_fix,
+                diagnostic_code: None,
+            })
+            .collect()
+    }
+}
+
+pub struct Dc004Rule;
+pub static DC004_RULE: Dc004Rule = Dc004Rule;
+
+impl RuleDefinition for Dc004Rule {
+    fn id(&self) -> RuleId {
+        DC004_ID
+    }
+    fn paradigm(&self) -> ParadigmId {
+        DC_PARADIGM
+    }
+    fn title(&self) -> &'static str {
+        "forbidden doc phrase"
+    }
+    fn default_severity(&self) -> crate::diagnostics::Severity {
+        crate::diagnostics::Severity::Warning
+    }
+    fn observe(&self, ctx: &RuleContext<'_>) -> Vec<RuleFinding> {
+        use super::lockfile_schema::DcSection;
+        let section: DcSection = ctx.lockfile.paradigm_section("DC").unwrap_or_default();
+        dc004(ctx.air, &section, ctx.mode)
+            .into_iter()
+            .map(|d| RuleFinding {
+                id: ctx.finding_ids.next(),
+                source: FindingSource::RegisteredRule(DC004_ID),
+                rule_id: Some(DC004_ID),
+                paradigm_id: Some(DC_PARADIGM),
+                default_severity: d.severity,
+                span: Some(d.span),
+                concept: d.concept,
+                message: d.message,
+                evidence: vec![],
+                why: d.why,
+                suggested_fix: d.suggested_fix,
+                diagnostic_code: None,
+            })
+            .collect()
+    }
+}
+
 #[cfg(test)]
 #[path = "rules_tests.rs"]
 mod rules_tests;

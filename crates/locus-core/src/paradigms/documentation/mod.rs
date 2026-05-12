@@ -43,12 +43,15 @@ impl Paradigm for Documentation {
         // future `locus dc` CLI mutator).
         serde_json::Value::Null
     }
-    fn check(&self, air: &AirWorkspace, lockfile: &Lockfile, mode: CheckMode) -> Vec<Diagnostic> {
-        let section: lockfile_schema::DcSection =
-            lockfile.paradigm_section(DC_PREFIX).unwrap_or_default();
-        let mut diags = rules::dc001(air, &section, mode);
-        diags.extend(rules::dc002(air, &section, mode));
-        diags.extend(rules::dc004(air, &section, mode));
-        diags
+    fn check(
+        &self,
+        _air: &AirWorkspace,
+        _lockfile: &Lockfile,
+        _mode: CheckMode,
+    ) -> Vec<Diagnostic> {
+        // All DC rules migrated to RuleDefinition (#71 P4).
+        // Detection runs through the governance pipeline; this legacy
+        // path is now a no-op.
+        Vec::new()
     }
 }

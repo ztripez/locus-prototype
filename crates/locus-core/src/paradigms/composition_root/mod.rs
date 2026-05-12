@@ -16,7 +16,7 @@
 // locus: ot canonical
 
 use super::Paradigm;
-use crate::diagnostics::{CheckMode, Diagnostic, vacant_paradigm_diagnostic};
+use crate::diagnostics::{CheckMode, Diagnostic};
 use crate::lockfile::Lockfile;
 use locus_air::AirWorkspace;
 
@@ -39,22 +39,16 @@ impl Paradigm for CompositionRoot {
     fn init(&self, _air: &AirWorkspace) -> serde_json::Value {
         serde_json::Value::Null
     }
-    fn check(&self, air: &AirWorkspace, lockfile: &Lockfile, mode: CheckMode) -> Vec<Diagnostic> {
-        let section: lockfile_schema::CrSection =
-            lockfile.paradigm_section(CR_PREFIX).unwrap_or_default();
-        if section.is_vacant() && !lockfile.is_acknowledged_empty(CR_PREFIX) {
-            return vec![vacant_paradigm_diagnostic(
-                CR_PREFIX,
-                "Composition Root Ownership",
-                &[(
-                    "composition_root_paths",
-                    "module patterns identifying composition roots / bootstrap modules",
-                )],
-            )];
-        }
-        let mut diags = rules::cr001(air, &section, mode);
-        diags.extend(rules::cr002(air, &section, mode));
-        diags
+    fn check(
+        &self,
+        _air: &AirWorkspace,
+        _lockfile: &Lockfile,
+        _mode: CheckMode,
+    ) -> Vec<Diagnostic> {
+        // All CR rules migrated to RuleDefinition (#71 P4).
+        // Detection runs through the governance pipeline; this legacy
+        // path is now a no-op.
+        Vec::new()
     }
     fn suggest(&self, air: &AirWorkspace, lockfile: &Lockfile) -> Vec<crate::init::Suggestion> {
         init::suggest(air, lockfile)

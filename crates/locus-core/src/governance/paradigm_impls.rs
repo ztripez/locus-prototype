@@ -104,9 +104,41 @@ impl ParadigmDefinition for ClParadigmDef {
     }
 }
 
-paradigm_def!(BoParadigmDef, "BO", "Boundary Ownership");
+pub struct BoParadigmDef;
+impl ParadigmDefinition for BoParadigmDef {
+    fn id(&self) -> ParadigmId {
+        ParadigmId::new("BO")
+    }
+    fn title(&self) -> &'static str {
+        "Boundary Ownership"
+    }
+    fn rules(&self) -> &'static [&'static dyn RuleDefinition] {
+        static RULES: [&dyn RuleDefinition; 4] = [
+            &crate::paradigms::boundary_ownership::rules::BO001_RULE,
+            &crate::paradigms::boundary_ownership::rules::BO002_RULE,
+            &crate::paradigms::boundary_ownership::rules::BO004_RULE,
+            &crate::paradigms::boundary_ownership::rules::BO005_RULE,
+        ];
+        &RULES
+    }
+}
 paradigm_def!(CfParadigmDef, "CF", "Config Data");
-paradigm_def!(CrParadigmDef, "CR", "Claim Ownership");
+pub struct CrParadigmDef;
+impl ParadigmDefinition for CrParadigmDef {
+    fn id(&self) -> ParadigmId {
+        ParadigmId::new("CR")
+    }
+    fn title(&self) -> &'static str {
+        "Claim Ownership"
+    }
+    fn rules(&self) -> &'static [&'static dyn RuleDefinition] {
+        static RULES: [&dyn RuleDefinition; 2] = [
+            &crate::paradigms::composition_root::rules::CR001_RULE,
+            &crate::paradigms::composition_root::rules::CR002_RULE,
+        ];
+        &RULES
+    }
+}
 // CX breaks out of the macro pattern — four rules migrated (CX001–CX002–CX007–CX008 in P2/P4 #71).
 pub struct CxParadigmDef;
 impl ParadigmDefinition for CxParadigmDef {
@@ -127,7 +159,23 @@ impl ParadigmDefinition for CxParadigmDef {
     }
 }
 paradigm_def!(DaParadigmDef, "DA", "Demand Driven");
-paradigm_def!(DcParadigmDef, "DC", "Documentation");
+pub struct DcParadigmDef;
+impl ParadigmDefinition for DcParadigmDef {
+    fn id(&self) -> ParadigmId {
+        ParadigmId::new("DC")
+    }
+    fn title(&self) -> &'static str {
+        "Documentation"
+    }
+    fn rules(&self) -> &'static [&'static dyn RuleDefinition] {
+        static RULES: [&dyn RuleDefinition; 3] = [
+            &crate::paradigms::documentation::rules::DC001_RULE,
+            &crate::paradigms::documentation::rules::DC002_RULE,
+            &crate::paradigms::documentation::rules::DC004_RULE,
+        ];
+        &RULES
+    }
+}
 paradigm_def!(ErParadigmDef, "ER", "Error Taxonomy");
 // FL breaks out of the macro — 11 rules migrated (#71 P4).
 pub struct FlParadigmDef;

@@ -77,6 +77,15 @@ impl RuleRegistry {
                 &crate::paradigms::abstraction_discipline::rules::AB001_RULE,
                 &crate::paradigms::abstraction_discipline::rules::AB002_RULE,
                 &crate::paradigms::claim_ownership::rules::CL001_RULE,
+                &crate::paradigms::boundary_ownership::rules::BO001_RULE,
+                &crate::paradigms::boundary_ownership::rules::BO002_RULE,
+                &crate::paradigms::boundary_ownership::rules::BO004_RULE,
+                &crate::paradigms::boundary_ownership::rules::BO005_RULE,
+                &crate::paradigms::composition_root::rules::CR001_RULE,
+                &crate::paradigms::composition_root::rules::CR002_RULE,
+                &crate::paradigms::documentation::rules::DC001_RULE,
+                &crate::paradigms::documentation::rules::DC002_RULE,
+                &crate::paradigms::documentation::rules::DC004_RULE,
             ],
         };
         debug_assert!(
