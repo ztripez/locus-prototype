@@ -8,9 +8,12 @@ pub mod dg003;
 pub mod dg004;
 pub(super) mod helpers;
 
-// Imports used by rules_tests.rs via `use super::*`.
-use super::lockfile_schema::{DgSection, FeatureDefinition};
+// Imports re-exported into the inline test module (rules_tests.rs uses `use super::*`).
+#[cfg(test)]
+#[allow(unused_imports)]
 use crate::diagnostics::{CheckMode, Severity};
+#[cfg(test)]
+#[allow(unused_imports)]
 use locus_air::{AirItem, AirWorkspace};
 
 #[cfg(test)]

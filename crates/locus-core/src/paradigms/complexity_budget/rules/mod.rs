@@ -7,10 +7,13 @@ pub mod cx002;
 pub mod cx007;
 pub mod cx008;
 
-// Imports used by rules_tests.rs via `use super::*`.
-use super::lockfile_schema::{CxSection, matches_pattern};
+// Imports re-exported into the inline test module (rules_tests.rs uses `use super::*`).
+#[cfg(test)]
+#[allow(unused_imports)]
 use crate::diagnostics::{CheckMode, Severity};
-use locus_air::{AirItem, AirWorkspace, Visibility};
+#[cfg(test)]
+#[allow(unused_imports)]
+use locus_air::{AirItem, AirWorkspace};
 
 #[cfg(test)]
 #[path = "../rules_tests.rs"]

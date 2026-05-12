@@ -69,6 +69,7 @@ fn build_ot004_canonicals(
 
 /// Check one `Construct` action against the canonical index; push a finding
 /// if it violates OT004.
+#[allow(clippy::too_many_arguments)]
 fn ot004_check_action(
     a: &locus_air::AirTruthAction,
     file_path: &str,
