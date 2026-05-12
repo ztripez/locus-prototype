@@ -1,9 +1,26 @@
 use std::io::{self, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use locus_core::Lockfile;
 use locus_core::{AcknowledgedEmptyEntry, registry};
+
+const AGENTS_FILE: &str = "AGENTS.md";
+const CLAUDE_FILE: &str = "CLAUDE.md";
+const LOCUS_BLOCK_START: &str = "<!-- locus:init-snippet:start -->";
+const LOCUS_BLOCK_END: &str = "<!-- locus:init-snippet:end -->";
+
+const LOCUS_AGENT_SNIPPET: &str = "<!-- locus:init-snippet:start -->\n\
+## Locus\n\
+This repo uses Locus for architecture governance.\n\
+Before editing code, run `locus check`; treat findings as architecture feedback, not lint noise.\n\
+Do not bypass, delete, or weaken Locus rules or policies unless explicitly asked.\n\
+Do not add broad exemptions; if one is needed, make it narrow and explain why.\n\
+Prefer declared owners/modules over duplicating logic.\n\
+When unsure where code belongs, use Locus output and nearby owners as guidance.\n\
+Before finishing, run `locus check` again.\n\
+If findings remain, explain why or list the required follow-up.\n\
+<!-- locus:init-snippet:end -->\n";
 
 // locus: ot boundary cli.init cli
 #[derive(clap::Args, Debug)]
@@ -14,6 +31,9 @@ pub struct InitArgs {
     /// Refuse to overwrite an existing locus.lock.
     #[arg(long)]
     pub no_overwrite: bool,
+    /// Do not write or update the managed Locus block in AGENTS.md / CLAUDE.md.
+    #[arg(long)]
+    pub no_agent_instructions: bool,
     /// Comma-separated paradigm prefixes the user explicitly acknowledges
     /// as empty. Each prefix is appended to `Lockfile.acknowledged_empty`
     /// (silencing LOCUS002 for that paradigm). Already-present prefixes
@@ -53,6 +73,11 @@ pub fn run(args: InitArgs) -> Result<()> {
         .with_context(|| format!("write lockfile to {}", args.workspace.display()))?;
 
     println!("wrote {}", written.display());
+    if !args.no_agent_instructions {
+        let agent_file = upsert_agent_instructions(&args.workspace)
+            .with_context(|| format!("write Locus agent instructions under {}", args.workspace.display()))?;
+        println!("updated {}", agent_file.display());
+    }
     print_init_sections_summary(&registry, &lockfile);
 
     let suggestions = collect_init_suggestions(&registry, &air, &lockfile);
@@ -97,6 +122,53 @@ fn populate_lockfile_sections(
             }
         }
     }
+}
+
+fn upsert_agent_instructions(workspace: &Path) -> Result<PathBuf> {
+    let path = agent_instruction_path(workspace);
+    let existing = match std::fs::read_to_string(&path) {
+        Ok(s) => s,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => String::new(),
+        Err(e) => return Err(e).with_context(|| format!("read {}", path.display())),
+    };
+    let updated = upsert_locus_agent_block(&existing);
+    std::fs::write(&path, updated).with_context(|| format!("write {}", path.display()))?;
+    Ok(path)
+}
+
+fn agent_instruction_path(workspace: &Path) -> PathBuf {
+    let agents = workspace.join(AGENTS_FILE);
+    if agents.exists() {
+        return agents;
+    }
+    let claude = workspace.join(CLAUDE_FILE);
+    if claude.exists() {
+        return claude;
+    }
+    agents
+}
+
+fn upsert_locus_agent_block(existing: &str) -> String {
+    if let Some(start) = existing.find(LOCUS_BLOCK_START) {
+        if let Some(end_rel) = existing[start..].find(LOCUS_BLOCK_END) {
+            let end = start + end_rel + LOCUS_BLOCK_END.len();
+            let mut out = String::new();
+            out.push_str(&existing[..start]);
+            out.push_str(LOCUS_AGENT_SNIPPET.trim_end());
+            out.push_str(&existing[end..]);
+            if !out.ends_with('\n') {
+                out.push('\n');
+            }
+            return out;
+        }
+    }
+
+    let mut out = existing.trim_end().to_string();
+    if !out.is_empty() {
+        out.push_str("\n\n");
+    }
+    out.push_str(LOCUS_AGENT_SNIPPET);
+    out
 }
 
 fn print_init_sections_summary(registry: &[Box<dyn locus_core::Paradigm>], lockfile: &Lockfile) {
@@ -248,6 +320,57 @@ mod tests {
     }
 
     #[test]
+    fn locus_agent_snippet_stays_under_twenty_lines() {
+        assert!(
+            LOCUS_AGENT_SNIPPET.lines().count() < 20,
+            "managed agent snippet must stay compact"
+        );
+    }
+
+    #[test]
+    fn upsert_locus_agent_block_preserves_existing_content() {
+        let existing = "# Agent guide\n\nKeep this intro.\n";
+        let updated = upsert_locus_agent_block(existing);
+        assert!(updated.contains("# Agent guide"));
+        assert!(updated.contains("Keep this intro."));
+        assert!(updated.contains("This repo uses Locus for architecture governance."));
+        assert_eq!(updated.matches(LOCUS_BLOCK_START).count(), 1);
+        assert_eq!(updated.matches(LOCUS_BLOCK_END).count(), 1);
+    }
+
+    #[test]
+    fn upsert_locus_agent_block_is_idempotent() {
+        let once = upsert_locus_agent_block("# Agent guide\n");
+        let twice = upsert_locus_agent_block(&once);
+        assert_eq!(once, twice);
+        assert_eq!(twice.matches(LOCUS_BLOCK_START).count(), 1);
+    }
+
+    #[test]
+    fn upsert_locus_agent_block_replaces_managed_block() {
+        let existing = format!(
+            "# Agent guide\n\n{LOCUS_BLOCK_START}\nold text\n{LOCUS_BLOCK_END}\n\nAfter.\n"
+        );
+        let updated = upsert_locus_agent_block(&existing);
+        assert!(updated.contains("# Agent guide"));
+        assert!(updated.contains("After."));
+        assert!(!updated.contains("old text"));
+        assert!(updated.contains("Treat findings as architecture feedback"));
+        assert_eq!(updated.matches(LOCUS_BLOCK_START).count(), 1);
+    }
+
+    #[test]
+    fn upsert_agent_instructions_prefers_existing_claude_when_agents_is_absent() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
+        std::fs::write(dir.join(CLAUDE_FILE), "# Claude\n").unwrap();
+        let path = upsert_agent_instructions(dir).unwrap();
+        assert_eq!(path.file_name().and_then(|s| s.to_str()), Some(CLAUDE_FILE));
+        let text = std::fs::read_to_string(dir.join(CLAUDE_FILE)).unwrap();
+        assert!(text.contains("This repo uses Locus for architecture governance."));
+    }
+
+    #[test]
     fn acknowledge_empty_persists_into_lockfile() {
         let tmp = tempfile::tempdir().unwrap();
         let dir = tmp.path();
@@ -275,6 +398,7 @@ mod tests {
         let args = InitArgs {
             workspace: dir.to_path_buf(),
             no_overwrite: false,
+            no_agent_instructions: false,
             acknowledge_empty: Some(ack_input),
         };
         run(args).unwrap();
@@ -287,5 +411,8 @@ mod tests {
             .map(|e| e.prefix().to_string())
             .collect();
         assert_eq!(actual_prefixes, seed_prefixes);
+
+        let agent_text = std::fs::read_to_string(dir.join(AGENTS_FILE)).unwrap();
+        assert!(agent_text.contains("This repo uses Locus for architecture governance."));
     }
 }
