@@ -94,6 +94,7 @@ impl PolicyDefinition for RegistryIntegrityPolicy {
 mod tests {
     use super::*;
     use crate::diagnostics::{CheckMode, Severity};
+    use crate::governance::arch::ArchLoadOutcome;
     use crate::governance::decision::DecisionStatus;
     use crate::governance::finding::{FindingSource, FindingStore, RuleFinding};
     use crate::governance::ids::{FindingId, FindingIdMinter, ParadigmId, RuleId};
@@ -146,6 +147,7 @@ mod tests {
         let paradigms = ParadigmRegistry::empty();
         let policies = PolicyRegistry::with_policies(vec![&RegistryIntegrityPolicy]);
         let minter = FindingIdMinter::new();
+        let arch = ArchLoadOutcome::Missing;
         let ctx = PolicyContext {
             air: &air,
             lockfile: &lf,
@@ -156,6 +158,7 @@ mod tests {
             findings: &store,
             prior_decisions: &[],
             finding_ids: &minter,
+            arch: &arch,
         };
         RegistryIntegrityPolicy.decide(&ctx)
     }
@@ -296,6 +299,7 @@ mod tests {
         let paradigms = ParadigmRegistry::empty();
         let policies = PolicyRegistry::with_policies(vec![&RegistryIntegrityPolicy]);
         let minter = FindingIdMinter::new();
+        let arch = ArchLoadOutcome::Missing;
         let ctx = PolicyContext {
             air: &air,
             lockfile: &lf,
@@ -306,6 +310,7 @@ mod tests {
             findings: &store,
             prior_decisions: &[],
             finding_ids: &minter,
+            arch: &arch,
         };
         let out = RegistryIntegrityPolicy.decide(&ctx);
         assert_eq!(out.new_findings[0].default_severity, Severity::Advisory);

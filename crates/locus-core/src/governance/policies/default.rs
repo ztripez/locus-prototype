@@ -60,6 +60,7 @@ impl PolicyDefinition for DefaultPassThroughPolicy {
 mod tests {
     use super::*;
     use crate::diagnostics::CheckMode;
+    use crate::governance::arch::ArchLoadOutcome;
     use crate::governance::finding::{FindingSource, FindingStore, RuleFinding};
     use crate::governance::ids::{FindingIdMinter, ParadigmId, RuleId};
     use crate::governance::registry::{ParadigmRegistry, PolicyRegistry, RuleRegistry};
@@ -111,6 +112,7 @@ mod tests {
     #[test]
     fn decides_every_undecided_finding() {
         let (air, lf, rules, paradigms, policies, minter, store) = build_fixture();
+        let arch = ArchLoadOutcome::Missing;
         let ctx = PolicyContext {
             air: &air,
             lockfile: &lf,
@@ -121,6 +123,7 @@ mod tests {
             findings: &store,
             prior_decisions: &[],
             finding_ids: &minter,
+            arch: &arch,
         };
 
         let out = DefaultPassThroughPolicy.decide(&ctx);
@@ -175,6 +178,7 @@ mod tests {
             rationale: vec!["downgraded".into()],
         }];
 
+        let arch = ArchLoadOutcome::Missing;
         let ctx = PolicyContext {
             air: &air,
             lockfile: &lf,
@@ -185,6 +189,7 @@ mod tests {
             findings: &store,
             prior_decisions: &prior,
             finding_ids: &minter,
+            arch: &arch,
         };
 
         let out = DefaultPassThroughPolicy.decide(&ctx);

@@ -12,6 +12,7 @@
 
 // locus: ot canonical
 
+pub mod arch;
 pub mod decision;
 pub mod evidence;
 pub mod finding;
@@ -25,14 +26,15 @@ pub mod policy;
 pub mod registry;
 pub mod rule;
 
+pub use arch::{ARCH_RELATIVE_PATH, ArchDeclaration, ArchLoadOutcome};
 pub use decision::{Decision, DecisionStatus, SeverityChange};
 pub use evidence::{Confidence, Evidence, LegacyEvidence};
 pub use finding::{FindingSource, FindingStore, RuleFinding};
 pub use ids::{FindingId, FindingIdMinter, ParadigmId, PolicyId, RuleId};
 pub use legacy::LegacyParadigmRuleAdapter;
 pub use paradigm::ParadigmDefinition;
-pub use pipeline::{GovernanceOutput, run};
-pub use policies::{DefaultPassThroughPolicy, RegistryIntegrityPolicy};
+pub use pipeline::{GovernanceOutput, run, run_with_arch, run_with_workspace_root};
+pub use policies::{DefaultPassThroughPolicy, RegistryCoherencePolicy, RegistryIntegrityPolicy};
 pub use policy::{PolicyContext, PolicyDefinition, PolicyOutput};
 pub use registry::{
     GovernanceDiagnosticRegistry, ParadigmRegistry, PolicyRegistry, RegistryError, RuleRegistry,

@@ -201,6 +201,11 @@ impl ParadigmRegistry {
         }
     }
 
+    #[cfg(test)]
+    pub fn with_paradigms(paradigms: Vec<&'static dyn ParadigmDefinition>) -> Self {
+        Self { paradigms }
+    }
+
     pub fn iter(&self) -> impl Iterator<Item = &&'static dyn ParadigmDefinition> {
         self.paradigms.iter()
     }
@@ -249,8 +254,11 @@ impl GovernanceDiagnosticRegistry {
                 // PolicyId when those migrate (future epic).
                 ("LOCUS001", PolicyId::new("legacy-exceptions")),
                 ("LOCUS002", PolicyId::new("legacy-vacancy-nudge")),
-                // Reserved for P3 RegistryIntegrityPolicy.
+                // P3 RegistryIntegrityPolicy.
                 ("LOCUS003", PolicyId::new("registry-integrity")),
+                // #75 — architecture-policy MVP. RegistryCoherencePolicy
+                // surfaces drift between `.locus/arch.json` and registries.
+                ("LOCUS004", PolicyId::new("registry-coherence")),
             ],
         }
     }
@@ -323,9 +331,12 @@ fn standard_paradigms() -> Vec<&'static dyn ParadigmDefinition> {
 
 fn standard_policies() -> Vec<&'static dyn PolicyDefinition> {
     // RegistryIntegrityPolicy MUST come before DefaultPassThroughPolicy.
-    // Future policies (ExceptionPolicy, ...) insert between them.
+    // RegistryCoherencePolicy follows registry_integrity so the
+    // migration-debt sweep is reported before arch-drift advisories.
+    // Future policies (ExceptionPolicy, ...) insert before pass-through.
     vec![
         &crate::governance::policies::registry_integrity::RegistryIntegrityPolicy,
+        &crate::governance::policies::registry_coherence::RegistryCoherencePolicy,
         &crate::governance::policies::default::DefaultPassThroughPolicy,
     ]
 }
@@ -398,6 +409,39 @@ mod tests {
         let g = GovernanceDiagnosticRegistry::standard();
         assert!(g.contains("LOCUS003"));
         assert_eq!(g.owner("LOCUS003").unwrap().as_str(), "registry-integrity");
+    }
+
+    #[test]
+    fn governance_diagnostic_registry_knows_locus004() {
+        let g = GovernanceDiagnosticRegistry::standard();
+        assert!(g.contains("LOCUS004"));
+        assert_eq!(g.owner("LOCUS004").unwrap().as_str(), "registry-coherence");
+    }
+
+    #[test]
+    fn registry_coherence_policy_runs_after_integrity_and_before_pass_through() {
+        let reg = PolicyRegistry::standard();
+        let ids: Vec<&str> = reg.iter().map(|p| p.id().as_str()).collect();
+        let ri = ids
+            .iter()
+            .position(|&id| id == "registry-integrity")
+            .expect("registry-integrity must be in standard registry");
+        let rc = ids
+            .iter()
+            .position(|&id| id == "registry-coherence")
+            .expect("registry-coherence must be in standard registry");
+        let pt = ids
+            .iter()
+            .position(|&id| id == "default-pass-through")
+            .expect("default-pass-through must be in standard registry");
+        assert!(
+            ri < rc,
+            "registry-integrity ({ri}) must come before registry-coherence ({rc})"
+        );
+        assert!(
+            rc < pt,
+            "registry-coherence ({rc}) must come before default-pass-through ({pt})"
+        );
     }
 
     #[test]

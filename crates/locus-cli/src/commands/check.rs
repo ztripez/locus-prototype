@@ -69,7 +69,11 @@ pub fn run(args: CheckArgs) -> Result<()> {
     // materialized through DefaultPassThroughPolicy — byte-identical to
     // the prior `for paradigm in registry() { paradigm.check(...) }` loop
     // under P1's empty rule registry.
-    let governance_out = governance::run(&air, &lockfile, mode);
+    //
+    // `run_with_workspace_root` loads `.locus/arch.json` from the workspace
+    // and threads the outcome into `RegistryCoherencePolicy` (LOCUS004).
+    let governance_out =
+        governance::run_with_workspace_root(&air, &lockfile, mode, &args.workspace);
     let all = governance_out.diagnostics;
 
     // Apply exceptions BEFORE Policy Guard — PG must not be suppressible by

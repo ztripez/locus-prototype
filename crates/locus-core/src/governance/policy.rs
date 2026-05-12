@@ -9,6 +9,7 @@
 // locus: ot canonical
 
 use crate::diagnostics::CheckMode;
+use crate::governance::arch::ArchLoadOutcome;
 use crate::governance::decision::Decision;
 use crate::governance::finding::{FindingStore, RuleFinding};
 use crate::governance::ids::{FindingIdMinter, PolicyId};
@@ -46,4 +47,10 @@ pub struct PolicyContext<'a> {
     pub findings: &'a FindingStore,
     pub prior_decisions: &'a [Decision],
     pub finding_ids: &'a FindingIdMinter,
+    /// Architecture declaration load outcome for this run. Consumed by
+    /// `RegistryCoherencePolicy` (LOCUS004) to detect drift between the
+    /// declared policy set and what `PolicyRegistry::standard()` exposes.
+    /// Other policies generally ignore this; `Missing` is the right default
+    /// for tests that don't exercise arch drift.
+    pub arch: &'a ArchLoadOutcome,
 }

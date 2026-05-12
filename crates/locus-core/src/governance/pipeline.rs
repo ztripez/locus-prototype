@@ -3,7 +3,10 @@
 
 // locus: ot canonical
 
+use std::path::Path;
+
 use crate::diagnostics::{CheckMode, Diagnostic};
+use crate::governance::arch::{ArchDeclaration, ArchLoadOutcome};
 use crate::governance::decision::{Decision, DecisionStatus};
 use crate::governance::finding::{FindingSource, FindingStore, RuleFinding};
 use crate::governance::ids::FindingIdMinter;
@@ -24,7 +27,33 @@ pub struct GovernanceOutput {
     pub findings: FindingStore,
 }
 
+/// Run the governance pipeline without a workspace root. The architecture
+/// declaration is treated as `Missing`, so `RegistryCoherencePolicy` will
+/// emit a single LOCUS004 advisory pointing at the absent `.locus/arch.json`.
+/// Production code paths should prefer `run_with_arch`.
 pub fn run(air: &AirWorkspace, lockfile: &Lockfile, mode: CheckMode) -> GovernanceOutput {
+    run_with_arch(air, lockfile, mode, &ArchLoadOutcome::Missing)
+}
+
+/// Convenience overload: load `.locus/arch.json` from `workspace_root`
+/// before running. Used by the CLI; tests typically prefer the explicit
+/// `run_with_arch` form so they can inject a deterministic outcome.
+pub fn run_with_workspace_root(
+    air: &AirWorkspace,
+    lockfile: &Lockfile,
+    mode: CheckMode,
+    workspace_root: &Path,
+) -> GovernanceOutput {
+    let arch = ArchDeclaration::load(workspace_root);
+    run_with_arch(air, lockfile, mode, &arch)
+}
+
+pub fn run_with_arch(
+    air: &AirWorkspace,
+    lockfile: &Lockfile,
+    mode: CheckMode,
+    arch: &ArchLoadOutcome,
+) -> GovernanceOutput {
     let rules = RuleRegistry::standard();
     let paradigms_reg = ParadigmRegistry::standard();
     let policies = PolicyRegistry::standard();
@@ -49,6 +78,7 @@ pub fn run(air: &AirWorkspace, lockfile: &Lockfile, mode: CheckMode) -> Governan
         air,
         lockfile,
         mode,
+        arch,
         &minter,
         &mut store,
     );
@@ -114,6 +144,7 @@ fn run_policies(
     air: &AirWorkspace,
     lockfile: &Lockfile,
     mode: CheckMode,
+    arch: &ArchLoadOutcome,
     minter: &FindingIdMinter,
     store: &mut FindingStore,
 ) -> Vec<Decision> {
@@ -129,6 +160,7 @@ fn run_policies(
             findings: store,
             prior_decisions: &decisions,
             finding_ids: minter,
+            arch,
         };
         let out = policy.decide(&pctx);
         for f in out.new_findings {

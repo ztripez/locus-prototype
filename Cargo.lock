@@ -388,6 +388,7 @@ dependencies = [
  "locus-rust",
  "serde",
  "serde_json",
+ "tempfile",
  "thiserror",
 ]
 
