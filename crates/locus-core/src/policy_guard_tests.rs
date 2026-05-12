@@ -489,6 +489,29 @@ fn pg003_covers_dc_exempt_paths() {
     assert!(pg003.message.contains("*::generated::*"));
 }
 
+/// Regression: when baseline has explicit CX configuration but current
+/// has no CX section at all, PG003/PG007 must NOT fire. Defaults injected
+/// by `paradigm_section_explicit` are not user policy; PG only audits
+/// sections the user explicitly set. Closes the follow-up from #91.
+#[test]
+fn pg003_pg007_quiet_when_current_has_no_cx_section() {
+    let base = lockfile_with(
+        serde_json::json!({"CX": {"exempt_paths": ["*::tests::*", "locus_air::*"]}}),
+        vec![],
+    );
+    // Current has zero paradigm sections — user hasn't configured anything.
+    let cur = lockfile_with(serde_json::json!({}), vec![]);
+    let diags = check_policy_mutation(&cur, Some(&base), CheckMode::Human, false, false);
+    assert!(
+        diags.iter().all(|d| d.rule_id != "PG003"),
+        "PG003 must stay silent when current has no CX section; got {diags:#?}"
+    );
+    assert!(
+        diags.iter().all(|d| d.rule_id != "PG007"),
+        "PG007 must stay silent when current has no CX section; got {diags:#?}"
+    );
+}
+
 // ---- PG004 acknowledged_empty additions --------------------------
 
 #[test]
