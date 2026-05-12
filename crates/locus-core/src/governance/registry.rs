@@ -39,6 +39,9 @@ impl RuleRegistry {
         let reg = Self {
             rules: vec![
                 &crate::paradigms::complexity_budget::rules::cx001::CX001_RULE,
+                &crate::paradigms::complexity_budget::rules::cx002::CX002_RULE,
+                &crate::paradigms::complexity_budget::rules::cx007::CX007_RULE,
+                &crate::paradigms::complexity_budget::rules::cx008::CX008_RULE,
                 &crate::paradigms::dependency_graph::rules::dg001::DG001_RULE,
                 &crate::paradigms::dependency_graph::rules::dg002::DG002_RULE,
                 &crate::paradigms::dependency_graph::rules::dg003::DG003_RULE,
@@ -380,6 +383,14 @@ mod tests {
     }
 
     #[test]
+    fn rule_registry_contains_cx002_cx007_cx008() {
+        let reg = RuleRegistry::standard();
+        assert!(reg.contains_code("CX002"), "CX002 must be in registry");
+        assert!(reg.contains_code("CX007"), "CX007 must be in registry");
+        assert!(reg.contains_code("CX008"), "CX008 must be in registry");
+    }
+
+    #[test]
     fn rule_registry_contains_cx001_after_p2_migration() {
         let reg = RuleRegistry::standard();
         assert!(
@@ -395,13 +406,13 @@ mod tests {
     }
 
     #[test]
-    fn cx_paradigm_def_lists_cx001_rule() {
+    fn cx_paradigm_def_lists_cx_rules() {
         let reg = ParadigmRegistry::standard();
         let cx = reg
             .find(&ParadigmId::new("CX"))
             .expect("CX ParadigmDefinition missing");
         let rule_ids: Vec<&str> = cx.rules().iter().map(|r| r.id().as_str()).collect();
-        assert_eq!(rule_ids, vec!["CX001"]);
+        assert_eq!(rule_ids, vec!["CX001", "CX002", "CX007", "CX008"]);
     }
 
     #[test]
