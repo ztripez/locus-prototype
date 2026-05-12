@@ -27,7 +27,7 @@ impl RuleDefinition for Dg002Rule {
         Severity::Fatal
     }
     fn observe(&self, ctx: &RuleContext<'_>) -> Vec<RuleFinding> {
-        let edges = super::collect_crate_edges(ctx.air);
+        let edges = super::helpers::collect_crate_edges(ctx.air);
         if edges.is_empty() {
             return Vec::new();
         }
@@ -49,7 +49,7 @@ impl RuleDefinition for Dg002Rule {
             adj[node_idx[a.as_str()]].push(node_idx[b.as_str()]);
         }
 
-        let sccs = super::tarjan_sccs(&adj);
+        let sccs = super::helpers::tarjan_sccs(&adj);
 
         let mut out = Vec::new();
         for scc in sccs {
