@@ -25,6 +25,8 @@ fn init_against_sample_crate_emits_expected_checklist() {
         r"updated .*\.locus/lock\.json",
         "updated <PATH>/.locus/lock.json",
     );
+    settings.add_filter(r"updated .*AGENTS\.md", "updated <PATH>/AGENTS.md");
+    settings.add_filter(r"updated .*CLAUDE\.md", "updated <PATH>/CLAUDE.md");
     settings.bind(|| insta::assert_snapshot!("init_sample_crate", stdout));
 }
 
@@ -59,6 +61,8 @@ fn init_against_cluster_crate_snapshots_checklist() {
         r"updated .*\.locus/lock\.json",
         "updated <PATH>/.locus/lock.json",
     );
+    settings.add_filter(r"updated .*AGENTS\.md", "updated <PATH>/AGENTS.md");
+    settings.add_filter(r"updated .*CLAUDE\.md", "updated <PATH>/CLAUDE.md");
     settings.bind(|| insta::assert_snapshot!("init_cluster_crate", stdout));
 
     assert!(

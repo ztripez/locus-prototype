@@ -3,6 +3,7 @@ source: crates/locus-cli/tests/init_smoke.rs
 expression: stdout
 ---
 wrote <PATH>/.locus/lock.json
+updated <PATH>/AGENTS.md
   OT Canonical Domain Ownership: 1 concept(s), 1 boundary(ies), 2 converter(s)
   DG Dependency Graph / Direction: (empty)
   AB Abstraction Discipline: (empty)

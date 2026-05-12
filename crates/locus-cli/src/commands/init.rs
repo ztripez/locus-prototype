@@ -149,18 +149,18 @@ fn agent_instruction_path(workspace: &Path) -> PathBuf {
 }
 
 fn upsert_locus_agent_block(existing: &str) -> String {
-    if let Some(start) = existing.find(LOCUS_BLOCK_START) {
-        if let Some(end_rel) = existing[start..].find(LOCUS_BLOCK_END) {
-            let end = start + end_rel + LOCUS_BLOCK_END.len();
-            let mut out = String::new();
-            out.push_str(&existing[..start]);
-            out.push_str(LOCUS_AGENT_SNIPPET.trim_end());
-            out.push_str(&existing[end..]);
-            if !out.ends_with('\n') {
-                out.push('\n');
-            }
-            return out;
+    if let Some(start) = existing.find(LOCUS_BLOCK_START)
+        && let Some(end_rel) = existing[start..].find(LOCUS_BLOCK_END)
+    {
+        let end = start + end_rel + LOCUS_BLOCK_END.len();
+        let mut out = String::new();
+        out.push_str(&existing[..start]);
+        out.push_str(LOCUS_AGENT_SNIPPET.trim_end());
+        out.push_str(&existing[end..]);
+        if !out.ends_with('\n') {
+            out.push('\n');
         }
+        return out;
     }
 
     let mut out = existing.trim_end().to_string();
@@ -355,7 +355,7 @@ mod tests {
         assert!(updated.contains("# Agent guide"));
         assert!(updated.contains("After."));
         assert!(!updated.contains("old text"));
-        assert!(updated.contains("Treat findings as architecture feedback"));
+        assert!(updated.contains("treat findings as architecture feedback"));
         assert_eq!(updated.matches(LOCUS_BLOCK_START).count(), 1);
     }
 
