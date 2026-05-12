@@ -28,7 +28,7 @@ pub struct InitArgs {
     /// Workspace root (containing Cargo.toml).
     #[arg(long, default_value = ".")]
     pub workspace: PathBuf,
-    /// Refuse to overwrite an existing locus.lock.
+    /// Refuse to overwrite an existing .locus/lock.json.
     #[arg(long)]
     pub no_overwrite: bool,
     /// Do not write or update the managed Locus block in AGENTS.md / CLAUDE.md.
@@ -43,9 +43,9 @@ pub struct InitArgs {
 }
 
 pub fn run(args: InitArgs) -> Result<()> {
-    use locus_core::lockfile::LOCKFILE_NAME;
+    use locus_core::lockfile::LOCKFILE_RELATIVE_PATH;
 
-    let lockfile_path = args.workspace.join(LOCKFILE_NAME);
+    let lockfile_path = args.workspace.join(LOCKFILE_RELATIVE_PATH);
     if args.no_overwrite && lockfile_path.exists() {
         anyhow::bail!(
             "{} already exists; rerun without --no-overwrite to replace it",
@@ -292,7 +292,7 @@ pub fn parse_prefix_list(raw: &str) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use locus_core::lockfile::LOCKFILE_NAME;
+    use locus_core::lockfile::LOCKFILE_RELATIVE_PATH;
 
     #[test]
     fn parse_prefix_list_splits_and_uppercases() {
@@ -403,7 +403,7 @@ mod tests {
         };
         run(args).unwrap();
 
-        let lockfile_bytes = std::fs::read(dir.join(LOCKFILE_NAME)).unwrap();
+        let lockfile_bytes = std::fs::read(dir.join(LOCKFILE_RELATIVE_PATH)).unwrap();
         let lf: Lockfile = serde_json::from_slice(&lockfile_bytes).unwrap();
         let actual_prefixes: Vec<String> = lf
             .acknowledged_empty

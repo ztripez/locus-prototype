@@ -121,7 +121,7 @@ fn make_finding(
             "remove the import, or route the call through an accepted \
              intermediary (port, application service, or shared crate); \
              if the edge is wrong, edit `paradigms.DG.forbidden_edges` in \
-             `locus.lock`"
+             `.locus/lock.json`"
                 .into(),
         ),
         diagnostic_code: None,

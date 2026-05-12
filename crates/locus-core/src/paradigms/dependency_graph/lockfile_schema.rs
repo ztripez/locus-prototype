@@ -1,4 +1,4 @@
-//! Shape of the DG section inside `locus.lock`.
+//! Shape of the DG section inside `.locus/lock.json`.
 //!
 //! Rules family DG (Dependency Graph / Direction): the lockfile records the
 //! *forbidden* edges in the architecture graph. Allowed edges are everything

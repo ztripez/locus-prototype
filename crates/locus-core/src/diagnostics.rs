@@ -84,8 +84,8 @@ pub const VACANT_PARADIGM_RULE: &str = "LOCUS002";
 /// fields the user is expected to populate (lockfile field name + a short
 /// description for the `why` line).
 ///
-/// The diagnostic is anchored at `locus.lock:1` since the violation is the
-/// lockfile's responsibility, not any source file.
+/// The diagnostic is anchored at `.locus/lock.json:1` since the violation is
+/// the lockfile's responsibility, not any source file.
 pub fn vacant_paradigm_diagnostic(
     prefix: &str,
     name: &str,
@@ -102,7 +102,7 @@ pub fn vacant_paradigm_diagnostic(
     Diagnostic {
         rule_id: VACANT_PARADIGM_RULE.to_string(),
         severity: Severity::Advisory,
-        span: AirSpan::new("locus.lock", 1, 1),
+        span: AirSpan::new(crate::lockfile::LOCKFILE_RELATIVE_PATH, 1, 1),
         concept: Some(prefix.to_string()),
         message: format!(
             "paradigm {prefix} ({name}) has no definitions; rules cannot fire \
@@ -110,9 +110,9 @@ pub fn vacant_paradigm_diagnostic(
         ),
         why,
         suggested_fix: Some(format!(
-            "populate `paradigms.{prefix}` in `locus.lock` (use the matching `locus \
+            "populate `paradigms.{prefix}` in `.locus/lock.json` (use the matching `locus \
              {} ...` mutators, or hand-edit), or add `\"{prefix}\"` to \
-             `acknowledged_empty` in `locus.lock` to silence this paradigm",
+             `acknowledged_empty` in `.locus/lock.json` to silence this paradigm",
             prefix.to_lowercase()
         )),
     }

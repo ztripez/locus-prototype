@@ -1,4 +1,4 @@
-//! Shape of the CR section inside `locus.lock`.
+//! Shape of the CR section inside `.locus/lock.json`.
 //!
 //! Rules family CR (Composition Root Ownership): the lockfile records which
 //! modules are accepted *composition roots* — the only places where concrete

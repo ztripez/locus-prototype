@@ -142,11 +142,11 @@ fn run_git(args: &[&str], workspace: &Path) -> Result<String, DiffError> {
     Ok(String::from_utf8_lossy(&out.stdout).into_owned())
 }
 
-/// Read the baseline `locus.lock` via `git show <baseline>:locus.lock`.
+/// Read the baseline lockfile via `git show <baseline>:.locus/lock.json`.
 /// Returns `None` when the lockfile cannot be resolved:
 /// - the workspace isn't a git repo
 /// - no baseline ref resolves (default chain or `--baseline <ref>`)
-/// - the baseline ref doesn't carry a `locus.lock` (e.g. first commit
+/// - the baseline ref doesn't carry a `.locus/lock.json` (e.g. first commit
 ///   before the lockfile existed)
 /// - the file at the baseline ref fails to parse as a `Lockfile`
 ///
@@ -169,7 +169,7 @@ pub fn read_baseline_lockfile(
         Some(b) => b.to_string(),
         None => resolve_default_baseline(workspace).ok()?,
     };
-    let arg = format!("{baseline}:{}", locus_core::LOCKFILE_NAME);
+    let arg = format!("{baseline}:{}", locus_core::LOCKFILE_RELATIVE_PATH);
     let out = Command::new("git")
         .args(["show", &arg])
         .current_dir(workspace)

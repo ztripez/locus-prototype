@@ -2,7 +2,7 @@
 //!
 //! Spec: `docs/PARADIGMS.md` §"Paradigm 12: Failure Lineage Ownership". Reads
 //! declared domain module patterns and boundary error patterns from
-//! `paradigms.FL` in `locus.lock` and flags functions in domain modules whose
+//! `paradigms.FL` in `.locus/lock.json` and flags functions in domain modules whose
 //! `Result<_, E>` return type leaks a boundary error — the layer edge that
 //! should have wrapped the error in a domain error type didn't, breaking the
 //! failure-lineage invariant.

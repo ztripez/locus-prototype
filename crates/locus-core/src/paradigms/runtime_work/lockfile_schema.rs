@@ -1,4 +1,4 @@
-//! Shape of the RW section inside `locus.lock`.
+//! Shape of the RW section inside `.locus/lock.json`.
 //!
 //! Rules family RW (Runtime Work Ownership): spawning tasks, threads, jobs,
 //! or background work belongs in declared *runtime owner* modules — job

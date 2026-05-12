@@ -1,4 +1,4 @@
-//! Shape of the FL section inside `locus.lock`.
+//! Shape of the FL section inside `.locus/lock.json`.
 //!
 //! Rules family FL (Failure Lineage Ownership): the lockfile records two
 //! lists of patterns that together describe where transport-level failures

@@ -55,7 +55,7 @@ fn bo001_diagnostic(
              conversion into an application-layer service that calls the \
              framework on the domain's behalf); if the import is a \
              domain-friendly utility, narrow the `paradigms.BO.forbidden_in_domain` \
-             pattern in `locus.lock` so it no longer matches"
+             pattern in `.locus/lock.json` so it no longer matches"
                 .into(),
         ),
     }
@@ -151,7 +151,7 @@ fn bo002_diagnostic(
             "introduce a domain type and a converter at the \
              boundary; if `{type_text}` is genuinely a domain \
              concept (rare), narrow \
-             `paradigms.BO.persistence_type_patterns` in `locus.lock` \
+             `paradigms.BO.persistence_type_patterns` in `.locus/lock.json` \
              so `{persistence_pattern}` no longer matches"
         )),
     }
@@ -293,7 +293,7 @@ fn bo004_diagnostic(
              converter; if the derive is genuinely needed on \
              the canonical (e.g. fixture/config), accept it \
              via `paradigms.BO.forbidden_canonical_derives` in \
-             `locus.lock`",
+             `.locus/lock.json`",
             ty.name
         )),
     }
@@ -422,7 +422,7 @@ fn bo005_diagnostic(
              root. The domain function then calls `repo.save(...)` \
              instead of touching storage directly. If this module is \
              actually outside the domain, narrow \
-             `paradigms.BO.domain_paths` in `locus.lock`."
+             `paradigms.BO.domain_paths` in `.locus/lock.json`."
                 .to_string(),
         ),
     }

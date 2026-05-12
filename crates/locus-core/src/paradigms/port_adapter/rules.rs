@@ -43,7 +43,7 @@ fn pa001_diagnostic(ty: &locus_air::AirType, imp: &AirImplBlock, mode: CheckMode
             "move `{}` to a ports module (typically `application::ports::*`) and the \
              impl for `{}` to an adapter/infrastructure module; if this trait is a \
              genuine utility helper rather than a port, accept it via \
-             `paradigms.PA.accepted_colocated_traits` in `locus.lock`",
+             `paradigms.PA.accepted_colocated_traits` in `.locus/lock.json`",
             ty.name, imp.target_type
         )),
     }
@@ -171,7 +171,7 @@ fn pa002_diagnostic(
              move the `{}` usage into an infrastructure adapter \
              that implements the port; if the import is genuinely \
              a non-adapter utility, narrow \
-             `paradigms.PA.concrete_adapter_patterns` in `locus.lock`",
+             `paradigms.PA.concrete_adapter_patterns` in `.locus/lock.json`",
             imp.path
         )),
     }
@@ -344,7 +344,7 @@ fn pa003_diagnostic(
              application function `{symbol}` should depend on the trait, not \
              reach for `{evidence}` directly. If `{module_path}` is not \
              actually application code, narrow `paradigms.PA.application_paths` \
-             in `locus.lock`."
+             in `.locus/lock.json`."
         )),
     }
 }
@@ -383,7 +383,7 @@ fn pa004_diagnostic(
              declared `composition::*` module); if `{module_label}` \
              is itself a legitimate composition site, add it to \
              `paradigms.PA.accepted_construction_paths` in \
-             `locus.lock`",
+             `.locus/lock.json`",
             a.target
         )),
     }

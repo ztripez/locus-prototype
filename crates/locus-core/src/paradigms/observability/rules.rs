@@ -420,7 +420,7 @@ fn diagnostic_for_macro_emission(
             "route this {kind_label} through the accepted owner module \
              (e.g. an observability facade in `{owner_lockfile_path}`), or, \
              if `{module_path}` is the legitimate owner, add it to \
-             `{owner_lockfile_path}` in `locus.lock`. To stop treating \
+             `{owner_lockfile_path}` in `.locus/lock.json`. To stop treating \
              `{matched_pattern}` as a {kind_label} site, remove it from \
              `{macro_lockfile_path}`."
         )),

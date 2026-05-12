@@ -49,7 +49,7 @@ pub trait Paradigm {
     fn rule_prefix(&self) -> &'static str;
     /// Build this paradigm's lockfile section from a fresh AIR scan. Called
     /// by `locus init`. The returned JSON is stored verbatim under
-    /// `paradigms.<prefix>` in `locus.lock`.
+    /// `paradigms.<prefix>` in `.locus/lock.json`.
     fn init(&self, air: &AirWorkspace) -> serde_json::Value;
     /// Run all of this paradigm's rules against `air` and return diagnostics.
     ///

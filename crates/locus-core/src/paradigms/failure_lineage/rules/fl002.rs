@@ -113,7 +113,7 @@ fn diagnostic_for_fl002(
              `{module_path}` is a legitimate invariant owner (supervisor, \
              startup-asserting entry point, test-support module), accept it \
              by adding the module to `paradigms.FL.invariant_owner_paths` \
-             in `locus.lock`",
+             in `.locus/lock.json`",
             cs.callee,
         )),
     }

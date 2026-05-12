@@ -251,7 +251,7 @@ fn diagnostic_for(
              loader) and pass the resolved value through dependency \
              injection; if this file is the legitimate config owner, \
              add its module pattern to `paradigms.CF.config_paths` in \
-             `locus.lock`"
+             `.locus/lock.json`"
                 .into(),
         ),
     }
@@ -292,7 +292,7 @@ fn cf002_diagnostic(
         suggested_fix: Some(format!(
             "move the literal into a config struct loaded by the config \
              layer; or, if `{module_path}` is a legitimate config owner, \
-             add it to `paradigms.CF.config_paths` in `locus.lock`. For \
+             add it to `paradigms.CF.config_paths` in `.locus/lock.json`. For \
              one-off intentional uses (test fixtures, hardcoded protocol \
              constants), suppress with `// locus: allow CF002 reason=\"…\" \
              expires=\"YYYY-MM-DD\"`"
@@ -341,7 +341,7 @@ fn cf003_diagnostic(
         suggested_fix: Some(format!(
             "load the ID from a config struct owned by the config layer; \
              or, if `{module_path}` legitimately owns the value, add it \
-             to `paradigms.CF.config_paths` in `locus.lock`. For one-off \
+             to `paradigms.CF.config_paths` in `.locus/lock.json`. For one-off \
              intentional uses, suppress with `// locus: allow CF003 \
              reason=\"…\" expires=\"YYYY-MM-DD\"`"
         )),

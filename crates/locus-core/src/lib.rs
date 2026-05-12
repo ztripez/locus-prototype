@@ -25,7 +25,8 @@ pub use exceptions::{
 pub use init::{CommandOption, Suggestion, SuggestionCategory};
 pub use loaders::{Loader, apply_loaders};
 pub use lockfile::{
-    AcknowledgedEmpty, AcknowledgedEmptyEntry, Exception, LOCKFILE_NAME, Lockfile, LockfileError,
+    AcknowledgedEmpty, AcknowledgedEmptyEntry, Exception, LOCKFILE_RELATIVE_PATH, LOCUS_DIR,
+    Lockfile, LockfileError,
 };
 pub use paradigms::{Paradigm, registry};
 pub use policy_guard::{

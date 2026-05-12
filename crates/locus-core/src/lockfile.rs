@@ -1,4 +1,4 @@
-//! `locus.lock` — accepted architecture decisions.
+//! `.locus/lock.json` — accepted architecture decisions.
 //!
 //! One file shared by all paradigms; each paradigm owns its own section under
 //! `paradigms.<prefix>`. Phase 2 only writes the OT section; the namespace is
@@ -15,7 +15,14 @@ use std::path::Path;
 use thiserror::Error;
 
 pub const LOCKFILE_VERSION: u32 = 1;
-pub const LOCKFILE_NAME: &str = "locus.lock";
+/// Directory under the workspace root that holds all Locus configuration.
+/// Mirrors `.git` / `.vscode` / `.github` conventions — a single hidden folder
+/// for the tool's state. Future config files (architecture policy YAML, policy
+/// declaration files, etc.) live alongside the lockfile here.
+pub const LOCUS_DIR: &str = ".locus";
+/// Path of the lockfile relative to the workspace root.
+/// The single source of truth for "where the lockfile lives on disk".
+pub const LOCKFILE_RELATIVE_PATH: &str = ".locus/lock.json";
 
 /// Full struct form of an `acknowledged_empty` entry. Carries optional debt
 /// metadata: `expires`, `reason`, `owner`, `debt_id`, and `introduced_by`.
@@ -51,7 +58,7 @@ pub struct AcknowledgedEmpty {
 /// (`"BO"`) and the new struct form (`{"prefix": "BO", "reason": "…", …}`)
 /// for entries in `Lockfile::acknowledged_empty`.
 ///
-/// Backwards compatibility: the current `locus.lock` uses `Vec<String>`;
+/// Backwards compatibility: the current `.locus/lock.json` uses `Vec<String>`;
 /// those entries parse as `AcknowledgedEmptyEntry::Legacy` and are
 /// surfaced in `locus debt` as `LegacyNoMetadata`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -126,10 +133,11 @@ impl Lockfile {
         self.acknowledged_empty.iter().any(|e| e.prefix() == prefix)
     }
 
-    /// Load `locus.lock` from a workspace root. Returns `Lockfile::empty()` if
-    /// the file does not exist (so paradigms can run without a lockfile yet).
+    /// Load `.locus/lock.json` from a workspace root. Returns
+    /// `Lockfile::empty()` if the file does not exist (so paradigms can run
+    /// without a lockfile yet).
     pub fn load_or_empty(workspace_root: &Path) -> Result<Self, LockfileError> {
-        let path = workspace_root.join(LOCKFILE_NAME);
+        let path = workspace_root.join(LOCKFILE_RELATIVE_PATH);
         if !path.exists() {
             return Ok(Self::empty());
         }
@@ -154,14 +162,21 @@ impl Lockfile {
         }
     }
 
-    /// Persist `locus.lock` at the workspace root, pretty-printed for review.
+    /// Persist `.locus/lock.json` under the workspace root, pretty-printed for
+    /// review. Creates the `.locus/` directory if it does not already exist.
     /// Overwrites the existing file.
     pub fn save(&self, workspace_root: &Path) -> Result<std::path::PathBuf, LockfileError> {
-        let path = workspace_root.join(LOCKFILE_NAME);
+        let path = workspace_root.join(LOCKFILE_RELATIVE_PATH);
         let bytes = serde_json::to_vec_pretty(self).map_err(|source| LockfileError::Parse {
             path: path.clone(),
             source,
         })?;
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).map_err(|source| LockfileError::Io {
+                path: parent.to_path_buf(),
+                source,
+            })?;
+        }
         std::fs::write(&path, bytes).map_err(|source| LockfileError::Io {
             path: path.clone(),
             source,
@@ -275,7 +290,7 @@ mod tests {
 
     #[test]
     fn legacy_lockfile_vec_string_parses() {
-        // Backwards-compatibility: the current locus.lock has
+        // Backwards-compatibility: the current .locus/lock.json has
         // "acknowledged_empty": ["BO", "CF", "CR", ...]
         let json = r#"{"version":1,"acknowledged_empty":["BO","CF","CR","DA"]}"#;
         let lf: Lockfile = serde_json::from_str(json).unwrap();

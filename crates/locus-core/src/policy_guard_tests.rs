@@ -605,11 +605,11 @@ fn pg_catches_the_tagged_override_bypass_attempt() {
     }
 }
 
-/// Every PG diagnostic must anchor its span at `locus.lock`. The CLI
+/// Every PG diagnostic must anchor its span at `.locus/lock.json`. The CLI
 /// pipeline appends PG diagnostics AFTER the `--changed` file filter
 /// (see `crates/locus-cli/src/main.rs::check`), so PG bypasses
 /// `--changed` entirely. This test pins the contract: if a future PG
-/// rule emits a span outside `locus.lock`, the bypass invariant
+/// rule emits a span outside `.locus/lock.json`, the bypass invariant
 /// breaks silently because the CLI's pipeline-order guard relies on
 /// PG being appended unfiltered.
 #[test]
@@ -635,8 +635,10 @@ fn all_pg_diagnostics_anchor_to_lockfile_span() {
         .filter(|d| d.rule_id.starts_with("PG"))
         .collect();
     assert!(
-        pg_diags.iter().all(|d| d.span.file == "locus.lock"),
-        "every PG diagnostic must anchor to `locus.lock`; found: {:?}",
+        pg_diags
+            .iter()
+            .all(|d| d.span.file == crate::lockfile::LOCKFILE_RELATIVE_PATH),
+        "every PG diagnostic must anchor to `.locus/lock.json`; found: {:?}",
         pg_diags
             .iter()
             .map(|d| (&d.rule_id, &d.span.file))
@@ -645,8 +647,10 @@ fn all_pg_diagnostics_anchor_to_lockfile_span() {
     // PG000 also: covered by the `baseline = None` path.
     let baseline_missing = check_policy_mutation(&cur, None, CheckMode::AgentStrict, false, false);
     assert!(
-        baseline_missing.iter().all(|d| d.span.file == "locus.lock"),
-        "PG000 must also anchor to `locus.lock`",
+        baseline_missing
+            .iter()
+            .all(|d| d.span.file == crate::lockfile::LOCKFILE_RELATIVE_PATH),
+        "PG000 must also anchor to `.locus/lock.json`",
     );
 }
 
@@ -944,8 +948,9 @@ fn pg008_span_anchors_to_lockfile() {
     let diags = check_policy_mutation(&cur, Some(&base), CheckMode::Human, false, false);
     let pg008 = diags.iter().find(|d| d.rule_id == "PG008").unwrap();
     assert_eq!(
-        pg008.span.file, "locus.lock",
-        "PG008 must anchor its span to `locus.lock`"
+        pg008.span.file,
+        crate::lockfile::LOCKFILE_RELATIVE_PATH,
+        "PG008 must anchor its span to `.locus/lock.json`"
     );
 }
 

@@ -1,4 +1,4 @@
-//! Shape of the RM section inside `locus.lock`.
+//! Shape of the RM section inside `.locus/lock.json`.
 //!
 //! Rules family RM (Responsibility Mixing): the lockfile records a per-function
 //! cap on the number of *distinct* `ActionKind` values an `AirTruthAction`

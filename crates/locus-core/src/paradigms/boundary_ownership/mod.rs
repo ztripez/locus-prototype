@@ -1,7 +1,7 @@
 //! BO — Boundary Ownership.
 //!
 //! Spec: `docs/PARADIGMS.md` §"Paradigm 5: Boundary Ownership". Reads the
-//! domain/application layer split from `paradigms.BO` in `locus.lock` and
+//! domain/application layer split from `paradigms.BO` in `.locus/lock.json` and
 //! flags imports of transport/persistence/serialization paths from inside
 //! the domain layer.
 //!

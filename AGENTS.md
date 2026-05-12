@@ -43,7 +43,7 @@ Dogfood discipline remains strict: do not weaken rules, raise budgets, add broad
 - `locus_core::exceptions` — `// locus: allow XX###` source hints + `Lockfile.exceptions[]` lockfile entries. Expired exceptions emit `LOCUS001` warnings instead of silently re-firing.
 - **`LOCUS002` (vacancy nudge)** — emitted once per vacant-by-definition paradigm whose declaration lists are empty. The user either populates the paradigm's section or adds the prefix to `Lockfile.acknowledged_empty` to silence it. Fires for BO/PA/CR/RW/DA/UT/ER/FL/DG/CF/RM/TA/FO when un-onboarded.
 - **Default posture: noisy until configured, narrow with the lockfile.** Numeric/structural rules (CX001/CX002/CX007/MO001/MO002, plus structural rules like ER001/ER007/DC002/DC004/AB001/AB002) fire on un-onboarded code with built-in defaults. Vacant-by-definition paradigms emit `LOCUS002` instead of silence. Configuration narrows via `paradigms.<prefix>.*` overrides, `acknowledged_empty`, or `// locus: allow XX###` exception hints.
-- **Policy Guard (`PG000`/`PG001`/`PG002`/`PG003`/`PG004`/`PG006`)** — agents cannot clear `--agent-strict` by widening policy. Compares current `locus.lock` to `git show <baseline>:locus.lock`; fires Fatal under strict on missing baseline (PG000), default- or override-budget raises (PG001), new overrides (PG002, regardless of metadata), new `exempt_paths` (PG003), new `acknowledged_empty` (PG004), and new overrides missing debt metadata (PG006). PG runs **after** `apply_exceptions` so lockfile exceptions cannot silence it. `--allow-policy-calibration` downgrades PG001–PG004 to Advisory but **not** PG000 (audit gap) or PG006 (justification gap). `--allow-missing-policy-baseline` silences PG000 when the gap is intentional. Spec: `docs/superpowers/specs/2026-05-09-policy-guard-paradigm.md` (#44).
+- **Policy Guard (`PG000`/`PG001`/`PG002`/`PG003`/`PG004`/`PG006`)** — agents cannot clear `--agent-strict` by widening policy. Compares current `.locus/lock.json` to `git show <baseline>:.locus/lock.json`; fires Fatal under strict on missing baseline (PG000), default- or override-budget raises (PG001), new overrides (PG002, regardless of metadata), new `exempt_paths` (PG003), new `acknowledged_empty` (PG004), and new overrides missing debt metadata (PG006). PG runs **after** `apply_exceptions` so lockfile exceptions cannot silence it. `--allow-policy-calibration` downgrades PG001–PG004 to Advisory but **not** PG000 (audit gap) or PG006 (justification gap). `--allow-missing-policy-baseline` silences PG000 when the gap is intentional. Spec: `docs/superpowers/specs/2026-05-09-policy-guard-paradigm.md` (#44).
 
 Self-application status is not "zero findings."
 
@@ -80,7 +80,7 @@ tests/fixtures/sample-crate/   # standalone fixture; NOT a workspace member
 
 ## Naming
 
-- **Locus** is the tool (Cargo crate, CLI binary `locus`, lockfile `locus.lock`).
+- **Locus** is the tool (Cargo crate, CLI binary `locus`, lockfile `.locus/lock.json`).
 - **OT / "one truth"** is one paradigm. It survives in the rule prefix (`OT###`), the source-hint syntax (`// locus: ot canonical`, `// locus: ot boundary`, …), and the module `crates/locus-core/src/paradigms/one_truth/`.
 - Future paradigms get their own prefixes (`DG###`, `CF###`, …) and their own modules under `paradigms/`.
 
@@ -128,7 +128,7 @@ These are the in-repo restatement of `docs/AGENT_GUARDRAILS.md` — read that do
 
 - **No proc macros as the authoring surface.** Source hints are compact `// locus:` comments only (paradigm-scoped subforms like `// locus: ot canonical`, generic forms like `// locus: allow XX###` and `// locus: fact <fact_kind>`).
 - **No required runtime/compile-time dependency** in projects being checked.
-- **No hand-authored semantic config.** Accepted ownership lives in a generated `locus.lock`. A small structural YAML (paths, generated globs) is allowed; a giant rule DSL is not.
+- **No hand-authored semantic config.** Accepted ownership lives in a generated `.locus/lock.json`. A small structural YAML (paths, generated globs) is allowed; a giant rule DSL is not.
 - **Blocking rules must be deterministic.** No LLM-in-the-loop for fail/pass decisions in `locus check`. Optional advisory modes may exist later.
 - **Inference-first UX.** Verbose annotations are a UX failure. The tool infers role; users accept ambiguous cases via CLI (`locus accept …`).
 - **Make the canonical path shorter than the shadow path** — generators are part of the product, not a nice-to-have.

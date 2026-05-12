@@ -1,4 +1,4 @@
-//! Shape of the TA section inside `locus.lock`.
+//! Shape of the TA section inside `.locus/lock.json`.
 //!
 //! Rules family TA (Test Architecture Ownership): the lockfile records the
 //! module patterns that identify *test* code. TA001 fires on public types

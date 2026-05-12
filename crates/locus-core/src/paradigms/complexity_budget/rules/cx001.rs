@@ -144,7 +144,7 @@ fn make_finding(
             "split the function into smaller steps each owning one decision, \
              or — if this length is intended (e.g. a parser arm or state \
              machine) — raise the budget by adding an override to \
-             `paradigms.CX.overrides` in `locus.lock`"
+             `paradigms.CX.overrides` in `.locus/lock.json`"
                 .into(),
         ),
         diagnostic_code: None,

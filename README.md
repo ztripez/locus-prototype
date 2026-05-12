@@ -58,7 +58,7 @@ Language adapters emit normalized source facts into AIR, the Architecture Interm
 
 What's *not* yet in AIR (planned, tracked in `CLAUDE.md` roadmap): general literal capture beyond truth actions, full branch / arm-body inspection, discarded-binding (`let _ =`) tracking, retry-loop shape detection. These limit how deeply some rules can match the spec.
 
-The core rule engine consumes AIR plus accepted ownership metadata in `locus.lock` and emits diagnostics.
+The core rule engine consumes AIR plus accepted ownership metadata in `.locus/lock.json` and emits diagnostics.
 
 Framework or runtime-specific knowledge enters through deterministic sub-paradigm loaders. The current `std-rt` loader covers Rust language-level patterns (`tokio::spawn` / `std::thread::spawn` / `rayon::spawn` → `spawned_work`; `std::env::var` family → `config_read`; the print/dbg/log macro family → `logging`). Framework-specific loaders (reqwest, sqlx, tracing-spans, axum, …) are out of scope until the paradigm rule set is more complete — Locus rules operate on the normalized facts, not framework-specific opinions.
 

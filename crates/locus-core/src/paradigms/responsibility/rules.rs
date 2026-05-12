@@ -231,7 +231,7 @@ fn rm001_diagnostic(
             "split `{fn_sym}` along ownership lines: extract validation, construction, and \
              side-effect orchestration into separate single-responsibility functions. If this \
              density is intentional (e.g. a generated handler), add the file's module path to \
-             `paradigms.RM.exempt_paths` in `locus.lock`."
+             `paradigms.RM.exempt_paths` in `.locus/lock.json`."
         )),
     }
 }
@@ -373,7 +373,7 @@ fn rm002_diagnostic(
             "move the {kind_label} side effect out of `{symbol}` and into a caller \
              (an orchestrator or use-case). Keep the converter pure mapping. If this \
              module is *not* actually a converter, remove its pattern from \
-             `paradigms.RM.converter_paths` in `locus.lock`."
+             `paradigms.RM.converter_paths` in `.locus/lock.json`."
         )),
     }
 }
@@ -421,14 +421,14 @@ impl DensityRole {
                  decisions ({{StringCompare, EnumMatch}}). Push the policy down into a domain \
                  module the handler delegates to — handlers should orchestrate, not branch. \
                  If this density is intentional, raise `paradigms.RM.max_handler_decisions` \
-                 in `locus.lock` or remove the module from `paradigms.RM.handler_paths`."
+                 in `.locus/lock.json` or remove the module from `paradigms.RM.handler_paths`."
             ),
             DensityRole::Repository => format!(
                 "the repository function `{fn_sym}` in `{module_path}` is making {count} \
                  branch-style decisions ({{StringCompare, EnumMatch}}). Repositories should \
                  stay close to persistence; lift the branching into a domain function the \
                  repository feeds. If this density is intentional, raise \
-                 `paradigms.RM.max_repository_decisions` in `locus.lock` or remove the \
+                 `paradigms.RM.max_repository_decisions` in `.locus/lock.json` or remove the \
                  module from `paradigms.RM.repository_paths`."
             ),
         }
@@ -723,7 +723,7 @@ fn rm005_diagnostic(
              and a separate function that does the IO. The validator should accept \
              already-fetched data, not fetch it itself. If `{module_path}` is not \
              actually a validator module, narrow `paradigms.RM.validator_paths` in \
-             `locus.lock`."
+             `.locus/lock.json`."
         )),
     }
 }
@@ -844,7 +844,7 @@ fn rm006_diagnostic(
             "extract the persistence call into a separate `Repository` adapter \
              and keep the domain method on `{symbol}` pure (operates on `&self` \
              and returns a value). If `{module_path}` is not actually a domain \
-             module, narrow `paradigms.RM.domain_paths_rm` in `locus.lock`."
+             module, narrow `paradigms.RM.domain_paths_rm` in `.locus/lock.json`."
         )),
     }
 }

@@ -1,4 +1,4 @@
-//! Shape of the CF section inside `locus.lock`.
+//! Shape of the CF section inside `.locus/lock.json`.
 //!
 //! Rules family CF (Config/Data Ownership): behavior-shaping decision data
 //! must live in an accepted config owner. CF001 flags environment-variable

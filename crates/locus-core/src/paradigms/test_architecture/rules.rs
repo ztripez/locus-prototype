@@ -363,7 +363,7 @@ fn ta004_diagnostic(
         suggested_fix: Some(format!(
             "move `impl {trait_path} for {}` to a dedicated test-adapter \
              module (and add that module to \
-             `paradigms.TA.accepted_test_adapter_paths` in `locus.lock`), \
+             `paradigms.TA.accepted_test_adapter_paths` in `.locus/lock.json`), \
              or — if this trait isn't really a port — narrow \
              `paradigms.TA.port_trait_patterns` so it no longer matches",
             imp.target_type,

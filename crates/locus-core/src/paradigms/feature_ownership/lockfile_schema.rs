@@ -1,4 +1,4 @@
-//! Shape of the FO section inside `locus.lock`.
+//! Shape of the FO section inside `.locus/lock.json`.
 //!
 //! Rules family FO (Feature Ownership): records the named feature regions of
 //! the workspace so FO rules can detect domain concepts being defined inside

@@ -75,7 +75,7 @@ fn mo001_diagnostic(
             "split the module into submodules each owning one architectural role, \
              or — if this density is intended (e.g. an API surface) — raise the \
              budget by adding an override to `paradigms.MO.overrides` in \
-             `locus.lock`"
+             `.locus/lock.json`"
                 .into(),
         ),
     }
@@ -244,7 +244,7 @@ fn mo002_diagnostic(
             format!("file `{module_path}` exhibits roles: {role_list}"),
             format!(
                 "MO002 entropy threshold is {threshold} (configured via \
-                 `paradigms.MO.entropy_threshold` in `locus.lock`)"
+                 `paradigms.MO.entropy_threshold` in `.locus/lock.json`)"
             ),
             "a single file mixing canonical/boundary/converter/handler/persistence/io \
              roles is a responsibility blob — split each role into its own module"
@@ -256,7 +256,7 @@ fn mo002_diagnostic(
              `convert.rs`, handlers into a `handlers/` module, and \
              persistence/io into an adapter layer. If the density is \
              intentional, raise `paradigms.MO.entropy_threshold` in \
-             `locus.lock`."
+             `.locus/lock.json`."
                 .into(),
         ),
     }
@@ -407,7 +407,7 @@ fn mo004_diagnostic(
             "move `{}` into a `handlers/` module that depends on the \
              canonical, instead of defining both in the same file. If the \
              name match is a false positive, narrow \
-             `paradigms.MO.handler_name_patterns` in `locus.lock`.",
+             `paradigms.MO.handler_name_patterns` in `.locus/lock.json`.",
             handler.name
         )),
     }

@@ -243,7 +243,7 @@ fn cr002_diagnostic(
              composition root remains the single owner of \
              construction, but the wiring stops being a wall of \
              text. If this density is intentional, raise \
-             `paradigms.CR.wiring_density_threshold` in `locus.lock`"
+             `paradigms.CR.wiring_density_threshold` in `.locus/lock.json`"
         )),
     }
 }

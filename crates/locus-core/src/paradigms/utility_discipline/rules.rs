@@ -132,7 +132,7 @@ fn ut002_diagnostic(
              into the domain/feature module that owns the concept; if the \
              dependency is legitimate, remove `{module_path}` from \
              `paradigms.UT.utility_paths` (or narrow \
-             `paradigms.UT.forbidden_imports`) in `locus.lock`",
+             `paradigms.UT.forbidden_imports`) in `.locus/lock.json`",
             imp.path
         )),
     }
@@ -215,7 +215,7 @@ fn ut003_diagnostic(
         suggested_fix: Some(format!(
             "if `{module_path}` is intentionally a utility module, accept it \
              by adding its path to `paradigms.UT.accepted_utility_paths` in \
-             `locus.lock` (you may also want to add it to `utility_paths` so \
+             `.locus/lock.json` (you may also want to add it to `utility_paths` so \
              UT001/UT002/UT004/UT005 apply). Otherwise rename the module to \
              reflect its actual responsibility."
         )),
@@ -321,7 +321,7 @@ fn ut004_diagnostic(
             "move the {label} of `{}` into the domain/feature module \
              that owns the concept. If `{module_path}` is genuinely \
              not a utility, remove it from `paradigms.UT.utility_paths` \
-             in `locus.lock`.",
+             in `.locus/lock.json`.",
             action.target
         )),
     }
@@ -432,7 +432,7 @@ fn ut005_diagnostic(
             "move the {label} of `{}` into the domain/feature module \
              that owns the rule. If `{module_path}` is genuinely not \
              a utility, remove it from `paradigms.UT.utility_paths` \
-             in `locus.lock`.",
+             in `.locus/lock.json`.",
             action.target
         )),
     }

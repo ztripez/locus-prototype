@@ -1,4 +1,4 @@
-//! Shape of the BO section inside `locus.lock`.
+//! Shape of the BO section inside `.locus/lock.json`.
 //!
 //! Rules family BO (Boundary Ownership): protocol/infrastructure concerns
 //! belong at the boundary, not inside the domain layer. The lockfile records

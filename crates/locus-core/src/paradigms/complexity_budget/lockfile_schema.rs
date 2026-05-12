@@ -471,7 +471,7 @@ mod tests {
 
     #[test]
     fn cx_section_with_legacy_strings_round_trips_as_structs() {
-        // The current locus.lock format: Vec<String> entries.
+        // The current .locus/lock.json format: Vec<String> entries.
         let json = r#"{"exempt_paths": ["*::tests::*", "locus_air::*"]}"#;
         let section: CxSection = serde_json::from_str(json).unwrap();
         assert_eq!(section.exempt_paths.len(), 2);

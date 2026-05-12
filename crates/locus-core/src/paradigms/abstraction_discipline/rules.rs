@@ -162,7 +162,7 @@ fn ab001_diagnostic(t: &TraitDecl, lone: &str, mode: CheckMode) -> Diagnostic {
             "remove the trait and use `{lone}` directly, or — if this is a \
              genuine port awaiting a second impl (e.g. a test double in a \
              separate environment) — add `{}` to \
-             `paradigms.AB.accepted_single_impl_traits` in `locus.lock`",
+             `paradigms.AB.accepted_single_impl_traits` in `.locus/lock.json`",
             t.symbol
         )),
     }
@@ -246,7 +246,7 @@ fn ab002_diagnostic(
         suggested_fix: Some(format!(
             "rename the type after the *domain concept it owns* (e.g. `UserManager` \
              → `UserDirectory`), or — if this name is genuinely the right one — \
-             add `{}` to `paradigms.AB.accepted_abstraction_names` in `locus.lock`",
+             add `{}` to `paradigms.AB.accepted_abstraction_names` in `.locus/lock.json`",
             ty.symbol
         )),
     }

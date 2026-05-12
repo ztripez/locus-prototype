@@ -3,7 +3,7 @@
 //! Spec: `docs/PARADIGMS.md` §"Paradigm 8: Responsibility Ownership".
 //!
 //! Reads the per-function distinct-`ActionKind` cap from
-//! `paradigms.RM.default_max_action_kinds` in `locus.lock` and flags any
+//! `paradigms.RM.default_max_action_kinds` in `.locus/lock.json` and flags any
 //! function whose `AirTruthAction` body mixes more than that many kinds of
 //! work — the "kitchen-sink handler" anti-pattern.
 //!

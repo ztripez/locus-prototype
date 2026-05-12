@@ -1,4 +1,4 @@
-//! Shape of the UT section inside `locus.lock`.
+//! Shape of the UT section inside `.locus/lock.json`.
 //!
 //! Rules family UT (Utility / Shared Module Discipline): the lockfile records
 //! the module patterns that are *declared* utility modules. UT001 fires on

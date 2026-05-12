@@ -153,7 +153,7 @@ Developers should only intervene for ambiguous or intentional cases.
 The accepted concept graph should live in a generated lockfile:
 
 ```text
-locus.lock
+.locus/lock.json
 ```
 
 This is reviewable, diffable, and updated by commands. Developers should not maintain concept declarations by hand in a large semantic config file.
@@ -378,7 +378,7 @@ Every inferred fact should include confidence and reasons where practical.
 
 ## Lockfile
 
-`locus.lock` records accepted architecture decisions.
+`.locus/lock.json` records accepted architecture decisions.
 
 It is generated and updated by CLI commands. It should be reviewed in pull requests, but not edited by hand in normal use.
 
@@ -1137,7 +1137,7 @@ Deliverables:
 * `locus init`
 * `locus explain-symbol`
 * `locus accept`
-* generated `locus.lock`
+* generated `.locus/lock.json`
 
 ### Phase 3 — First fatal rules
 
@@ -1208,7 +1208,7 @@ A useful first milestone is complete when the tool can run on a Rust project and
 
 1. emit AIR JSON,
 2. infer likely canonical and boundary types,
-3. generate `locus.lock`,
+3. generate `.locus/lock.json`,
 4. accept or reject candidate symbols,
 5. detect a newly added `UserModel`-style shadow type,
 6. detect direct construction of a canonical type outside owner/converter,

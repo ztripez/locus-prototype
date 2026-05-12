@@ -44,7 +44,7 @@ fn da001_diagnostic(decl: &AirType, mode: CheckMode) -> Diagnostic {
         suggested_fix: Some(format!(
             "if this trait is a real port / accepted single-impl seam, add `\"{}\"` \
              (or its full symbol `\"{}\"`) to `paradigms.DA.accepted_single_impl` in \
-             `locus.lock`; otherwise inline the trait's contract into the concrete \
+             `.locus/lock.json`; otherwise inline the trait's contract into the concrete \
              type and call sites",
             decl.name, decl.symbol
         )),
