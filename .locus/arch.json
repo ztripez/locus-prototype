@@ -1,0 +1,7 @@
+{
+  "policies": [
+    "registry-integrity",
+    "registry-coherence",
+    "default-pass-through"
+  ]
+}

@@ -27,6 +27,25 @@ Prioritize #71–#76 work unless the maintainer explicitly redirects. Public rel
 
 Dogfood discipline remains strict: do not weaken rules, raise budgets, add broad exemptions, or hide findings to make `locus check --workspace .` pass. If a finding is real debt, keep it visible or add a narrow, justified, time-bounded exception with ownership metadata. Do not implement future AC/TX/SE-style paradigm packs before the decision/policy pipeline exists.
 
+### Architecture declaration (`#75`)
+
+Locus dogfoods its own governance via `.locus/arch.json`:
+
+```json
+{
+  "policies": [
+    "registry-integrity",
+    "registry-coherence",
+    "default-pass-through"
+  ]
+}
+```
+
+- **`registry-integrity`** (LOCUS003) — emits when a rule code observed at runtime has no registered `RuleDefinition`. Strangler-completion signal.
+- **`registry-coherence`** (LOCUS004) — emits when the declared policy list drifts from the registered policy set, when a registered rule references an unknown paradigm at runtime, when a registered paradigm references an unknown rule, or when `.locus/arch.json` is missing/malformed.
+
+Both run **advisory-only**: they surface drift without blocking CI. The MVP framing is deliberate — future iterations can elevate severity once arch-drift behavior is well-understood. This is the first architecture-governance MVP per #75, not the final observation/mutation engine — public release polish, full architecture style catalogue, and git-history observation are non-goals for the MVP.
+
 ## Project status
 
 20 paradigms registered; **90 rules implemented** (up from 41 — see `docs/PARADIGMS.md` "Implementation status (snapshot)" for the per-paradigm rule list). Two loaders ship: **`std-rt`** produces 6 language-level fact kinds (`SpawnedWork`, `ConfigRead`, `Logging`, `BlockingCall`, `PersistenceWrite`, `ExternalIo` from stdlib patterns); **`markers`** promotes `// locus: fact <fact_kind>` source hints into facts for the 5 kinds the loader tier can't auto-recognise (`HotPath`, `RequestContext`, `BoundaryEntry`, `RuntimeStateOwner`, `BackgroundWorker`). Highlight set:
