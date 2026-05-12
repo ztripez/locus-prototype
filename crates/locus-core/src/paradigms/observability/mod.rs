@@ -43,13 +43,15 @@ impl Paradigm for Observability {
         // print/dbg baseline on first deserialize.
         serde_json::Value::Null
     }
-    fn check(&self, air: &AirWorkspace, lockfile: &Lockfile, mode: CheckMode) -> Vec<Diagnostic> {
-        let section: lockfile_schema::ObSection =
-            lockfile.paradigm_section(OB_PREFIX).unwrap_or_default();
-        let mut diags = rules::ob001(air, &section, mode);
-        diags.extend(rules::ob002(air, &section, mode));
-        diags.extend(rules::ob003(air, &section, mode));
-        diags.extend(rules::ob004(air, &section, mode));
-        diags
+    fn check(
+        &self,
+        _air: &AirWorkspace,
+        _lockfile: &Lockfile,
+        _mode: CheckMode,
+    ) -> Vec<Diagnostic> {
+        // All OB rules migrated to RuleDefinition (#71 P4).
+        // Detection runs through the governance pipeline; this legacy
+        // path is now a no-op.
+        Vec::new()
     }
 }

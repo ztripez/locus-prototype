@@ -5,9 +5,9 @@ use locus_air::{
     TypeKind, Visibility,
 };
 
-// CX001 migrated to RuleDefinition (#71 P2). Tests call this helper
-// instead of the legacy `cx001()` function; helper constructs the
-// RuleContext + lockfile shape that `Cx001Rule::observe` expects.
+// CX001–CX002–CX007–CX008 all migrated to RuleDefinition (#71 P2/P4). Tests call
+// these helpers instead of the legacy functions; helpers construct the
+// RuleContext + lockfile shape that `CxNNNRule::observe` expects.
 use crate::governance::evidence::Evidence;
 use crate::governance::finding::RuleFinding;
 use crate::governance::ids::{FindingIdMinter, RuleId};
@@ -15,6 +15,9 @@ use crate::governance::registry::{ParadigmRegistry, RuleRegistry};
 use crate::governance::rule::{RuleContext, RuleDefinition};
 use crate::lockfile::Lockfile;
 use crate::paradigms::complexity_budget::rules::cx001::Cx001Rule;
+use crate::paradigms::complexity_budget::rules::cx002::Cx002Rule;
+use crate::paradigms::complexity_budget::rules::cx007::Cx007Rule;
+use crate::paradigms::complexity_budget::rules::cx008::Cx008Rule;
 
 fn observe_cx001(
     air: &locus_air::AirWorkspace,
@@ -38,6 +41,78 @@ fn observe_cx001(
         finding_ids: &minter,
     };
     Cx001Rule.observe(&ctx)
+}
+
+fn observe_cx002(
+    air: &locus_air::AirWorkspace,
+    section: &CxSection,
+    mode: CheckMode,
+) -> Vec<RuleFinding> {
+    let mut lf = Lockfile::default();
+    lf.paradigms.insert(
+        "CX".to_string(),
+        serde_json::to_value(section).expect("CxSection must serialize"),
+    );
+    let rules = RuleRegistry::standard();
+    let paradigms = ParadigmRegistry::empty();
+    let minter = FindingIdMinter::new();
+    let ctx = RuleContext {
+        air,
+        lockfile: &lf,
+        mode,
+        rule_registry: &rules,
+        paradigm_registry: &paradigms,
+        finding_ids: &minter,
+    };
+    Cx002Rule.observe(&ctx)
+}
+
+fn observe_cx007(
+    air: &locus_air::AirWorkspace,
+    section: &CxSection,
+    mode: CheckMode,
+) -> Vec<RuleFinding> {
+    let mut lf = Lockfile::default();
+    lf.paradigms.insert(
+        "CX".to_string(),
+        serde_json::to_value(section).expect("CxSection must serialize"),
+    );
+    let rules = RuleRegistry::standard();
+    let paradigms = ParadigmRegistry::empty();
+    let minter = FindingIdMinter::new();
+    let ctx = RuleContext {
+        air,
+        lockfile: &lf,
+        mode,
+        rule_registry: &rules,
+        paradigm_registry: &paradigms,
+        finding_ids: &minter,
+    };
+    Cx007Rule.observe(&ctx)
+}
+
+fn observe_cx008(
+    air: &locus_air::AirWorkspace,
+    section: &CxSection,
+    mode: CheckMode,
+) -> Vec<RuleFinding> {
+    let mut lf = Lockfile::default();
+    lf.paradigms.insert(
+        "CX".to_string(),
+        serde_json::to_value(section).expect("CxSection must serialize"),
+    );
+    let rules = RuleRegistry::standard();
+    let paradigms = ParadigmRegistry::empty();
+    let minter = FindingIdMinter::new();
+    let ctx = RuleContext {
+        air,
+        lockfile: &lf,
+        mode,
+        rule_registry: &rules,
+        paradigm_registry: &paradigms,
+        finding_ids: &minter,
+    };
+    Cx008Rule.observe(&ctx)
 }
 
 fn func(name: &str, line_count: u32) -> AirItem {
@@ -364,9 +439,9 @@ fn air_with_lines(module: Option<&str>, line_count: u32) -> AirWorkspace {
 fn cx002_fires_with_built_in_fallback_on_default_section() {
     let air = air_with_lines(Some("foo::bar"), 5_000);
     let section = CxSection::default();
-    let diags = cx002(&air, &section, CheckMode::Human);
-    assert_eq!(diags.len(), 1);
-    assert_eq!(diags[0].severity, Severity::Warning);
+    let findings = observe_cx002(&air, &section, CheckMode::Human);
+    assert_eq!(findings.len(), 1);
+    assert_eq!(findings[0].default_severity, Severity::Warning);
 }
 
 /// Advisory-tier elevation: CX002 stays Warning under agent-strict
@@ -375,10 +450,10 @@ fn cx002_fires_with_built_in_fallback_on_default_section() {
 fn cx002_agent_strict_stays_warning_when_using_built_in_fallback() {
     let air = air_with_lines(Some("foo::bar"), 5_000);
     let section = CxSection::default();
-    let diags = cx002(&air, &section, CheckMode::AgentStrict);
-    assert_eq!(diags.len(), 1);
+    let findings = observe_cx002(&air, &section, CheckMode::AgentStrict);
+    assert_eq!(findings.len(), 1);
     assert_eq!(
-        diags[0].severity,
+        findings[0].default_severity,
         Severity::Warning,
         "un-narrowed advisory rule stays Warning under agent-strict",
     );
@@ -391,9 +466,9 @@ fn cx002_agent_strict_elevates_when_workspace_default_set() {
         default_max_module_lines: Some(500),
         ..CxSection::default()
     };
-    let diags = cx002(&air, &section, CheckMode::AgentStrict);
-    assert_eq!(diags.len(), 1);
-    assert_eq!(diags[0].severity, Severity::Fatal);
+    let findings = observe_cx002(&air, &section, CheckMode::AgentStrict);
+    assert_eq!(findings.len(), 1);
+    assert_eq!(findings[0].default_severity, Severity::Fatal);
 }
 
 #[test]
@@ -409,9 +484,9 @@ fn cx002_agent_strict_elevates_when_module_override_matches() {
         }],
         ..CxSection::default()
     };
-    let diags = cx002(&air, &section, CheckMode::AgentStrict);
-    assert_eq!(diags.len(), 1);
-    assert_eq!(diags[0].severity, Severity::Fatal);
+    let findings = observe_cx002(&air, &section, CheckMode::AgentStrict);
+    assert_eq!(findings.len(), 1);
+    assert_eq!(findings[0].default_severity, Severity::Fatal);
 }
 
 #[test]
@@ -489,12 +564,12 @@ fn cx007_quiet_when_public_count_at_or_below_budget() {
         vec![pub_type("A"), pub_type("B"), pub_type("C")],
     );
     let section = cx007_section(5, vec![]);
-    assert!(cx007(&air, &section, CheckMode::Human).is_empty());
+    assert!(observe_cx007(&air, &section, CheckMode::Human).is_empty());
 }
 
 #[test]
 fn cx007_fires_when_public_count_exceeds_budget() {
-    // 4 public items vs budget 3 → one diag.
+    // 4 public items vs budget 3 → one finding.
     let items = vec![
         pub_type("A"),
         pub_type("B"),
@@ -503,13 +578,13 @@ fn cx007_fires_when_public_count_exceeds_budget() {
     ];
     let air = air_with(Some("x::core"), items);
     let section = cx007_section(3, vec![]);
-    let diags = cx007(&air, &section, CheckMode::Human);
-    assert_eq!(diags.len(), 1, "got {diags:?}");
-    assert_eq!(diags[0].rule_id, "CX007");
-    assert_eq!(diags[0].severity, Severity::Warning);
-    assert!(diags[0].message.contains("x::core"));
-    assert!(diags[0].message.contains("4"));
-    assert!(diags[0].message.contains("budget 3"));
+    let findings = observe_cx007(&air, &section, CheckMode::Human);
+    assert_eq!(findings.len(), 1, "got {findings:?}");
+    assert_eq!(findings[0].rule_id, Some(RuleId::new("CX007")));
+    assert_eq!(findings[0].default_severity, Severity::Warning);
+    assert!(findings[0].message.contains("x::core"));
+    assert!(findings[0].message.contains("4"));
+    assert!(findings[0].message.contains("budget 3"));
 }
 
 #[test]
@@ -526,7 +601,7 @@ fn cx007_only_counts_public_items() {
     ];
     let air = air_with(Some("x::core"), items);
     let section = cx007_section(3, vec![]);
-    assert!(cx007(&air, &section, CheckMode::Human).is_empty());
+    assert!(observe_cx007(&air, &section, CheckMode::Human).is_empty());
 }
 
 #[test]
@@ -541,7 +616,7 @@ fn cx007_exempt_paths_silence_diagnostic() {
     ];
     let air = air_with(Some("x::tests::helpers"), items);
     let section = cx007_section(3, vec!["*::tests::*"]);
-    assert!(cx007(&air, &section, CheckMode::Human).is_empty());
+    assert!(observe_cx007(&air, &section, CheckMode::Human).is_empty());
 }
 
 #[test]
@@ -552,7 +627,7 @@ fn cx007_default_exempt_paths_cover_test_modules() {
         .collect::<Vec<_>>();
     let air = air_with(Some("x::tests::big"), items);
     let section = CxSection::default();
-    assert!(cx007(&air, &section, CheckMode::Human).is_empty());
+    assert!(observe_cx007(&air, &section, CheckMode::Human).is_empty());
 }
 
 #[test]
@@ -560,9 +635,9 @@ fn cx007_agent_strict_elevates_to_fatal() {
     let items = vec![pub_type("A"), pub_type("B"), pub_type("C"), pub_type("D")];
     let air = air_with(Some("x::core"), items);
     let section = cx007_section(3, vec![]);
-    let diags = cx007(&air, &section, CheckMode::AgentStrict);
-    assert_eq!(diags.len(), 1);
-    assert_eq!(diags[0].severity, Severity::Fatal);
+    let findings = observe_cx007(&air, &section, CheckMode::AgentStrict);
+    assert_eq!(findings.len(), 1);
+    assert_eq!(findings[0].default_severity, Severity::Fatal);
 }
 
 // --- CX008 fixtures + tests ----------------------------------------
@@ -594,7 +669,7 @@ fn cx008_silent_when_orchestration_paths_empty() {
     }
     let air = air_with(Some("x::core"), items);
     let section = CxSection::default(); // empty orchestration_paths
-    assert!(cx008(&air, &section, CheckMode::Human).is_empty());
+    assert!(observe_cx008(&air, &section, CheckMode::Human).is_empty());
 }
 
 #[test]
@@ -606,13 +681,13 @@ fn cx008_fires_when_count_exceeds_budget_outside_orchestration() {
     }
     let air = air_with(Some("x::core"), items);
     let section = cx008_section(5, vec!["x::cli::*"]);
-    let diags = cx008(&air, &section, CheckMode::Human);
-    assert_eq!(diags.len(), 1, "got {diags:?}");
-    assert_eq!(diags[0].rule_id, "CX008");
-    assert_eq!(diags[0].severity, Severity::Warning);
-    assert!(diags[0].message.contains("x::dispatch"));
-    assert!(diags[0].message.contains("6"));
-    assert!(diags[0].message.contains("budget 5"));
+    let findings = observe_cx008(&air, &section, CheckMode::Human);
+    assert_eq!(findings.len(), 1, "got {findings:?}");
+    assert_eq!(findings[0].rule_id, Some(RuleId::new("CX008")));
+    assert_eq!(findings[0].default_severity, Severity::Warning);
+    assert!(findings[0].message.contains("x::dispatch"));
+    assert!(findings[0].message.contains("6"));
+    assert!(findings[0].message.contains("budget 5"));
 }
 
 #[test]
@@ -624,7 +699,7 @@ fn cx008_quiet_when_count_at_or_below_budget() {
     }
     let air = air_with(Some("x::core"), items);
     let section = cx008_section(5, vec!["x::cli::*"]);
-    assert!(cx008(&air, &section, CheckMode::Human).is_empty());
+    assert!(observe_cx008(&air, &section, CheckMode::Human).is_empty());
 }
 
 #[test]
@@ -636,7 +711,7 @@ fn cx008_orchestration_path_silences_diagnostic() {
     }
     let air = air_with(Some("x::cli::dispatch"), items);
     let section = cx008_section(3, vec!["x::cli::*"]);
-    assert!(cx008(&air, &section, CheckMode::Human).is_empty());
+    assert!(observe_cx008(&air, &section, CheckMode::Human).is_empty());
 }
 
 #[test]
@@ -647,9 +722,9 @@ fn cx008_agent_strict_elevates_to_fatal() {
     }
     let air = air_with(Some("x::core"), items);
     let section = cx008_section(5, vec!["x::cli::*"]);
-    let diags = cx008(&air, &section, CheckMode::AgentStrict);
-    assert_eq!(diags.len(), 1);
-    assert_eq!(diags[0].severity, Severity::Fatal);
+    let findings = observe_cx008(&air, &section, CheckMode::AgentStrict);
+    assert_eq!(findings.len(), 1);
+    assert_eq!(findings[0].default_severity, Severity::Fatal);
 }
 
 #[test]
@@ -662,8 +737,8 @@ fn cx008_only_counts_call_sites_in_owning_function() {
     items.push(callsite("only", "x::tiny"));
     let air = air_with(Some("x::core"), items);
     let section = cx008_section(5, vec!["x::cli::*"]);
-    let diags = cx008(&air, &section, CheckMode::Human);
-    assert_eq!(diags.len(), 1, "got {diags:?}");
-    assert!(diags[0].message.contains("x::dispatch"));
-    assert!(!diags[0].message.contains("x::tiny"));
+    let findings = observe_cx008(&air, &section, CheckMode::Human);
+    assert_eq!(findings.len(), 1, "got {findings:?}");
+    assert!(findings[0].message.contains("x::dispatch"));
+    assert!(!findings[0].message.contains("x::tiny"));
 }

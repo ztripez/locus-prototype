@@ -849,6 +849,254 @@ fn rm006_diagnostic(
     }
 }
 
+// ── RuleDefinition impls (governance spine migration, epic #71) ──────────────
+
+use crate::governance::finding::{FindingSource, RuleFinding};
+use crate::governance::ids::{ParadigmId, RuleId};
+use crate::governance::rule::{RuleContext, RuleDefinition};
+
+const RM_PARADIGM: ParadigmId = ParadigmId::new("RM");
+const RM001_ID: RuleId = RuleId::new("RM001");
+const RM002_ID: RuleId = RuleId::new("RM002");
+const RM003_ID: RuleId = RuleId::new("RM003");
+const RM004_ID: RuleId = RuleId::new("RM004");
+const RM005_ID: RuleId = RuleId::new("RM005");
+const RM006_ID: RuleId = RuleId::new("RM006");
+
+pub struct Rm001Rule;
+pub static RM001_RULE: Rm001Rule = Rm001Rule;
+
+impl RuleDefinition for Rm001Rule {
+    fn id(&self) -> RuleId {
+        RM001_ID
+    }
+    fn paradigm(&self) -> ParadigmId {
+        RM_PARADIGM
+    }
+    fn title(&self) -> &'static str {
+        "function performs too many distinct kinds of work"
+    }
+    fn default_severity(&self) -> crate::diagnostics::Severity {
+        crate::diagnostics::Severity::Warning
+    }
+    fn observe(&self, ctx: &RuleContext<'_>) -> Vec<RuleFinding> {
+        use super::lockfile_schema::RmSection;
+        let section: RmSection = ctx.lockfile.paradigm_section("RM").unwrap_or_default();
+        rm001(ctx.air, &section, ctx.mode)
+            .into_iter()
+            .map(|d| RuleFinding {
+                id: ctx.finding_ids.next(),
+                source: FindingSource::RegisteredRule(RM001_ID),
+                rule_id: Some(RM001_ID),
+                paradigm_id: Some(RM_PARADIGM),
+                default_severity: d.severity,
+                span: Some(d.span),
+                concept: d.concept,
+                message: d.message,
+                evidence: vec![],
+                why: d.why,
+                suggested_fix: d.suggested_fix,
+                diagnostic_code: None,
+            })
+            .collect()
+    }
+}
+
+pub struct Rm002Rule;
+pub static RM002_RULE: Rm002Rule = Rm002Rule;
+
+impl RuleDefinition for Rm002Rule {
+    fn id(&self) -> RuleId {
+        RM002_ID
+    }
+    fn paradigm(&self) -> ParadigmId {
+        RM_PARADIGM
+    }
+    fn title(&self) -> &'static str {
+        "converter performs a side-effect fact"
+    }
+    fn default_severity(&self) -> crate::diagnostics::Severity {
+        crate::diagnostics::Severity::Warning
+    }
+    fn observe(&self, ctx: &RuleContext<'_>) -> Vec<RuleFinding> {
+        use super::lockfile_schema::RmSection;
+        let section: RmSection = ctx.lockfile.paradigm_section("RM").unwrap_or_default();
+        rm002(ctx.air, &section, ctx.mode)
+            .into_iter()
+            .map(|d| RuleFinding {
+                id: ctx.finding_ids.next(),
+                source: FindingSource::RegisteredRule(RM002_ID),
+                rule_id: Some(RM002_ID),
+                paradigm_id: Some(RM_PARADIGM),
+                default_severity: d.severity,
+                span: Some(d.span),
+                concept: d.concept,
+                message: d.message,
+                evidence: vec![],
+                why: d.why,
+                suggested_fix: d.suggested_fix,
+                diagnostic_code: None,
+            })
+            .collect()
+    }
+}
+
+pub struct Rm003Rule;
+pub static RM003_RULE: Rm003Rule = Rm003Rule;
+
+impl RuleDefinition for Rm003Rule {
+    fn id(&self) -> RuleId {
+        RM003_ID
+    }
+    fn paradigm(&self) -> ParadigmId {
+        RM_PARADIGM
+    }
+    fn title(&self) -> &'static str {
+        "handler module containing branch-rich domain policy"
+    }
+    fn default_severity(&self) -> crate::diagnostics::Severity {
+        crate::diagnostics::Severity::Warning
+    }
+    fn observe(&self, ctx: &RuleContext<'_>) -> Vec<RuleFinding> {
+        use super::lockfile_schema::RmSection;
+        let section: RmSection = ctx.lockfile.paradigm_section("RM").unwrap_or_default();
+        rm003(ctx.air, &section, ctx.mode)
+            .into_iter()
+            .map(|d| RuleFinding {
+                id: ctx.finding_ids.next(),
+                source: FindingSource::RegisteredRule(RM003_ID),
+                rule_id: Some(RM003_ID),
+                paradigm_id: Some(RM_PARADIGM),
+                default_severity: d.severity,
+                span: Some(d.span),
+                concept: d.concept,
+                message: d.message,
+                evidence: vec![],
+                why: d.why,
+                suggested_fix: d.suggested_fix,
+                diagnostic_code: None,
+            })
+            .collect()
+    }
+}
+
+pub struct Rm004Rule;
+pub static RM004_RULE: Rm004Rule = Rm004Rule;
+
+impl RuleDefinition for Rm004Rule {
+    fn id(&self) -> RuleId {
+        RM004_ID
+    }
+    fn paradigm(&self) -> ParadigmId {
+        RM_PARADIGM
+    }
+    fn title(&self) -> &'static str {
+        "repository module containing branch-rich domain logic"
+    }
+    fn default_severity(&self) -> crate::diagnostics::Severity {
+        crate::diagnostics::Severity::Warning
+    }
+    fn observe(&self, ctx: &RuleContext<'_>) -> Vec<RuleFinding> {
+        use super::lockfile_schema::RmSection;
+        let section: RmSection = ctx.lockfile.paradigm_section("RM").unwrap_or_default();
+        rm004(ctx.air, &section, ctx.mode)
+            .into_iter()
+            .map(|d| RuleFinding {
+                id: ctx.finding_ids.next(),
+                source: FindingSource::RegisteredRule(RM004_ID),
+                rule_id: Some(RM004_ID),
+                paradigm_id: Some(RM_PARADIGM),
+                default_severity: d.severity,
+                span: Some(d.span),
+                concept: d.concept,
+                message: d.message,
+                evidence: vec![],
+                why: d.why,
+                suggested_fix: d.suggested_fix,
+                diagnostic_code: None,
+            })
+            .collect()
+    }
+}
+
+pub struct Rm005Rule;
+pub static RM005_RULE: Rm005Rule = Rm005Rule;
+
+impl RuleDefinition for Rm005Rule {
+    fn id(&self) -> RuleId {
+        RM005_ID
+    }
+    fn paradigm(&self) -> ParadigmId {
+        RM_PARADIGM
+    }
+    fn title(&self) -> &'static str {
+        "validator function performing IO"
+    }
+    fn default_severity(&self) -> crate::diagnostics::Severity {
+        crate::diagnostics::Severity::Warning
+    }
+    fn observe(&self, ctx: &RuleContext<'_>) -> Vec<RuleFinding> {
+        use super::lockfile_schema::RmSection;
+        let section: RmSection = ctx.lockfile.paradigm_section("RM").unwrap_or_default();
+        rm005(ctx.air, &section, ctx.mode)
+            .into_iter()
+            .map(|d| RuleFinding {
+                id: ctx.finding_ids.next(),
+                source: FindingSource::RegisteredRule(RM005_ID),
+                rule_id: Some(RM005_ID),
+                paradigm_id: Some(RM_PARADIGM),
+                default_severity: d.severity,
+                span: Some(d.span),
+                concept: d.concept,
+                message: d.message,
+                evidence: vec![],
+                why: d.why,
+                suggested_fix: d.suggested_fix,
+                diagnostic_code: None,
+            })
+            .collect()
+    }
+}
+
+pub struct Rm006Rule;
+pub static RM006_RULE: Rm006Rule = Rm006Rule;
+
+impl RuleDefinition for Rm006Rule {
+    fn id(&self) -> RuleId {
+        RM006_ID
+    }
+    fn paradigm(&self) -> ParadigmId {
+        RM_PARADIGM
+    }
+    fn title(&self) -> &'static str {
+        "domain type method performs persistence write"
+    }
+    fn default_severity(&self) -> crate::diagnostics::Severity {
+        crate::diagnostics::Severity::Warning
+    }
+    fn observe(&self, ctx: &RuleContext<'_>) -> Vec<RuleFinding> {
+        use super::lockfile_schema::RmSection;
+        let section: RmSection = ctx.lockfile.paradigm_section("RM").unwrap_or_default();
+        rm006(ctx.air, &section, ctx.mode)
+            .into_iter()
+            .map(|d| RuleFinding {
+                id: ctx.finding_ids.next(),
+                source: FindingSource::RegisteredRule(RM006_ID),
+                rule_id: Some(RM006_ID),
+                paradigm_id: Some(RM_PARADIGM),
+                default_severity: d.severity,
+                span: Some(d.span),
+                concept: d.concept,
+                message: d.message,
+                evidence: vec![],
+                why: d.why,
+                suggested_fix: d.suggested_fix,
+                diagnostic_code: None,
+            })
+            .collect()
+    }
+}
+
 #[cfg(test)]
 #[path = "rules_tests.rs"]
 mod rules_tests;

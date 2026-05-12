@@ -43,7 +43,10 @@ impl Paradigm for BoundaryOwnership {
         // directly (or via a future `locus bo` mutator).
         serde_json::Value::Null
     }
-    fn check(&self, air: &AirWorkspace, lockfile: &Lockfile, mode: CheckMode) -> Vec<Diagnostic> {
+    fn check(&self, _air: &AirWorkspace, lockfile: &Lockfile, _mode: CheckMode) -> Vec<Diagnostic> {
+        // All BO rules migrated to RuleDefinition (#71 P4); only the LOCUS002
+        // vacancy nudge remains here so vacant-by-definition paradigms keep
+        // surfacing onboarding guidance.
         let section: lockfile_schema::BoSection =
             lockfile.paradigm_section(BO_PREFIX).unwrap_or_default();
         if section.is_vacant() && !lockfile.is_acknowledged_empty(BO_PREFIX) {
@@ -67,10 +70,6 @@ impl Paradigm for BoundaryOwnership {
                 ],
             )];
         }
-        let mut diags = rules::bo001(air, &section, mode);
-        diags.extend(rules::bo002(air, &section, mode));
-        diags.extend(rules::bo004(air, &section, mode));
-        diags.extend(rules::bo005(air, &section, mode));
-        diags
+        Vec::new()
     }
 }

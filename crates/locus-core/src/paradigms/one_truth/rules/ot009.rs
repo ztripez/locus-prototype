@@ -17,7 +17,36 @@ use locus_air::{AirItem, AirWorkspace};
 
 use super::super::lockfile_schema::OtSection;
 use super::helpers::{file_of_symbol, type_text_references};
-use crate::diagnostics::{CheckMode, Diagnostic, Severity};
+use crate::diagnostics::{CheckMode, Severity};
+use crate::governance::finding::{FindingSource, RuleFinding};
+use crate::governance::ids::{FindingIdMinter, ParadigmId, RuleId};
+use crate::governance::rule::{RuleContext, RuleDefinition};
+
+pub struct Ot009Rule;
+
+pub static OT009_RULE: Ot009Rule = Ot009Rule;
+
+const OT009_ID: RuleId = RuleId::new("OT009");
+const OT_PARADIGM: ParadigmId = ParadigmId::new("OT");
+
+impl RuleDefinition for Ot009Rule {
+    fn id(&self) -> RuleId {
+        OT009_ID
+    }
+    fn paradigm(&self) -> ParadigmId {
+        OT_PARADIGM
+    }
+    fn title(&self) -> &'static str {
+        "scattered validation/normalization"
+    }
+    fn default_severity(&self) -> Severity {
+        Severity::Warning
+    }
+    fn observe(&self, ctx: &RuleContext<'_>) -> Vec<RuleFinding> {
+        let section: OtSection = ctx.lockfile.paradigm_section("OT").unwrap_or_default();
+        produce_findings(ctx.air, &section, ctx.mode, ctx.finding_ids)
+    }
+}
 
 /// Build short-name → (concept_id, owner_file) map for OT009.
 fn build_ot009_canonicals(
@@ -56,7 +85,13 @@ fn ot009_signature_match<'a>(
     None
 }
 
-pub fn ot009(air: &AirWorkspace, section: &OtSection, mode: CheckMode) -> Vec<Diagnostic> {
+// locus: allow CX001 — rule finding helper; inherently spans >50 lines due to full RuleFinding construction
+pub(crate) fn produce_findings(
+    air: &AirWorkspace,
+    section: &OtSection,
+    mode: CheckMode,
+    finding_ids: &FindingIdMinter,
+) -> Vec<RuleFinding> {
     let canonicals = build_ot009_canonicals(air, section);
     if canonicals.is_empty() {
         return Vec::new();
@@ -91,8 +126,14 @@ pub fn ot009(air: &AirWorkspace, section: &OtSection, mode: CheckMode) -> Vec<Di
                 if file.path == owner_file {
                     continue; // validator inside the canonical's own module is fine
                 }
-                out.push(ot009_diagnostic(
-                    f, prefix, concept_id, owner_file, confidence, severity,
+                out.push(ot009_finding(
+                    f,
+                    prefix,
+                    concept_id,
+                    owner_file,
+                    confidence,
+                    severity,
+                    finding_ids,
                 ));
             }
         }
@@ -100,24 +141,29 @@ pub fn ot009(air: &AirWorkspace, section: &OtSection, mode: CheckMode) -> Vec<Di
     out
 }
 
-fn ot009_diagnostic(
+fn ot009_finding(
     f: &locus_air::AirFunction,
     prefix: &str,
     concept_id: &str,
     owner_file: &str,
     confidence: f32,
     severity: Severity,
-) -> Diagnostic {
-    Diagnostic {
-        rule_id: "OT009".to_string(),
-        severity,
-        span: f.span.clone(),
+    finding_ids: &FindingIdMinter,
+) -> RuleFinding {
+    RuleFinding {
+        id: finding_ids.next(),
+        source: FindingSource::RegisteredRule(OT009_ID),
+        rule_id: Some(OT009_ID),
+        paradigm_id: Some(OT_PARADIGM),
+        default_severity: severity,
+        span: Some(f.span.clone()),
         concept: Some(concept_id.to_string()),
         message: format!(
             "`{}` looks like {prefix} for canonical `{concept_id}` but lives \
              outside the owner module and outside any accepted converter",
             f.symbol
         ),
+        evidence: vec![],
         why: vec![
             format!("function name starts with `{prefix}` (validation/normalization shape)"),
             format!("signature references canonical for `{concept_id}`"),
@@ -129,6 +175,7 @@ fn ot009_diagnostic(
              enforces its own invariants), or accept this function as a \
              converter via `locus init` if it's the legitimate edge"
         )),
+        diagnostic_code: None,
     }
 }
 

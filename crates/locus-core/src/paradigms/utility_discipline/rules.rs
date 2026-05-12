@@ -510,6 +510,209 @@ pub fn ut005(air: &AirWorkspace, section: &UtSection, mode: CheckMode) -> Vec<Di
     out
 }
 
+// ── RuleDefinition impls (governance spine migration, epic #71) ──────────────
+
+use crate::governance::finding::{FindingSource, RuleFinding};
+use crate::governance::ids::{ParadigmId, RuleId};
+use crate::governance::rule::{RuleContext, RuleDefinition};
+
+const UT_PARADIGM: ParadigmId = ParadigmId::new("UT");
+const UT001_ID: RuleId = RuleId::new("UT001");
+const UT002_ID: RuleId = RuleId::new("UT002");
+const UT003_ID: RuleId = RuleId::new("UT003");
+const UT004_ID: RuleId = RuleId::new("UT004");
+const UT005_ID: RuleId = RuleId::new("UT005");
+
+pub struct Ut001Rule;
+pub static UT001_RULE: Ut001Rule = Ut001Rule;
+
+impl RuleDefinition for Ut001Rule {
+    fn id(&self) -> RuleId {
+        UT001_ID
+    }
+    fn paradigm(&self) -> ParadigmId {
+        UT_PARADIGM
+    }
+    fn title(&self) -> &'static str {
+        "utility module defines a public type"
+    }
+    fn default_severity(&self) -> crate::diagnostics::Severity {
+        crate::diagnostics::Severity::Warning
+    }
+    fn observe(&self, ctx: &RuleContext<'_>) -> Vec<RuleFinding> {
+        let section: UtSection = ctx.lockfile.paradigm_section("UT").unwrap_or_default();
+        ut001(ctx.air, &section, ctx.mode)
+            .into_iter()
+            .map(|d| RuleFinding {
+                id: ctx.finding_ids.next(),
+                source: FindingSource::RegisteredRule(UT001_ID),
+                rule_id: Some(UT001_ID),
+                paradigm_id: Some(UT_PARADIGM),
+                default_severity: d.severity,
+                span: Some(d.span),
+                concept: d.concept,
+                message: d.message,
+                evidence: vec![],
+                why: d.why,
+                suggested_fix: d.suggested_fix,
+                diagnostic_code: None,
+            })
+            .collect()
+    }
+}
+
+pub struct Ut002Rule;
+pub static UT002_RULE: Ut002Rule = Ut002Rule;
+
+impl RuleDefinition for Ut002Rule {
+    fn id(&self) -> RuleId {
+        UT002_ID
+    }
+    fn paradigm(&self) -> ParadigmId {
+        UT_PARADIGM
+    }
+    fn title(&self) -> &'static str {
+        "utility module imports a forbidden feature/domain path"
+    }
+    fn default_severity(&self) -> crate::diagnostics::Severity {
+        crate::diagnostics::Severity::Fatal
+    }
+    fn observe(&self, ctx: &RuleContext<'_>) -> Vec<RuleFinding> {
+        let section: UtSection = ctx.lockfile.paradigm_section("UT").unwrap_or_default();
+        ut002(ctx.air, &section, ctx.mode)
+            .into_iter()
+            .map(|d| RuleFinding {
+                id: ctx.finding_ids.next(),
+                source: FindingSource::RegisteredRule(UT002_ID),
+                rule_id: Some(UT002_ID),
+                paradigm_id: Some(UT_PARADIGM),
+                default_severity: d.severity,
+                span: Some(d.span),
+                concept: d.concept,
+                message: d.message,
+                evidence: vec![],
+                why: d.why,
+                suggested_fix: d.suggested_fix,
+                diagnostic_code: None,
+            })
+            .collect()
+    }
+}
+
+pub struct Ut003Rule;
+pub static UT003_RULE: Ut003Rule = Ut003Rule;
+
+impl RuleDefinition for Ut003Rule {
+    fn id(&self) -> RuleId {
+        UT003_ID
+    }
+    fn paradigm(&self) -> ParadigmId {
+        UT_PARADIGM
+    }
+    fn title(&self) -> &'static str {
+        "new generic-utility-named module without acceptance"
+    }
+    fn default_severity(&self) -> crate::diagnostics::Severity {
+        crate::diagnostics::Severity::Warning
+    }
+    fn observe(&self, ctx: &RuleContext<'_>) -> Vec<RuleFinding> {
+        let section: UtSection = ctx.lockfile.paradigm_section("UT").unwrap_or_default();
+        ut003(ctx.air, &section, ctx.mode)
+            .into_iter()
+            .map(|d| RuleFinding {
+                id: ctx.finding_ids.next(),
+                source: FindingSource::RegisteredRule(UT003_ID),
+                rule_id: Some(UT003_ID),
+                paradigm_id: Some(UT_PARADIGM),
+                default_severity: d.severity,
+                span: Some(d.span),
+                concept: d.concept,
+                message: d.message,
+                evidence: vec![],
+                why: d.why,
+                suggested_fix: d.suggested_fix,
+                diagnostic_code: None,
+            })
+            .collect()
+    }
+}
+
+pub struct Ut004Rule;
+pub static UT004_RULE: Ut004Rule = Ut004Rule;
+
+impl RuleDefinition for Ut004Rule {
+    fn id(&self) -> RuleId {
+        UT004_ID
+    }
+    fn paradigm(&self) -> ParadigmId {
+        UT_PARADIGM
+    }
+    fn title(&self) -> &'static str {
+        "domain-concept logic inside a utility module"
+    }
+    fn default_severity(&self) -> crate::diagnostics::Severity {
+        crate::diagnostics::Severity::Warning
+    }
+    fn observe(&self, ctx: &RuleContext<'_>) -> Vec<RuleFinding> {
+        let section: UtSection = ctx.lockfile.paradigm_section("UT").unwrap_or_default();
+        ut004(ctx.air, &section, ctx.mode)
+            .into_iter()
+            .map(|d| RuleFinding {
+                id: ctx.finding_ids.next(),
+                source: FindingSource::RegisteredRule(UT004_ID),
+                rule_id: Some(UT004_ID),
+                paradigm_id: Some(UT_PARADIGM),
+                default_severity: d.severity,
+                span: Some(d.span),
+                concept: d.concept,
+                message: d.message,
+                evidence: vec![],
+                why: d.why,
+                suggested_fix: d.suggested_fix,
+                diagnostic_code: None,
+            })
+            .collect()
+    }
+}
+
+pub struct Ut005Rule;
+pub static UT005_RULE: Ut005Rule = Ut005Rule;
+
+impl RuleDefinition for Ut005Rule {
+    fn id(&self) -> RuleId {
+        UT005_ID
+    }
+    fn paradigm(&self) -> ParadigmId {
+        UT_PARADIGM
+    }
+    fn title(&self) -> &'static str {
+        "validation/normalization inside a utility module"
+    }
+    fn default_severity(&self) -> crate::diagnostics::Severity {
+        crate::diagnostics::Severity::Warning
+    }
+    fn observe(&self, ctx: &RuleContext<'_>) -> Vec<RuleFinding> {
+        let section: UtSection = ctx.lockfile.paradigm_section("UT").unwrap_or_default();
+        ut005(ctx.air, &section, ctx.mode)
+            .into_iter()
+            .map(|d| RuleFinding {
+                id: ctx.finding_ids.next(),
+                source: FindingSource::RegisteredRule(UT005_ID),
+                rule_id: Some(UT005_ID),
+                paradigm_id: Some(UT_PARADIGM),
+                default_severity: d.severity,
+                span: Some(d.span),
+                concept: d.concept,
+                message: d.message,
+                evidence: vec![],
+                why: d.why,
+                suggested_fix: d.suggested_fix,
+                diagnostic_code: None,
+            })
+            .collect()
+    }
+}
+
 #[cfg(test)]
 #[path = "rules_tests.rs"]
 mod rules_tests;

@@ -261,6 +261,94 @@ fn matches_pattern(pattern: &str, path: &str) -> bool {
     pattern == path
 }
 
+// ── RuleDefinition impls (governance spine migration, epic #71) ──────────────
+
+use crate::governance::finding::{FindingSource, RuleFinding};
+use crate::governance::ids::{ParadigmId, RuleId};
+use crate::governance::rule::{RuleContext, RuleDefinition};
+
+const CR_PARADIGM: ParadigmId = ParadigmId::new("CR");
+const CR001_ID: RuleId = RuleId::new("CR001");
+const CR002_ID: RuleId = RuleId::new("CR002");
+
+pub struct Cr001Rule;
+pub static CR001_RULE: Cr001Rule = Cr001Rule;
+
+impl RuleDefinition for Cr001Rule {
+    fn id(&self) -> RuleId {
+        CR001_ID
+    }
+    fn paradigm(&self) -> ParadigmId {
+        CR_PARADIGM
+    }
+    fn title(&self) -> &'static str {
+        "service construction outside composition root"
+    }
+    fn default_severity(&self) -> crate::diagnostics::Severity {
+        crate::diagnostics::Severity::Fatal
+    }
+    fn observe(&self, ctx: &RuleContext<'_>) -> Vec<RuleFinding> {
+        use super::lockfile_schema::CrSection;
+        let section: CrSection = ctx.lockfile.paradigm_section("CR").unwrap_or_default();
+        cr001(ctx.air, &section, ctx.mode)
+            .into_iter()
+            .map(|d| RuleFinding {
+                id: ctx.finding_ids.next(),
+                source: FindingSource::RegisteredRule(CR001_ID),
+                rule_id: Some(CR001_ID),
+                paradigm_id: Some(CR_PARADIGM),
+                default_severity: d.severity,
+                span: Some(d.span),
+                concept: d.concept,
+                message: d.message,
+                evidence: vec![],
+                why: d.why,
+                suggested_fix: d.suggested_fix,
+                diagnostic_code: None,
+            })
+            .collect()
+    }
+}
+
+pub struct Cr002Rule;
+pub static CR002_RULE: Cr002Rule = Cr002Rule;
+
+impl RuleDefinition for Cr002Rule {
+    fn id(&self) -> RuleId {
+        CR002_ID
+    }
+    fn paradigm(&self) -> ParadigmId {
+        CR_PARADIGM
+    }
+    fn title(&self) -> &'static str {
+        "high-density wiring in composition root"
+    }
+    fn default_severity(&self) -> crate::diagnostics::Severity {
+        crate::diagnostics::Severity::Warning
+    }
+    fn observe(&self, ctx: &RuleContext<'_>) -> Vec<RuleFinding> {
+        use super::lockfile_schema::CrSection;
+        let section: CrSection = ctx.lockfile.paradigm_section("CR").unwrap_or_default();
+        cr002(ctx.air, &section, ctx.mode)
+            .into_iter()
+            .map(|d| RuleFinding {
+                id: ctx.finding_ids.next(),
+                source: FindingSource::RegisteredRule(CR002_ID),
+                rule_id: Some(CR002_ID),
+                paradigm_id: Some(CR_PARADIGM),
+                default_severity: d.severity,
+                span: Some(d.span),
+                concept: d.concept,
+                message: d.message,
+                evidence: vec![],
+                why: d.why,
+                suggested_fix: d.suggested_fix,
+                diagnostic_code: None,
+            })
+            .collect()
+    }
+}
+
 #[cfg(test)]
 #[path = "rules_tests.rs"]
 mod rules_tests;

@@ -12,9 +12,44 @@ use locus_air::{AirSpan, AirWorkspace};
 
 use super::super::lockfile_schema::OtSection;
 use super::helpers::{short_name, span_of_symbol};
-use crate::diagnostics::{CheckMode, Diagnostic, Severity};
+use crate::diagnostics::{CheckMode, Severity};
+use crate::governance::finding::{FindingSource, RuleFinding};
+use crate::governance::ids::{FindingIdMinter, ParadigmId, RuleId};
+use crate::governance::rule::{RuleContext, RuleDefinition};
 
-pub fn ot005(air: &AirWorkspace, section: &OtSection, mode: CheckMode) -> Vec<Diagnostic> {
+pub struct Ot005Rule;
+
+pub static OT005_RULE: Ot005Rule = Ot005Rule;
+
+const OT005_ID: RuleId = RuleId::new("OT005");
+const OT_PARADIGM: ParadigmId = ParadigmId::new("OT");
+
+impl RuleDefinition for Ot005Rule {
+    fn id(&self) -> RuleId {
+        OT005_ID
+    }
+    fn paradigm(&self) -> ParadigmId {
+        OT_PARADIGM
+    }
+    fn title(&self) -> &'static str {
+        "missing converter for accepted boundary"
+    }
+    fn default_severity(&self) -> Severity {
+        Severity::Fatal
+    }
+    fn observe(&self, ctx: &RuleContext<'_>) -> Vec<RuleFinding> {
+        let section: OtSection = ctx.lockfile.paradigm_section("OT").unwrap_or_default();
+        produce_findings(ctx.air, &section, ctx.mode, ctx.finding_ids)
+    }
+}
+
+// locus: allow CX001 — rule finding helper; inherently spans >50 lines due to full RuleFinding construction
+pub(crate) fn produce_findings(
+    air: &AirWorkspace,
+    section: &OtSection,
+    mode: CheckMode,
+    finding_ids: &FindingIdMinter,
+) -> Vec<RuleFinding> {
     let mut out = Vec::new();
     for (concept_id, entry) in &section.concepts {
         for boundary in &entry.boundaries {
@@ -28,16 +63,20 @@ pub fn ot005(air: &AirWorkspace, section: &OtSection, mode: CheckMode) -> Vec<Di
             }
             let span = span_of_symbol(air, &boundary.symbol)
                 .unwrap_or_else(|| AirSpan::new(boundary.symbol.clone(), 1, 1));
-            out.push(Diagnostic {
-                rule_id: "OT005".to_string(),
-                severity: mode.elevate(Severity::Fatal),
-                span,
+            out.push(RuleFinding {
+                id: finding_ids.next(),
+                source: FindingSource::RegisteredRule(OT005_ID),
+                rule_id: Some(OT005_ID),
+                paradigm_id: Some(OT_PARADIGM),
+                default_severity: mode.elevate(Severity::Fatal),
+                span: Some(span),
                 concept: Some(concept_id.clone()),
                 message: format!(
                     "boundary `{}` (concept `{concept_id}`) has no accepted converter \
                      to/from the canonical",
                     boundary.symbol
                 ),
+                evidence: vec![],
                 why: vec![
                     format!("canonical: `{}`", entry.canonical.symbol),
                     format!(
@@ -51,6 +90,7 @@ pub fn ot005(air: &AirWorkspace, section: &OtSection, mode: CheckMode) -> Vec<Di
                      no longer needed",
                     short_name(&entry.canonical.symbol),
                 )),
+                diagnostic_code: None,
             });
         }
     }

@@ -47,17 +47,17 @@ impl Paradigm for ComplexityBudget {
         // No automatic inference — function budgets come from the user.
         serde_json::Value::Null
     }
-    fn check(&self, air: &AirWorkspace, lockfile: &Lockfile, mode: CheckMode) -> Vec<Diagnostic> {
-        let section: lockfile_schema::CxSection =
-            lockfile.paradigm_section(CX_PREFIX).unwrap_or_default();
-        // CX001 migrated to RuleDefinition (#71 P2). The governance
-        // pipeline runs it via Cx001Rule::observe; the legacy adapter's
-        // per-rule-code filter drops any CX001 diagnostic that would be
-        // emitted here, but we don't even compute it.
-        let mut diags = rules::cx002(air, &section, mode);
-        diags.extend(rules::cx007(air, &section, mode));
-        diags.extend(rules::cx008(air, &section, mode));
-        diags
+    fn check(
+        &self,
+        _air: &AirWorkspace,
+        _lockfile: &Lockfile,
+        _mode: CheckMode,
+    ) -> Vec<Diagnostic> {
+        // CX001–CX002–CX007–CX008 all migrated to RuleDefinition (#71 P4).
+        // The governance pipeline runs them via their respective Rule::observe;
+        // the legacy adapter's per-rule-code filter suppresses any CX### that
+        // would be emitted here. Nothing left to compute.
+        Vec::new()
     }
     fn suggest(&self, air: &AirWorkspace, lockfile: &Lockfile) -> Vec<crate::init::Suggestion> {
         init::suggest(air, lockfile)

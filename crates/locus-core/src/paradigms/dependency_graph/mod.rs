@@ -5,14 +5,9 @@
 //! (`AirItem::Import`) and matches them against `forbidden_edges` in the
 //! lockfile's DG section.
 //!
-//! Phase-2 scope:
-//! - DG001: forbidden import.
-//!
-//! `init` returns an empty section: there's no inference that can decide
-//! "domain shouldn't reach api" for a project — the user has to declare that
-//! intent. A future `locus dg suggest` (or similar) could enumerate the
-//! current import graph as a starting point, but that's report territory,
-//! not lockfile-mutation territory.
+//! All DG rules (DG001–DG004) are now migrated to `RuleDefinition` in the
+//! governance spine (#71). The legacy `check()` retains only the LOCUS002
+//! vacancy-nudge emission for unconfigured paradigms.
 
 // locus: ot canonical
 
@@ -44,14 +39,15 @@ impl Paradigm for DependencyGraph {
         serde_json::Value::Null
     }
 
-    fn check(&self, air: &AirWorkspace, lockfile: &Lockfile, mode: CheckMode) -> Vec<Diagnostic> {
+    fn check(&self, _air: &AirWorkspace, lockfile: &Lockfile, _mode: CheckMode) -> Vec<Diagnostic> {
+        // All DG rules (DG001–DG004) are now driven through the governance
+        // spine RuleDefinition pipeline. Only the LOCUS002 vacancy nudge
+        // remains here so vacant-by-definition paradigms keep surfacing
+        // onboarding guidance.
         let section: lockfile_schema::DgSection =
             lockfile.paradigm_section(DG_PREFIX).unwrap_or_default();
-        // DG002 (cycle detection) is structural — keep it on regardless
-        // of vacancy.
-        let mut out = rules::dg002(air, mode);
         if section.is_vacant() && !lockfile.is_acknowledged_empty(DG_PREFIX) {
-            out.push(vacant_paradigm_diagnostic(
+            return vec![vacant_paradigm_diagnostic(
                 DG_PREFIX,
                 "Dependency Graph / Direction",
                 &[
@@ -65,12 +61,9 @@ impl Paradigm for DependencyGraph {
                         "module patterns for shared infrastructure (DG004)",
                     ),
                 ],
-            ));
-            return out;
+            )];
         }
-        out.extend(rules::dg003(air, &section, mode));
-        out.extend(rules::dg004(air, &section, mode));
-        out
+        Vec::new()
     }
 
     fn suggest(&self, air: &AirWorkspace, lockfile: &Lockfile) -> Vec<Suggestion> {

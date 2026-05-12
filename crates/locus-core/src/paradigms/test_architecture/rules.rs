@@ -513,6 +513,170 @@ fn best_jaccard_match<'a>(
     best
 }
 
+// ── RuleDefinition impls (governance spine migration, epic #71) ──────────────
+
+use crate::governance::finding::{FindingSource, RuleFinding};
+use crate::governance::ids::{ParadigmId, RuleId};
+use crate::governance::rule::{RuleContext, RuleDefinition};
+
+const TA_PARADIGM: ParadigmId = ParadigmId::new("TA");
+const TA001_ID: RuleId = RuleId::new("TA001");
+const TA002_ID: RuleId = RuleId::new("TA002");
+const TA003_ID: RuleId = RuleId::new("TA003");
+const TA004_ID: RuleId = RuleId::new("TA004");
+
+pub struct Ta001Rule;
+pub static TA001_RULE: Ta001Rule = Ta001Rule;
+
+impl RuleDefinition for Ta001Rule {
+    fn id(&self) -> RuleId {
+        TA001_ID
+    }
+    fn paradigm(&self) -> ParadigmId {
+        TA_PARADIGM
+    }
+    fn title(&self) -> &'static str {
+        "test module defines a public domain-shaped type"
+    }
+    fn default_severity(&self) -> crate::diagnostics::Severity {
+        crate::diagnostics::Severity::Warning
+    }
+    fn observe(&self, ctx: &RuleContext<'_>) -> Vec<RuleFinding> {
+        let section: TaSection = ctx.lockfile.paradigm_section("TA").unwrap_or_default();
+        ta001(ctx.air, &section, ctx.mode)
+            .into_iter()
+            .map(|d| RuleFinding {
+                id: ctx.finding_ids.next(),
+                source: FindingSource::RegisteredRule(TA001_ID),
+                rule_id: Some(TA001_ID),
+                paradigm_id: Some(TA_PARADIGM),
+                default_severity: d.severity,
+                span: Some(d.span),
+                concept: d.concept,
+                message: d.message,
+                evidence: vec![],
+                why: d.why,
+                suggested_fix: d.suggested_fix,
+                diagnostic_code: None,
+            })
+            .collect()
+    }
+}
+
+pub struct Ta002Rule;
+pub static TA002_RULE: Ta002Rule = Ta002Rule;
+
+impl RuleDefinition for Ta002Rule {
+    fn id(&self) -> RuleId {
+        TA002_ID
+    }
+    fn paradigm(&self) -> ParadigmId {
+        TA_PARADIGM
+    }
+    fn title(&self) -> &'static str {
+        "test type whose name overlaps an accepted canonical concept"
+    }
+    fn default_severity(&self) -> crate::diagnostics::Severity {
+        crate::diagnostics::Severity::Warning
+    }
+    fn observe(&self, ctx: &RuleContext<'_>) -> Vec<RuleFinding> {
+        let section: TaSection = ctx.lockfile.paradigm_section("TA").unwrap_or_default();
+        ta002(ctx.air, &section, ctx.mode)
+            .into_iter()
+            .map(|d| RuleFinding {
+                id: ctx.finding_ids.next(),
+                source: FindingSource::RegisteredRule(TA002_ID),
+                rule_id: Some(TA002_ID),
+                paradigm_id: Some(TA_PARADIGM),
+                default_severity: d.severity,
+                span: Some(d.span),
+                concept: d.concept,
+                message: d.message,
+                evidence: vec![],
+                why: d.why,
+                suggested_fix: d.suggested_fix,
+                diagnostic_code: None,
+            })
+            .collect()
+    }
+}
+
+pub struct Ta003Rule;
+pub static TA003_RULE: Ta003Rule = Ta003Rule;
+
+impl RuleDefinition for Ta003Rule {
+    fn id(&self) -> RuleId {
+        TA003_ID
+    }
+    fn paradigm(&self) -> ParadigmId {
+        TA_PARADIGM
+    }
+    fn title(&self) -> &'static str {
+        "test struct whose name and field shape both echo a canonical concept"
+    }
+    fn default_severity(&self) -> crate::diagnostics::Severity {
+        crate::diagnostics::Severity::Warning
+    }
+    fn observe(&self, ctx: &RuleContext<'_>) -> Vec<RuleFinding> {
+        let section: TaSection = ctx.lockfile.paradigm_section("TA").unwrap_or_default();
+        ta003(ctx.air, &section, ctx.mode)
+            .into_iter()
+            .map(|d| RuleFinding {
+                id: ctx.finding_ids.next(),
+                source: FindingSource::RegisteredRule(TA003_ID),
+                rule_id: Some(TA003_ID),
+                paradigm_id: Some(TA_PARADIGM),
+                default_severity: d.severity,
+                span: Some(d.span),
+                concept: d.concept,
+                message: d.message,
+                evidence: vec![],
+                why: d.why,
+                suggested_fix: d.suggested_fix,
+                diagnostic_code: None,
+            })
+            .collect()
+    }
+}
+
+pub struct Ta004Rule;
+pub static TA004_RULE: Ta004Rule = Ta004Rule;
+
+impl RuleDefinition for Ta004Rule {
+    fn id(&self) -> RuleId {
+        TA004_ID
+    }
+    fn paradigm(&self) -> ParadigmId {
+        TA_PARADIGM
+    }
+    fn title(&self) -> &'static str {
+        "port impl in a test file outside accepted test-adapter modules"
+    }
+    fn default_severity(&self) -> crate::diagnostics::Severity {
+        crate::diagnostics::Severity::Warning
+    }
+    fn observe(&self, ctx: &RuleContext<'_>) -> Vec<RuleFinding> {
+        let section: TaSection = ctx.lockfile.paradigm_section("TA").unwrap_or_default();
+        ta004(ctx.air, &section, ctx.mode)
+            .into_iter()
+            .map(|d| RuleFinding {
+                id: ctx.finding_ids.next(),
+                source: FindingSource::RegisteredRule(TA004_ID),
+                rule_id: Some(TA004_ID),
+                paradigm_id: Some(TA_PARADIGM),
+                default_severity: d.severity,
+                span: Some(d.span),
+                concept: d.concept,
+                message: d.message,
+                evidence: vec![],
+                why: d.why,
+                suggested_fix: d.suggested_fix,
+                diagnostic_code: None,
+            })
+            .collect()
+    }
+}
+
 #[cfg(test)]
 #[path = "rules_tests.rs"]
 mod rules_tests;

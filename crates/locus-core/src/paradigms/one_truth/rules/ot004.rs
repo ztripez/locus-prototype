@@ -14,7 +14,36 @@ use locus_air::{ActionKind, AirItem, AirWorkspace};
 
 use super::super::lockfile_schema::OtSection;
 use super::helpers::{file_of_symbol, matches_symbol_pattern};
-use crate::diagnostics::{CheckMode, Diagnostic, Severity};
+use crate::diagnostics::{CheckMode, Severity};
+use crate::governance::finding::{FindingSource, RuleFinding};
+use crate::governance::ids::{FindingIdMinter, ParadigmId, RuleId};
+use crate::governance::rule::{RuleContext, RuleDefinition};
+
+pub struct Ot004Rule;
+
+pub static OT004_RULE: Ot004Rule = Ot004Rule;
+
+const OT004_ID: RuleId = RuleId::new("OT004");
+const OT_PARADIGM: ParadigmId = ParadigmId::new("OT");
+
+impl RuleDefinition for Ot004Rule {
+    fn id(&self) -> RuleId {
+        OT004_ID
+    }
+    fn paradigm(&self) -> ParadigmId {
+        OT_PARADIGM
+    }
+    fn title(&self) -> &'static str {
+        "direct canonical construction outside owner or accepted converter"
+    }
+    fn default_severity(&self) -> Severity {
+        Severity::Fatal
+    }
+    fn observe(&self, ctx: &RuleContext<'_>) -> Vec<RuleFinding> {
+        let section: OtSection = ctx.lockfile.paradigm_section("OT").unwrap_or_default();
+        produce_findings(ctx.air, &section, ctx.mode, ctx.finding_ids)
+    }
+}
 
 /// Build canonical short-name index: `short → (full_symbol, owner_file, concept_id)`.
 fn build_ot004_canonicals(
@@ -38,8 +67,9 @@ fn build_ot004_canonicals(
     canonicals
 }
 
-/// Check one `Construct` action against the canonical index; push a diagnostic
+/// Check one `Construct` action against the canonical index; push a finding
 /// if it violates OT004.
+#[allow(clippy::too_many_arguments)]
 fn ot004_check_action(
     a: &locus_air::AirTruthAction,
     file_path: &str,
@@ -47,7 +77,8 @@ fn ot004_check_action(
     accepted_converters: &BTreeSet<&str>,
     section: &OtSection,
     mode: CheckMode,
-    out: &mut Vec<Diagnostic>,
+    finding_ids: &FindingIdMinter,
+    out: &mut Vec<RuleFinding>,
 ) {
     if a.action != ActionKind::Construct {
         return;
@@ -83,17 +114,23 @@ fn ot004_check_action(
         .function
         .as_deref()
         .unwrap_or("(no enclosing function recorded)");
-    out.push(ot004_diagnostic(
+    out.push(ot004_finding(
         a,
         canonical_symbol,
         owner_file,
         function_label,
         concept_id,
         mode,
+        finding_ids,
     ));
 }
 
-pub fn ot004(air: &AirWorkspace, section: &OtSection, mode: CheckMode) -> Vec<Diagnostic> {
+pub(crate) fn produce_findings(
+    air: &AirWorkspace,
+    section: &OtSection,
+    mode: CheckMode,
+    finding_ids: &FindingIdMinter,
+) -> Vec<RuleFinding> {
     let canonicals = build_ot004_canonicals(air, section);
     if canonicals.is_empty() {
         return Vec::new();
@@ -118,6 +155,7 @@ pub fn ot004(air: &AirWorkspace, section: &OtSection, mode: CheckMode) -> Vec<Di
                     &accepted_converters,
                     section,
                     mode,
+                    finding_ids,
                     &mut out,
                 );
             }
@@ -126,23 +164,28 @@ pub fn ot004(air: &AirWorkspace, section: &OtSection, mode: CheckMode) -> Vec<Di
     out
 }
 
-fn ot004_diagnostic(
+fn ot004_finding(
     a: &locus_air::AirTruthAction,
     canonical_symbol: &str,
     owner_file: &str,
     function_label: &str,
     concept_id: &str,
     mode: CheckMode,
-) -> Diagnostic {
-    Diagnostic {
-        rule_id: "OT004".to_string(),
-        severity: mode.elevate(Severity::Fatal),
-        span: a.span.clone(),
+    finding_ids: &FindingIdMinter,
+) -> RuleFinding {
+    RuleFinding {
+        id: finding_ids.next(),
+        source: FindingSource::RegisteredRule(OT004_ID),
+        rule_id: Some(OT004_ID),
+        paradigm_id: Some(OT_PARADIGM),
+        default_severity: mode.elevate(Severity::Fatal),
+        span: Some(a.span.clone()),
         concept: Some(concept_id.to_string()),
         message: format!(
             "direct construction of canonical `{canonical_symbol}` outside its owner module \
              and outside any accepted converter"
         ),
+        evidence: vec![],
         why: vec![
             format!("constructed at `{}:{}`", a.span.file, a.span.line_start),
             format!("owner module is `{owner_file}`"),
@@ -152,5 +195,6 @@ fn ot004_diagnostic(
             "go through the accepted converter (e.g. `{canonical_symbol}::try_from(value)?`), \
              or accept this function as a converter and rerun `locus init`"
         )),
+        diagnostic_code: None,
     }
 }

@@ -323,6 +323,94 @@ pub fn ab002(air: &AirWorkspace, section: &AbSection, mode: CheckMode) -> Vec<Di
     out
 }
 
+// ── RuleDefinition impls (governance spine migration, epic #71) ──────────────
+
+use crate::governance::finding::{FindingSource, RuleFinding};
+use crate::governance::ids::{ParadigmId, RuleId};
+use crate::governance::rule::{RuleContext, RuleDefinition};
+
+const AB_PARADIGM: ParadigmId = ParadigmId::new("AB");
+const AB001_ID: RuleId = RuleId::new("AB001");
+const AB002_ID: RuleId = RuleId::new("AB002");
+
+pub struct Ab001Rule;
+pub static AB001_RULE: Ab001Rule = Ab001Rule;
+
+impl RuleDefinition for Ab001Rule {
+    fn id(&self) -> RuleId {
+        AB001_ID
+    }
+    fn paradigm(&self) -> ParadigmId {
+        AB_PARADIGM
+    }
+    fn title(&self) -> &'static str {
+        "single-impl trait (speculative abstraction)"
+    }
+    fn default_severity(&self) -> crate::diagnostics::Severity {
+        crate::diagnostics::Severity::Warning
+    }
+    fn observe(&self, ctx: &RuleContext<'_>) -> Vec<RuleFinding> {
+        use super::lockfile_schema::AbSection;
+        let section: AbSection = ctx.lockfile.paradigm_section("AB").unwrap_or_default();
+        ab001(ctx.air, &section, ctx.mode)
+            .into_iter()
+            .map(|d| RuleFinding {
+                id: ctx.finding_ids.next(),
+                source: FindingSource::RegisteredRule(AB001_ID),
+                rule_id: Some(AB001_ID),
+                paradigm_id: Some(AB_PARADIGM),
+                default_severity: d.severity,
+                span: Some(d.span),
+                concept: d.concept,
+                message: d.message,
+                evidence: vec![],
+                why: d.why,
+                suggested_fix: d.suggested_fix,
+                diagnostic_code: None,
+            })
+            .collect()
+    }
+}
+
+pub struct Ab002Rule;
+pub static AB002_RULE: Ab002Rule = Ab002Rule;
+
+impl RuleDefinition for Ab002Rule {
+    fn id(&self) -> RuleId {
+        AB002_ID
+    }
+    fn paradigm(&self) -> ParadigmId {
+        AB_PARADIGM
+    }
+    fn title(&self) -> &'static str {
+        "type named after generic role"
+    }
+    fn default_severity(&self) -> crate::diagnostics::Severity {
+        crate::diagnostics::Severity::Warning
+    }
+    fn observe(&self, ctx: &RuleContext<'_>) -> Vec<RuleFinding> {
+        use super::lockfile_schema::AbSection;
+        let section: AbSection = ctx.lockfile.paradigm_section("AB").unwrap_or_default();
+        ab002(ctx.air, &section, ctx.mode)
+            .into_iter()
+            .map(|d| RuleFinding {
+                id: ctx.finding_ids.next(),
+                source: FindingSource::RegisteredRule(AB002_ID),
+                rule_id: Some(AB002_ID),
+                paradigm_id: Some(AB_PARADIGM),
+                default_severity: d.severity,
+                span: Some(d.span),
+                concept: d.concept,
+                message: d.message,
+                evidence: vec![],
+                why: d.why,
+                suggested_fix: d.suggested_fix,
+                diagnostic_code: None,
+            })
+            .collect()
+    }
+}
+
 #[cfg(test)]
 #[path = "rules_tests.rs"]
 mod rules_tests;

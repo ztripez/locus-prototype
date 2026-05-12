@@ -269,6 +269,94 @@ fn pascalize(s: &str) -> String {
         .collect()
 }
 
+// ── RuleDefinition impls (governance spine migration, epic #71) ──────────────
+
+use crate::governance::finding::{FindingSource, RuleFinding};
+use crate::governance::ids::{ParadigmId, RuleId};
+use crate::governance::rule::{RuleContext, RuleDefinition};
+
+const FO_PARADIGM: ParadigmId = ParadigmId::new("FO");
+const FO001_ID: RuleId = RuleId::new("FO001");
+const FO004_ID: RuleId = RuleId::new("FO004");
+
+pub struct Fo001Rule;
+pub static FO001_RULE: Fo001Rule = Fo001Rule;
+
+impl RuleDefinition for Fo001Rule {
+    fn id(&self) -> RuleId {
+        FO001_ID
+    }
+    fn paradigm(&self) -> ParadigmId {
+        FO_PARADIGM
+    }
+    fn title(&self) -> &'static str {
+        "same public type name defined in two different features"
+    }
+    fn default_severity(&self) -> crate::diagnostics::Severity {
+        crate::diagnostics::Severity::Fatal
+    }
+    fn observe(&self, ctx: &RuleContext<'_>) -> Vec<RuleFinding> {
+        use super::lockfile_schema::FoSection;
+        let section: FoSection = ctx.lockfile.paradigm_section("FO").unwrap_or_default();
+        fo001(ctx.air, &section, ctx.mode)
+            .into_iter()
+            .map(|d| RuleFinding {
+                id: ctx.finding_ids.next(),
+                source: FindingSource::RegisteredRule(FO001_ID),
+                rule_id: Some(FO001_ID),
+                paradigm_id: Some(FO_PARADIGM),
+                default_severity: d.severity,
+                span: Some(d.span),
+                concept: d.concept,
+                message: d.message,
+                evidence: vec![],
+                why: d.why,
+                suggested_fix: d.suggested_fix,
+                diagnostic_code: None,
+            })
+            .collect()
+    }
+}
+
+pub struct Fo004Rule;
+pub static FO004_RULE: Fo004Rule = Fo004Rule;
+
+impl RuleDefinition for Fo004Rule {
+    fn id(&self) -> RuleId {
+        FO004_ID
+    }
+    fn paradigm(&self) -> ParadigmId {
+        FO_PARADIGM
+    }
+    fn title(&self) -> &'static str {
+        "shared type field references a feature-internal symbol"
+    }
+    fn default_severity(&self) -> crate::diagnostics::Severity {
+        crate::diagnostics::Severity::Warning
+    }
+    fn observe(&self, ctx: &RuleContext<'_>) -> Vec<RuleFinding> {
+        use super::lockfile_schema::FoSection;
+        let section: FoSection = ctx.lockfile.paradigm_section("FO").unwrap_or_default();
+        fo004(ctx.air, &section, ctx.mode)
+            .into_iter()
+            .map(|d| RuleFinding {
+                id: ctx.finding_ids.next(),
+                source: FindingSource::RegisteredRule(FO004_ID),
+                rule_id: Some(FO004_ID),
+                paradigm_id: Some(FO_PARADIGM),
+                default_severity: d.severity,
+                span: Some(d.span),
+                concept: d.concept,
+                message: d.message,
+                evidence: vec![],
+                why: d.why,
+                suggested_fix: d.suggested_fix,
+                diagnostic_code: None,
+            })
+            .collect()
+    }
+}
+
 #[cfg(test)]
 #[path = "rules_tests.rs"]
 mod rules_tests;

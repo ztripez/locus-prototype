@@ -39,8 +39,95 @@ impl RuleRegistry {
         let reg = Self {
             rules: vec![
                 &crate::paradigms::complexity_budget::rules::cx001::CX001_RULE,
+                &crate::paradigms::complexity_budget::rules::cx002::CX002_RULE,
+                &crate::paradigms::complexity_budget::rules::cx007::CX007_RULE,
+                &crate::paradigms::complexity_budget::rules::cx008::CX008_RULE,
                 &crate::paradigms::dependency_graph::rules::dg001::DG001_RULE,
+                &crate::paradigms::dependency_graph::rules::dg002::DG002_RULE,
+                &crate::paradigms::dependency_graph::rules::dg003::DG003_RULE,
+                &crate::paradigms::dependency_graph::rules::dg004::DG004_RULE,
+                &crate::paradigms::one_truth::rules::ot001::OT001_RULE,
                 &crate::paradigms::one_truth::rules::ot002::OT002_RULE,
+                &crate::paradigms::one_truth::rules::ot003::OT003_RULE,
+                &crate::paradigms::one_truth::rules::ot004::OT004_RULE,
+                &crate::paradigms::one_truth::rules::ot005::OT005_RULE,
+                &crate::paradigms::one_truth::rules::ot006::OT006_RULE,
+                &crate::paradigms::one_truth::rules::ot007::OT007_RULE,
+                &crate::paradigms::one_truth::rules::ot008::OT008_RULE,
+                &crate::paradigms::one_truth::rules::ot009::OT009_RULE,
+                &crate::paradigms::one_truth::rules::ot010::OT010_RULE,
+                &crate::paradigms::one_truth::rules::ot011::OT011_RULE,
+                &crate::paradigms::one_truth::rules::ot012::OT012_RULE,
+                &crate::paradigms::failure_lineage::rules::fl001::FL001_RULE,
+                &crate::paradigms::failure_lineage::rules::fl002::FL002_RULE,
+                &crate::paradigms::failure_lineage::rules::fl003::FL003_RULE,
+                &crate::paradigms::failure_lineage::rules::fl004::FL004_RULE,
+                &crate::paradigms::failure_lineage::rules::fl005::FL005_RULE,
+                &crate::paradigms::failure_lineage::rules::fl006::FL006_RULE,
+                &crate::paradigms::failure_lineage::rules::fl007::FL007_RULE,
+                &crate::paradigms::failure_lineage::rules::fl010::FL010_RULE,
+                &crate::paradigms::failure_lineage::rules::fl011::FL011_RULE,
+                &crate::paradigms::failure_lineage::rules::fl012::FL012_RULE,
+                &crate::paradigms::failure_lineage::rules::fl013::FL013_RULE,
+                &crate::paradigms::module_ownership::rules::MO001_RULE,
+                &crate::paradigms::module_ownership::rules::MO002_RULE,
+                &crate::paradigms::module_ownership::rules::MO003_RULE,
+                &crate::paradigms::module_ownership::rules::MO004_RULE,
+                &crate::paradigms::module_ownership::rules::MO005_RULE,
+                &crate::paradigms::abstraction_discipline::rules::AB001_RULE,
+                &crate::paradigms::abstraction_discipline::rules::AB002_RULE,
+                &crate::paradigms::claim_ownership::rules::CL001_RULE,
+                &crate::paradigms::boundary_ownership::rules::BO001_RULE,
+                &crate::paradigms::boundary_ownership::rules::BO002_RULE,
+                &crate::paradigms::boundary_ownership::rules::BO004_RULE,
+                &crate::paradigms::boundary_ownership::rules::BO005_RULE,
+                &crate::paradigms::composition_root::rules::CR001_RULE,
+                &crate::paradigms::composition_root::rules::CR002_RULE,
+                &crate::paradigms::documentation::rules::DC001_RULE,
+                &crate::paradigms::documentation::rules::DC002_RULE,
+                &crate::paradigms::documentation::rules::DC004_RULE,
+                &crate::paradigms::error_taxonomy::rules::ER001_RULE,
+                &crate::paradigms::error_taxonomy::rules::ER002_RULE,
+                &crate::paradigms::error_taxonomy::rules::ER003_RULE,
+                &crate::paradigms::error_taxonomy::rules::ER005_RULE,
+                &crate::paradigms::error_taxonomy::rules::ER007_RULE,
+                &crate::paradigms::port_adapter::rules::PA001_RULE,
+                &crate::paradigms::port_adapter::rules::PA002_RULE,
+                &crate::paradigms::port_adapter::rules::PA003_RULE,
+                &crate::paradigms::port_adapter::rules::PA004_RULE,
+                &crate::paradigms::runtime_work::rules::RW001_RULE,
+                &crate::paradigms::runtime_work::rules::RW002_RULE,
+                &crate::paradigms::runtime_work::rules::RW003_RULE,
+                &crate::paradigms::runtime_work::rules::RW004_RULE,
+                &crate::paradigms::runtime_work::rules::RW005_RULE,
+                &crate::paradigms::runtime_work::rules::RW006_RULE,
+                &crate::paradigms::demand_driven::rules::DA001_RULE,
+                &crate::paradigms::demand_driven::rules::DA002_RULE,
+                &crate::paradigms::demand_driven::rules::DA007_RULE,
+                &crate::paradigms::responsibility::rules::RM001_RULE,
+                &crate::paradigms::responsibility::rules::RM002_RULE,
+                &crate::paradigms::responsibility::rules::RM003_RULE,
+                &crate::paradigms::responsibility::rules::RM004_RULE,
+                &crate::paradigms::responsibility::rules::RM005_RULE,
+                &crate::paradigms::responsibility::rules::RM006_RULE,
+                &crate::paradigms::feature_ownership::rules::FO001_RULE,
+                &crate::paradigms::feature_ownership::rules::FO004_RULE,
+                &crate::paradigms::observability::rules::OB001_RULE,
+                &crate::paradigms::observability::rules::OB002_RULE,
+                &crate::paradigms::observability::rules::OB003_RULE,
+                &crate::paradigms::observability::rules::OB004_RULE,
+                &crate::paradigms::config_data::rules::CF001_RULE,
+                &crate::paradigms::config_data::rules::CF002_RULE,
+                &crate::paradigms::config_data::rules::CF003_RULE,
+                &crate::paradigms::test_architecture::rules::TA001_RULE,
+                &crate::paradigms::test_architecture::rules::TA002_RULE,
+                &crate::paradigms::test_architecture::rules::TA003_RULE,
+                &crate::paradigms::test_architecture::rules::TA004_RULE,
+                &crate::paradigms::utility_discipline::rules::UT001_RULE,
+                &crate::paradigms::utility_discipline::rules::UT002_RULE,
+                &crate::paradigms::utility_discipline::rules::UT003_RULE,
+                &crate::paradigms::utility_discipline::rules::UT004_RULE,
+                &crate::paradigms::utility_discipline::rules::UT005_RULE,
             ],
         };
         debug_assert!(
@@ -377,6 +464,14 @@ mod tests {
     }
 
     #[test]
+    fn rule_registry_contains_cx002_cx007_cx008() {
+        let reg = RuleRegistry::standard();
+        assert!(reg.contains_code("CX002"), "CX002 must be in registry");
+        assert!(reg.contains_code("CX007"), "CX007 must be in registry");
+        assert!(reg.contains_code("CX008"), "CX008 must be in registry");
+    }
+
+    #[test]
     fn rule_registry_contains_cx001_after_p2_migration() {
         let reg = RuleRegistry::standard();
         assert!(
@@ -392,13 +487,13 @@ mod tests {
     }
 
     #[test]
-    fn cx_paradigm_def_lists_cx001_rule() {
+    fn cx_paradigm_def_lists_cx_rules() {
         let reg = ParadigmRegistry::standard();
         let cx = reg
             .find(&ParadigmId::new("CX"))
             .expect("CX ParadigmDefinition missing");
         let rule_ids: Vec<&str> = cx.rules().iter().map(|r| r.id().as_str()).collect();
-        assert_eq!(rule_ids, vec!["CX001"]);
+        assert_eq!(rule_ids, vec!["CX001", "CX002", "CX007", "CX008"]);
     }
 
     #[test]
@@ -423,7 +518,24 @@ mod tests {
             .find(&ParadigmId::new("OT"))
             .expect("OT ParadigmDefinition missing");
         let rule_ids: Vec<&str> = ot.rules().iter().map(|r| r.id().as_str()).collect();
-        assert_eq!(rule_ids, vec!["OT002"]);
+        assert_eq!(
+            rule_ids,
+            vec![
+                "OT001", "OT002", "OT003", "OT004", "OT005", "OT006", "OT007", "OT008", "OT009",
+                "OT010", "OT011", "OT012"
+            ]
+        );
+    }
+
+    #[test]
+    fn rule_registry_contains_all_ot_rules() {
+        let reg = RuleRegistry::standard();
+        for code in [
+            "OT001", "OT003", "OT004", "OT005", "OT006", "OT007", "OT008", "OT009", "OT010",
+            "OT011", "OT012",
+        ] {
+            assert!(reg.contains_code(code), "{code} missing from registry");
+        }
     }
 
     #[test]
@@ -447,7 +559,15 @@ mod tests {
             .find(&ParadigmId::new("DG"))
             .expect("DG ParadigmDefinition missing");
         let rule_ids: Vec<&str> = dg.rules().iter().map(|r| r.id().as_str()).collect();
-        assert_eq!(rule_ids, vec!["DG001"]);
+        assert_eq!(rule_ids, vec!["DG001", "DG002", "DG003", "DG004"]);
+    }
+
+    #[test]
+    fn rule_registry_contains_dg002_dg003_dg004() {
+        let reg = RuleRegistry::standard();
+        assert!(reg.contains_code("DG002"), "DG002 must be in registry");
+        assert!(reg.contains_code("DG003"), "DG003 must be in registry");
+        assert!(reg.contains_code("DG004"), "DG004 must be in registry");
     }
 
     #[test]

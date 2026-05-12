@@ -24,6 +24,9 @@ use locus_air::{AirItem, AirMatchArm, AirWorkspace};
 use super::super::lockfile_schema::FlSection;
 use super::helpers::{body_shape_label, callsite_in_invariant_owner, is_silent_body_shape};
 use crate::diagnostics::{CheckMode, Diagnostic, Severity};
+use crate::governance::finding::{FindingSource, RuleFinding};
+use crate::governance::ids::{ParadigmId, RuleId};
+use crate::governance::rule::{RuleContext, RuleDefinition};
 
 pub fn fl007(air: &AirWorkspace, section: &FlSection, mode: CheckMode) -> Vec<Diagnostic> {
     if section.invariant_owner_paths.is_empty() {
@@ -105,5 +108,47 @@ fn diagnostic_for_fl007(arm: &AirMatchArm, module_path: &str, mode: CheckMode) -
              swallow, suppress with `// locus: allow FL007 reason=\"…\" \
              expires=\"YYYY-MM-DD\"`"
         )),
+    }
+}
+
+pub struct Fl007Rule;
+pub static FL007_RULE: Fl007Rule = Fl007Rule;
+
+const FL007_ID: RuleId = RuleId::new("FL007");
+const FL007_PARADIGM: ParadigmId = ParadigmId::new("FL");
+
+impl RuleDefinition for Fl007Rule {
+    fn id(&self) -> RuleId {
+        FL007_ID
+    }
+    fn paradigm(&self) -> ParadigmId {
+        FL007_PARADIGM
+    }
+    fn title(&self) -> &'static str {
+        "catch-all `Err(_)` arm with silent body"
+    }
+    fn default_severity(&self) -> crate::diagnostics::Severity {
+        crate::diagnostics::Severity::Warning
+    }
+    fn observe(&self, ctx: &RuleContext<'_>) -> Vec<RuleFinding> {
+        use super::super::lockfile_schema::FlSection;
+        let section: FlSection = ctx.lockfile.paradigm_section("FL").unwrap_or_default();
+        fl007(ctx.air, &section, ctx.mode)
+            .into_iter()
+            .map(|d| RuleFinding {
+                id: ctx.finding_ids.next(),
+                source: FindingSource::RegisteredRule(FL007_ID),
+                rule_id: Some(FL007_ID),
+                paradigm_id: Some(FL007_PARADIGM),
+                default_severity: d.severity,
+                span: Some(d.span),
+                concept: d.concept,
+                message: d.message,
+                evidence: vec![],
+                why: d.why,
+                suggested_fix: d.suggested_fix,
+                diagnostic_code: None,
+            })
+            .collect()
     }
 }

@@ -427,6 +427,174 @@ fn diagnostic_for_macro_emission(
     }
 }
 
+// ── RuleDefinition impls (governance spine migration, epic #71) ──────────────
+
+use crate::governance::finding::{FindingSource, RuleFinding};
+use crate::governance::ids::{ParadigmId, RuleId};
+use crate::governance::rule::{RuleContext, RuleDefinition};
+
+const OB_PARADIGM: ParadigmId = ParadigmId::new("OB");
+const OB001_ID: RuleId = RuleId::new("OB001");
+const OB002_ID: RuleId = RuleId::new("OB002");
+const OB003_ID: RuleId = RuleId::new("OB003");
+const OB004_ID: RuleId = RuleId::new("OB004");
+
+pub struct Ob001Rule;
+pub static OB001_RULE: Ob001Rule = Ob001Rule;
+
+impl RuleDefinition for Ob001Rule {
+    fn id(&self) -> RuleId {
+        OB001_ID
+    }
+    fn paradigm(&self) -> ParadigmId {
+        OB_PARADIGM
+    }
+    fn title(&self) -> &'static str {
+        "forbidden logging primitive in a non-observer file"
+    }
+    fn default_severity(&self) -> crate::diagnostics::Severity {
+        crate::diagnostics::Severity::Warning
+    }
+    fn observe(&self, ctx: &RuleContext<'_>) -> Vec<RuleFinding> {
+        use super::lockfile_schema::ObSection;
+        let section: ObSection = ctx.lockfile.paradigm_section("OB").unwrap_or_default();
+        ob001(ctx.air, &section, ctx.mode)
+            .into_iter()
+            .map(|d| RuleFinding {
+                id: ctx.finding_ids.next(),
+                source: FindingSource::RegisteredRule(OB001_ID),
+                rule_id: Some(OB001_ID),
+                paradigm_id: Some(OB_PARADIGM),
+                default_severity: d.severity,
+                span: Some(d.span),
+                concept: d.concept,
+                message: d.message,
+                evidence: vec![],
+                why: d.why,
+                suggested_fix: d.suggested_fix,
+                diagnostic_code: None,
+            })
+            .collect()
+    }
+}
+
+pub struct Ob002Rule;
+pub static OB002_RULE: Ob002Rule = Ob002Rule;
+
+impl RuleDefinition for Ob002Rule {
+    fn id(&self) -> RuleId {
+        OB002_ID
+    }
+    fn paradigm(&self) -> ParadigmId {
+        OB_PARADIGM
+    }
+    fn title(&self) -> &'static str {
+        "metric emission outside the accepted owner module"
+    }
+    fn default_severity(&self) -> crate::diagnostics::Severity {
+        crate::diagnostics::Severity::Warning
+    }
+    fn observe(&self, ctx: &RuleContext<'_>) -> Vec<RuleFinding> {
+        use super::lockfile_schema::ObSection;
+        let section: ObSection = ctx.lockfile.paradigm_section("OB").unwrap_or_default();
+        ob002(ctx.air, &section, ctx.mode)
+            .into_iter()
+            .map(|d| RuleFinding {
+                id: ctx.finding_ids.next(),
+                source: FindingSource::RegisteredRule(OB002_ID),
+                rule_id: Some(OB002_ID),
+                paradigm_id: Some(OB_PARADIGM),
+                default_severity: d.severity,
+                span: Some(d.span),
+                concept: d.concept,
+                message: d.message,
+                evidence: vec![],
+                why: d.why,
+                suggested_fix: d.suggested_fix,
+                diagnostic_code: None,
+            })
+            .collect()
+    }
+}
+
+pub struct Ob003Rule;
+pub static OB003_RULE: Ob003Rule = Ob003Rule;
+
+impl RuleDefinition for Ob003Rule {
+    fn id(&self) -> RuleId {
+        OB003_ID
+    }
+    fn paradigm(&self) -> ParadigmId {
+        OB_PARADIGM
+    }
+    fn title(&self) -> &'static str {
+        "event emission outside the accepted owner module"
+    }
+    fn default_severity(&self) -> crate::diagnostics::Severity {
+        crate::diagnostics::Severity::Warning
+    }
+    fn observe(&self, ctx: &RuleContext<'_>) -> Vec<RuleFinding> {
+        use super::lockfile_schema::ObSection;
+        let section: ObSection = ctx.lockfile.paradigm_section("OB").unwrap_or_default();
+        ob003(ctx.air, &section, ctx.mode)
+            .into_iter()
+            .map(|d| RuleFinding {
+                id: ctx.finding_ids.next(),
+                source: FindingSource::RegisteredRule(OB003_ID),
+                rule_id: Some(OB003_ID),
+                paradigm_id: Some(OB_PARADIGM),
+                default_severity: d.severity,
+                span: Some(d.span),
+                concept: d.concept,
+                message: d.message,
+                evidence: vec![],
+                why: d.why,
+                suggested_fix: d.suggested_fix,
+                diagnostic_code: None,
+            })
+            .collect()
+    }
+}
+
+pub struct Ob004Rule;
+pub static OB004_RULE: Ob004Rule = Ob004Rule;
+
+impl RuleDefinition for Ob004Rule {
+    fn id(&self) -> RuleId {
+        OB004_ID
+    }
+    fn paradigm(&self) -> ParadigmId {
+        OB_PARADIGM
+    }
+    fn title(&self) -> &'static str {
+        "boundary entry without observability"
+    }
+    fn default_severity(&self) -> crate::diagnostics::Severity {
+        crate::diagnostics::Severity::Warning
+    }
+    fn observe(&self, ctx: &RuleContext<'_>) -> Vec<RuleFinding> {
+        use super::lockfile_schema::ObSection;
+        let section: ObSection = ctx.lockfile.paradigm_section("OB").unwrap_or_default();
+        ob004(ctx.air, &section, ctx.mode)
+            .into_iter()
+            .map(|d| RuleFinding {
+                id: ctx.finding_ids.next(),
+                source: FindingSource::RegisteredRule(OB004_ID),
+                rule_id: Some(OB004_ID),
+                paradigm_id: Some(OB_PARADIGM),
+                default_severity: d.severity,
+                span: Some(d.span),
+                concept: d.concept,
+                message: d.message,
+                evidence: vec![],
+                why: d.why,
+                suggested_fix: d.suggested_fix,
+                diagnostic_code: None,
+            })
+            .collect()
+    }
+}
+
 #[cfg(test)]
 #[path = "rules_tests.rs"]
 mod rules_tests;

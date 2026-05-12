@@ -2,7 +2,7 @@
 //!
 //! Verifies that `governance::run()` emits exactly one LOCUS003 advisory
 //! per unique un-migrated legacy rule code, and that registered rules
-//! (CX001 / OT002 / DG001) do not generate LOCUS003 findings.
+//! (CX001 / OT002 / DG001–DG004) do not generate LOCUS003 findings.
 
 use locus_air::{AirFile, AirImport, AirItem, AirPackage, AirSpan, AirWorkspace, Visibility};
 use locus_core::governance::{self, FindingSource};
@@ -105,9 +105,9 @@ fn locus003_findings_use_policy_source() {
 
 #[test]
 fn locus003_deduplicates_by_rule_code() {
-    // Workspace that fires legacy DG002 multiple times (2-cycle
-    // produces 2 diagnostics). There should be exactly one LOCUS003
-    // for DG002, not two.
+    // DG002 is now a registered rule (P4 migration). Registered rules must
+    // NOT produce LOCUS003. Verify that a 2-cycle workspace produces ≥2
+    // DG002 diagnostics (one per edge) and zero LOCUS003 entries for DG002.
     use locus_air::AIR_SCHEMA_VERSION;
     let air = AirWorkspace {
         schema_version: AIR_SCHEMA_VERSION,
@@ -154,7 +154,7 @@ fn locus003_deduplicates_by_rule_code() {
     let lf = Lockfile::empty();
     let out = governance::run(&air, &lf, CheckMode::Human);
 
-    // DG002 fires twice (one per edge in the cycle)
+    // DG002 is registered — fires ≥2 times (one per edge in the 2-cycle).
     let dg002_count = out
         .diagnostics
         .iter()
@@ -165,14 +165,14 @@ fn locus003_deduplicates_by_rule_code() {
         "expected ≥2 DG002 diagnostics; got {dg002_count}"
     );
 
-    // But LOCUS003 for DG002 appears exactly once
+    // Registered rule — must NOT produce LOCUS003.
     let locus003_for_dg002 = out
         .diagnostics
         .iter()
         .filter(|d| d.rule_id == "LOCUS003" && d.message.contains("DG002"))
         .count();
     assert_eq!(
-        locus003_for_dg002, 1,
-        "DG002 should produce exactly one LOCUS003 regardless of instance count; got {locus003_for_dg002}"
+        locus003_for_dg002, 0,
+        "registered DG002 must not trigger LOCUS003; got {locus003_for_dg002}"
     );
 }

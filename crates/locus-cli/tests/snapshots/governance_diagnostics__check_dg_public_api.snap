@@ -1,14 +1,8 @@
 ---
 source: crates/locus-cli/tests/governance_diagnostics.rs
-assertion_line: 29
 expression: "format!(\"STDOUT:\\n{stdout}\\nSTDERR:\\n{stderr}\")"
 ---
 STDOUT:
-info[LOCUS003]: rule code DG003 emitted via legacy paradigm runner; not yet migrated to RuleDefinition (1 observation this run)
-  --> <governance>:0
-  - 1 observation this run
-  fix: migrate DG003 to a RuleDefinition implementation (governance spine epic #71)
-
 error[DG003]: feature `feature_two` reaches into `feature_one` internals via `dg_public_api::feature_one::internals::secret`
   --> <DG_FIXTURE>/src/feature_two/handler.rs:6
   - importer `dg_public_api::feature_two::handler` belongs to feature `feature_two`
@@ -130,6 +124,6 @@ warning[PG007]: new exempt path `*::test::*` in `paradigms.CX.exempt_paths` lack
   - PG007 is unaffected by `--allow-policy-calibration`: calibration accepts the addition itself (PG003), but does not waive the requirement to record why, when to revisit, and who owns it
   fix: populate `reason` (why this exemption exists), `expires` (`YYYY-MM-DD` review date), and `owner` (team/individual). Use the struct form: `{"pattern": "…", "reason": "…", "expires": "YYYY-MM-DD", "owner": "…"}`.
 
-summary: 1 error(s), 2 warning(s), 13 advisory.
+summary: 1 error(s), 2 warning(s), 12 advisory.
 
 STDERR:

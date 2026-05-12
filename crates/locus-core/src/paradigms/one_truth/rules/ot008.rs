@@ -18,9 +18,44 @@ use locus_air::{AirItem, AirWorkspace};
 
 use super::super::lockfile_schema::OtSection;
 use super::helpers::short_name;
-use crate::diagnostics::{CheckMode, Diagnostic, Severity};
+use crate::diagnostics::{CheckMode, Severity};
+use crate::governance::finding::{FindingSource, RuleFinding};
+use crate::governance::ids::{FindingIdMinter, ParadigmId, RuleId};
+use crate::governance::rule::{RuleContext, RuleDefinition};
 
-pub fn ot008(air: &AirWorkspace, section: &OtSection, mode: CheckMode) -> Vec<Diagnostic> {
+pub struct Ot008Rule;
+
+pub static OT008_RULE: Ot008Rule = Ot008Rule;
+
+const OT008_ID: RuleId = RuleId::new("OT008");
+const OT_PARADIGM: ParadigmId = ParadigmId::new("OT");
+
+impl RuleDefinition for Ot008Rule {
+    fn id(&self) -> RuleId {
+        OT008_ID
+    }
+    fn paradigm(&self) -> ParadigmId {
+        OT_PARADIGM
+    }
+    fn title(&self) -> &'static str {
+        "domain logic on boundary adapter"
+    }
+    fn default_severity(&self) -> Severity {
+        Severity::Warning
+    }
+    fn observe(&self, ctx: &RuleContext<'_>) -> Vec<RuleFinding> {
+        let section: OtSection = ctx.lockfile.paradigm_section("OT").unwrap_or_default();
+        produce_findings(ctx.air, &section, ctx.mode, ctx.finding_ids)
+    }
+}
+
+// locus: allow CX001 — rule finding helper; inherently spans >50 lines due to full RuleFinding construction
+pub(crate) fn produce_findings(
+    air: &AirWorkspace,
+    section: &OtSection,
+    mode: CheckMode,
+    finding_ids: &FindingIdMinter,
+) -> Vec<RuleFinding> {
     let mut boundary_short_to_concept: BTreeMap<String, String> = BTreeMap::new();
     for (concept_id, entry) in &section.concepts {
         for b in &entry.boundaries {
@@ -57,8 +92,14 @@ pub fn ot008(air: &AirWorkspace, section: &OtSection, mode: CheckMode) -> Vec<Di
                     if is_boundary_shape_method(method) {
                         continue;
                     }
-                    out.push(ot008_diagnostic(
-                        im, self_short, method, concept_id, confidence, severity,
+                    out.push(ot008_finding(
+                        im,
+                        self_short,
+                        method,
+                        concept_id,
+                        confidence,
+                        severity,
+                        finding_ids,
                     ));
                 }
             }
@@ -67,24 +108,30 @@ pub fn ot008(air: &AirWorkspace, section: &OtSection, mode: CheckMode) -> Vec<Di
     out
 }
 
-fn ot008_diagnostic(
+#[allow(clippy::too_many_arguments)]
+fn ot008_finding(
     im: &locus_air::AirImplBlock,
     self_short: &str,
     method: &str,
     concept_id: &str,
     confidence: f32,
     severity: Severity,
-) -> Diagnostic {
-    Diagnostic {
-        rule_id: "OT008".to_string(),
-        severity,
-        span: im.span.clone(),
+    finding_ids: &FindingIdMinter,
+) -> RuleFinding {
+    RuleFinding {
+        id: finding_ids.next(),
+        source: FindingSource::RegisteredRule(OT008_ID),
+        rule_id: Some(OT008_ID),
+        paradigm_id: Some(OT_PARADIGM),
+        default_severity: severity,
+        span: Some(im.span.clone()),
         concept: Some(concept_id.to_string()),
         message: format!(
             "boundary `{self_short}` carries domain-shaped method \
              `{method}` — boundary adapters should only translate, \
              not reason about, the concept"
         ),
+        evidence: vec![],
         why: vec![
             format!("`{self_short}` is the accepted boundary for `{concept_id}`"),
             format!(
@@ -98,6 +145,7 @@ fn ot008_diagnostic(
              (where domain behaviour lives), or rename it into the \
              boundary-shape allowlist if it really is pure translation"
         )),
+        diagnostic_code: None,
     }
 }
 

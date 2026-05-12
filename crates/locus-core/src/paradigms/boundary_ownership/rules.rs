@@ -501,6 +501,174 @@ fn lookup_function<'a>(air: &'a AirWorkspace, symbol: &str) -> Option<(&'a str, 
     None
 }
 
+// ── RuleDefinition impls (governance spine migration, epic #71) ──────────────
+
+use crate::governance::finding::{FindingSource, RuleFinding};
+use crate::governance::ids::{ParadigmId, RuleId};
+use crate::governance::rule::{RuleContext, RuleDefinition};
+
+const BO_PARADIGM: ParadigmId = ParadigmId::new("BO");
+const BO001_ID: RuleId = RuleId::new("BO001");
+const BO002_ID: RuleId = RuleId::new("BO002");
+const BO004_ID: RuleId = RuleId::new("BO004");
+const BO005_ID: RuleId = RuleId::new("BO005");
+
+pub struct Bo001Rule;
+pub static BO001_RULE: Bo001Rule = Bo001Rule;
+
+impl RuleDefinition for Bo001Rule {
+    fn id(&self) -> RuleId {
+        BO001_ID
+    }
+    fn paradigm(&self) -> ParadigmId {
+        BO_PARADIGM
+    }
+    fn title(&self) -> &'static str {
+        "domain type leaks through boundary signature"
+    }
+    fn default_severity(&self) -> crate::diagnostics::Severity {
+        crate::diagnostics::Severity::Fatal
+    }
+    fn observe(&self, ctx: &RuleContext<'_>) -> Vec<RuleFinding> {
+        use super::lockfile_schema::BoSection;
+        let section: BoSection = ctx.lockfile.paradigm_section("BO").unwrap_or_default();
+        bo001(ctx.air, &section, ctx.mode)
+            .into_iter()
+            .map(|d| RuleFinding {
+                id: ctx.finding_ids.next(),
+                source: FindingSource::RegisteredRule(BO001_ID),
+                rule_id: Some(BO001_ID),
+                paradigm_id: Some(BO_PARADIGM),
+                default_severity: d.severity,
+                span: Some(d.span),
+                concept: d.concept,
+                message: d.message,
+                evidence: vec![],
+                why: d.why,
+                suggested_fix: d.suggested_fix,
+                diagnostic_code: None,
+            })
+            .collect()
+    }
+}
+
+pub struct Bo002Rule;
+pub static BO002_RULE: Bo002Rule = Bo002Rule;
+
+impl RuleDefinition for Bo002Rule {
+    fn id(&self) -> RuleId {
+        BO002_ID
+    }
+    fn paradigm(&self) -> ParadigmId {
+        BO_PARADIGM
+    }
+    fn title(&self) -> &'static str {
+        "boundary type used as canonical"
+    }
+    fn default_severity(&self) -> crate::diagnostics::Severity {
+        crate::diagnostics::Severity::Fatal
+    }
+    fn observe(&self, ctx: &RuleContext<'_>) -> Vec<RuleFinding> {
+        use super::lockfile_schema::BoSection;
+        let section: BoSection = ctx.lockfile.paradigm_section("BO").unwrap_or_default();
+        bo002(ctx.air, &section, ctx.mode)
+            .into_iter()
+            .map(|d| RuleFinding {
+                id: ctx.finding_ids.next(),
+                source: FindingSource::RegisteredRule(BO002_ID),
+                rule_id: Some(BO002_ID),
+                paradigm_id: Some(BO_PARADIGM),
+                default_severity: d.severity,
+                span: Some(d.span),
+                concept: d.concept,
+                message: d.message,
+                evidence: vec![],
+                why: d.why,
+                suggested_fix: d.suggested_fix,
+                diagnostic_code: None,
+            })
+            .collect()
+    }
+}
+
+pub struct Bo004Rule;
+pub static BO004_RULE: Bo004Rule = Bo004Rule;
+
+impl RuleDefinition for Bo004Rule {
+    fn id(&self) -> RuleId {
+        BO004_ID
+    }
+    fn paradigm(&self) -> ParadigmId {
+        BO_PARADIGM
+    }
+    fn title(&self) -> &'static str {
+        "boundary type co-defined with canonical concept"
+    }
+    fn default_severity(&self) -> crate::diagnostics::Severity {
+        crate::diagnostics::Severity::Warning
+    }
+    fn observe(&self, ctx: &RuleContext<'_>) -> Vec<RuleFinding> {
+        use super::lockfile_schema::BoSection;
+        let section: BoSection = ctx.lockfile.paradigm_section("BO").unwrap_or_default();
+        bo004(ctx.air, &section, ctx.mode)
+            .into_iter()
+            .map(|d| RuleFinding {
+                id: ctx.finding_ids.next(),
+                source: FindingSource::RegisteredRule(BO004_ID),
+                rule_id: Some(BO004_ID),
+                paradigm_id: Some(BO_PARADIGM),
+                default_severity: d.severity,
+                span: Some(d.span),
+                concept: d.concept,
+                message: d.message,
+                evidence: vec![],
+                why: d.why,
+                suggested_fix: d.suggested_fix,
+                diagnostic_code: None,
+            })
+            .collect()
+    }
+}
+
+pub struct Bo005Rule;
+pub static BO005_RULE: Bo005Rule = Bo005Rule;
+
+impl RuleDefinition for Bo005Rule {
+    fn id(&self) -> RuleId {
+        BO005_ID
+    }
+    fn paradigm(&self) -> ParadigmId {
+        BO_PARADIGM
+    }
+    fn title(&self) -> &'static str {
+        "persistence call in domain layer"
+    }
+    fn default_severity(&self) -> crate::diagnostics::Severity {
+        crate::diagnostics::Severity::Fatal
+    }
+    fn observe(&self, ctx: &RuleContext<'_>) -> Vec<RuleFinding> {
+        use super::lockfile_schema::BoSection;
+        let section: BoSection = ctx.lockfile.paradigm_section("BO").unwrap_or_default();
+        bo005(ctx.air, &section, ctx.mode)
+            .into_iter()
+            .map(|d| RuleFinding {
+                id: ctx.finding_ids.next(),
+                source: FindingSource::RegisteredRule(BO005_ID),
+                rule_id: Some(BO005_ID),
+                paradigm_id: Some(BO_PARADIGM),
+                default_severity: d.severity,
+                span: Some(d.span),
+                concept: d.concept,
+                message: d.message,
+                evidence: vec![],
+                why: d.why,
+                suggested_fix: d.suggested_fix,
+                diagnostic_code: None,
+            })
+            .collect()
+    }
+}
+
 #[cfg(test)]
 #[path = "rules_tests.rs"]
 mod rules_tests;

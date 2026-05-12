@@ -1,6 +1,5 @@
 ---
 source: crates/locus-cli/tests/governance_compat.rs
-assertion_line: 31
 expression: "format!(\"STDOUT:\\n{stdout}\\nSTDERR:\\n{stderr}\")"
 ---
 STDOUT:

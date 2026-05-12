@@ -44,9 +44,13 @@ impl Paradigm for ClaimOwnership {
         // `paradigms.CL.require_local_rationale = true`.
         serde_json::Value::Null
     }
-    fn check(&self, air: &AirWorkspace, lockfile: &Lockfile, mode: CheckMode) -> Vec<Diagnostic> {
-        let section: lockfile_schema::ClSection =
-            lockfile.paradigm_section(CL_PREFIX).unwrap_or_default();
-        rules::cl001(air, &section, mode)
+    fn check(
+        &self,
+        _air: &AirWorkspace,
+        _lockfile: &Lockfile,
+        _mode: CheckMode,
+    ) -> Vec<Diagnostic> {
+        // Migrated to RuleDefinition (CL001). Legacy path is now a no-op.
+        Vec::new()
     }
 }

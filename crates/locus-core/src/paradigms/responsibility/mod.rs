@@ -44,7 +44,10 @@ impl Paradigm for Responsibility {
         // opts in by setting `default_max_action_kinds` in the lockfile.
         serde_json::Value::Null
     }
-    fn check(&self, air: &AirWorkspace, lockfile: &Lockfile, mode: CheckMode) -> Vec<Diagnostic> {
+    fn check(&self, _air: &AirWorkspace, lockfile: &Lockfile, _mode: CheckMode) -> Vec<Diagnostic> {
+        // All RM rules migrated to RuleDefinition (#71 P4); only the LOCUS002
+        // vacancy nudge remains here so vacant-by-definition paradigms keep
+        // surfacing onboarding guidance.
         let section: lockfile_schema::RmSection =
             lockfile.paradigm_section(RM_PREFIX).unwrap_or_default();
         if section.is_vacant() && !lockfile.is_acknowledged_empty(RM_PREFIX) {
@@ -79,13 +82,7 @@ impl Paradigm for Responsibility {
                 ],
             )];
         }
-        let mut diags = rules::rm001(air, &section, mode);
-        diags.extend(rules::rm002(air, &section, mode));
-        diags.extend(rules::rm003(air, &section, mode));
-        diags.extend(rules::rm004(air, &section, mode));
-        diags.extend(rules::rm005(air, &section, mode));
-        diags.extend(rules::rm006(air, &section, mode));
-        diags
+        Vec::new()
     }
     fn suggest(&self, air: &AirWorkspace, lockfile: &Lockfile) -> Vec<crate::init::Suggestion> {
         init::suggest(air, lockfile)

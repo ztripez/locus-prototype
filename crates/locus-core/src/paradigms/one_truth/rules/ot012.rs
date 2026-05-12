@@ -18,9 +18,44 @@ use locus_air::{AirItem, AirWorkspace, TypeKind};
 
 use super::super::lockfile_schema::OtSection;
 use super::helpers::{is_primitive_type_text, snake_to_pascal};
-use crate::diagnostics::{CheckMode, Diagnostic, Severity};
+use crate::diagnostics::{CheckMode, Severity};
+use crate::governance::finding::{FindingSource, RuleFinding};
+use crate::governance::ids::{FindingIdMinter, ParadigmId, RuleId};
+use crate::governance::rule::{RuleContext, RuleDefinition};
 
-pub fn ot012(air: &AirWorkspace, section: &OtSection, mode: CheckMode) -> Vec<Diagnostic> {
+pub struct Ot012Rule;
+
+pub static OT012_RULE: Ot012Rule = Ot012Rule;
+
+const OT012_ID: RuleId = RuleId::new("OT012");
+const OT_PARADIGM: ParadigmId = ParadigmId::new("OT");
+
+impl RuleDefinition for Ot012Rule {
+    fn id(&self) -> RuleId {
+        OT012_ID
+    }
+    fn paradigm(&self) -> ParadigmId {
+        OT_PARADIGM
+    }
+    fn title(&self) -> &'static str {
+        "primitive obsession around known canonical"
+    }
+    fn default_severity(&self) -> Severity {
+        Severity::Warning
+    }
+    fn observe(&self, ctx: &RuleContext<'_>) -> Vec<RuleFinding> {
+        let section: OtSection = ctx.lockfile.paradigm_section("OT").unwrap_or_default();
+        produce_findings(ctx.air, &section, ctx.mode, ctx.finding_ids)
+    }
+}
+
+// locus: allow CX001 — rule finding helper; inherently spans >50 lines due to full RuleFinding construction
+pub(crate) fn produce_findings(
+    air: &AirWorkspace,
+    section: &OtSection,
+    mode: CheckMode,
+    finding_ids: &FindingIdMinter,
+) -> Vec<RuleFinding> {
     let mut canonical_short: BTreeMap<String, String> = BTreeMap::new();
     for (concept_id, entry) in &section.concepts {
         if let Some(short) = entry.canonical.symbol.rsplit("::").next() {
@@ -58,13 +93,14 @@ pub fn ot012(air: &AirWorkspace, section: &OtSection, mode: CheckMode) -> Vec<Di
                     if !is_primitive_type_text(&field.type_text) {
                         continue;
                     }
-                    out.push(ot012_diagnostic(
+                    out.push(ot012_finding(
                         ty,
                         field,
                         &canonical_short_name,
                         concept_id,
                         confidence,
                         severity,
+                        finding_ids,
                     ));
                 }
             }
@@ -73,24 +109,30 @@ pub fn ot012(air: &AirWorkspace, section: &OtSection, mode: CheckMode) -> Vec<Di
     out
 }
 
-fn ot012_diagnostic(
+#[allow(clippy::too_many_arguments)]
+fn ot012_finding(
     ty: &locus_air::AirType,
     field: &locus_air::AirField,
     canonical_short_name: &str,
     concept_id: &str,
     confidence: f32,
     severity: Severity,
-) -> Diagnostic {
-    Diagnostic {
-        rule_id: "OT012".to_string(),
-        severity,
-        span: ty.span.clone(),
+    finding_ids: &FindingIdMinter,
+) -> RuleFinding {
+    RuleFinding {
+        id: finding_ids.next(),
+        source: FindingSource::RegisteredRule(OT012_ID),
+        rule_id: Some(OT012_ID),
+        paradigm_id: Some(OT_PARADIGM),
+        default_severity: severity,
+        span: Some(ty.span.clone()),
         concept: Some(concept_id.to_string()),
         message: format!(
             "field `{}::{}: {}` is a primitive substitute for canonical \
              `{canonical_short_name}` (concept `{concept_id}`)",
             ty.symbol, field.name, field.type_text
         ),
+        evidence: vec![],
         why: vec![
             format!(
                 "field name `{}` maps to canonical `{canonical_short_name}`",
@@ -106,5 +148,6 @@ fn ot012_diagnostic(
              <name>` if it's a wire-shape adapter",
             field.type_text, field.name, ty.symbol
         )),
+        diagnostic_code: None,
     }
 }

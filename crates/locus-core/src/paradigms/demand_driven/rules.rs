@@ -362,6 +362,134 @@ pub fn da007(air: &AirWorkspace, section: &DaSection, mode: CheckMode) -> Vec<Di
     out
 }
 
+// ── RuleDefinition impls (governance spine migration, epic #71) ──────────────
+
+use crate::governance::finding::{FindingSource, RuleFinding};
+use crate::governance::ids::{ParadigmId, RuleId};
+use crate::governance::rule::{RuleContext, RuleDefinition};
+
+const DA_PARADIGM: ParadigmId = ParadigmId::new("DA");
+const DA001_ID: RuleId = RuleId::new("DA001");
+const DA002_ID: RuleId = RuleId::new("DA002");
+const DA007_ID: RuleId = RuleId::new("DA007");
+
+pub struct Da001Rule;
+pub static DA001_RULE: Da001Rule = Da001Rule;
+
+impl RuleDefinition for Da001Rule {
+    fn id(&self) -> RuleId {
+        DA001_ID
+    }
+    fn paradigm(&self) -> ParadigmId {
+        DA_PARADIGM
+    }
+    fn title(&self) -> &'static str {
+        "trait with exactly one implementation"
+    }
+    fn default_severity(&self) -> crate::diagnostics::Severity {
+        crate::diagnostics::Severity::Warning
+    }
+    fn observe(&self, ctx: &RuleContext<'_>) -> Vec<RuleFinding> {
+        use super::lockfile_schema::DaSection;
+        let section: DaSection = ctx.lockfile.paradigm_section("DA").unwrap_or_default();
+        da001(ctx.air, &section, ctx.mode)
+            .into_iter()
+            .map(|d| RuleFinding {
+                id: ctx.finding_ids.next(),
+                source: FindingSource::RegisteredRule(DA001_ID),
+                rule_id: Some(DA001_ID),
+                paradigm_id: Some(DA_PARADIGM),
+                default_severity: d.severity,
+                span: Some(d.span),
+                concept: d.concept,
+                message: d.message,
+                evidence: vec![],
+                why: d.why,
+                suggested_fix: d.suggested_fix,
+                diagnostic_code: None,
+            })
+            .collect()
+    }
+}
+
+pub struct Da002Rule;
+pub static DA002_RULE: Da002Rule = Da002Rule;
+
+impl RuleDefinition for Da002Rule {
+    fn id(&self) -> RuleId {
+        DA002_ID
+    }
+    fn paradigm(&self) -> ParadigmId {
+        DA_PARADIGM
+    }
+    fn title(&self) -> &'static str {
+        "factory function that constructs exactly one type"
+    }
+    fn default_severity(&self) -> crate::diagnostics::Severity {
+        crate::diagnostics::Severity::Warning
+    }
+    fn observe(&self, ctx: &RuleContext<'_>) -> Vec<RuleFinding> {
+        use super::lockfile_schema::DaSection;
+        let section: DaSection = ctx.lockfile.paradigm_section("DA").unwrap_or_default();
+        da002(ctx.air, &section, ctx.mode)
+            .into_iter()
+            .map(|d| RuleFinding {
+                id: ctx.finding_ids.next(),
+                source: FindingSource::RegisteredRule(DA002_ID),
+                rule_id: Some(DA002_ID),
+                paradigm_id: Some(DA_PARADIGM),
+                default_severity: d.severity,
+                span: Some(d.span),
+                concept: d.concept,
+                message: d.message,
+                evidence: vec![],
+                why: d.why,
+                suggested_fix: d.suggested_fix,
+                diagnostic_code: None,
+            })
+            .collect()
+    }
+}
+
+pub struct Da007Rule;
+pub static DA007_RULE: Da007Rule = Da007Rule;
+
+impl RuleDefinition for Da007Rule {
+    fn id(&self) -> RuleId {
+        DA007_ID
+    }
+    fn paradigm(&self) -> ParadigmId {
+        DA_PARADIGM
+    }
+    fn title(&self) -> &'static str {
+        "strategy enum with exactly one variant"
+    }
+    fn default_severity(&self) -> crate::diagnostics::Severity {
+        crate::diagnostics::Severity::Warning
+    }
+    fn observe(&self, ctx: &RuleContext<'_>) -> Vec<RuleFinding> {
+        use super::lockfile_schema::DaSection;
+        let section: DaSection = ctx.lockfile.paradigm_section("DA").unwrap_or_default();
+        da007(ctx.air, &section, ctx.mode)
+            .into_iter()
+            .map(|d| RuleFinding {
+                id: ctx.finding_ids.next(),
+                source: FindingSource::RegisteredRule(DA007_ID),
+                rule_id: Some(DA007_ID),
+                paradigm_id: Some(DA_PARADIGM),
+                default_severity: d.severity,
+                span: Some(d.span),
+                concept: d.concept,
+                message: d.message,
+                evidence: vec![],
+                why: d.why,
+                suggested_fix: d.suggested_fix,
+                diagnostic_code: None,
+            })
+            .collect()
+    }
+}
+
 #[cfg(test)]
 #[path = "rules_tests.rs"]
 mod rules_tests;

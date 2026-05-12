@@ -46,28 +46,22 @@ impl Paradigm for RuntimeWork {
     fn init(&self, _air: &AirWorkspace) -> serde_json::Value {
         serde_json::Value::Null
     }
-    fn check(&self, air: &AirWorkspace, lockfile: &Lockfile, mode: CheckMode) -> Vec<Diagnostic> {
+    fn check(&self, _air: &AirWorkspace, lockfile: &Lockfile, _mode: CheckMode) -> Vec<Diagnostic> {
+        // All RW rules migrated to RuleDefinition (#71 P4); only the LOCUS002
+        // vacancy nudge remains here so vacant-by-definition paradigms keep
+        // surfacing onboarding guidance.
         let section: lockfile_schema::RwSection =
             lockfile.paradigm_section(RW_PREFIX).unwrap_or_default();
-        // RW005/006 are marker-driven (no lockfile entry needed) — keep
-        // them on regardless of vacancy.
-        let mut diags = rules::rw005(air, mode);
-        diags.extend(rules::rw006(air, mode));
         if section.is_vacant() && !lockfile.is_acknowledged_empty(RW_PREFIX) {
-            diags.push(vacant_paradigm_diagnostic(
+            return vec![vacant_paradigm_diagnostic(
                 RW_PREFIX,
                 "Runtime Work Ownership",
                 &[(
                     "runtime_owner_paths",
                     "module patterns identifying runtime owners (job queues, supervisors, runtime entry points)",
                 )],
-            ));
-            return diags;
+            )];
         }
-        diags.extend(rules::rw001(air, &section, mode));
-        diags.extend(rules::rw002(air, &section, mode));
-        diags.extend(rules::rw003(air, &section, mode));
-        diags.extend(rules::rw004(air, &section, mode));
-        diags
+        Vec::new()
     }
 }

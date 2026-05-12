@@ -41,7 +41,10 @@ impl Paradigm for DemandDriven {
         // No automatic inference — accepted single-impl traits come from the user.
         serde_json::Value::Null
     }
-    fn check(&self, air: &AirWorkspace, lockfile: &Lockfile, mode: CheckMode) -> Vec<Diagnostic> {
+    fn check(&self, _air: &AirWorkspace, lockfile: &Lockfile, _mode: CheckMode) -> Vec<Diagnostic> {
+        // All DA rules migrated to RuleDefinition (#71 P4); only the LOCUS002
+        // vacancy nudge remains here so vacant-by-definition paradigms keep
+        // surfacing onboarding guidance.
         let section: lockfile_schema::DaSection =
             lockfile.paradigm_section(DA_PREFIX).unwrap_or_default();
         if section.is_vacant() && !lockfile.is_acknowledged_empty(DA_PREFIX) {
@@ -54,9 +57,6 @@ impl Paradigm for DemandDriven {
                 )],
             )];
         }
-        let mut diags = rules::da001(air, &section, mode);
-        diags.extend(rules::da002(air, &section, mode));
-        diags.extend(rules::da007(air, &section, mode));
-        diags
+        Vec::new()
     }
 }

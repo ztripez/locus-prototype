@@ -41,7 +41,10 @@ impl Paradigm for FeatureOwnership {
         // No automatic inference — feature regions are user-declared.
         serde_json::Value::Null
     }
-    fn check(&self, air: &AirWorkspace, lockfile: &Lockfile, mode: CheckMode) -> Vec<Diagnostic> {
+    fn check(&self, _air: &AirWorkspace, lockfile: &Lockfile, _mode: CheckMode) -> Vec<Diagnostic> {
+        // All FO rules migrated to RuleDefinition (#71 P4); only the LOCUS002
+        // vacancy nudge remains here so vacant-by-definition paradigms keep
+        // surfacing onboarding guidance.
         let section: lockfile_schema::FoSection =
             lockfile.paradigm_section(FO_PREFIX).unwrap_or_default();
         if section.is_vacant() && !lockfile.is_acknowledged_empty(FO_PREFIX) {
@@ -60,8 +63,6 @@ impl Paradigm for FeatureOwnership {
                 ],
             )];
         }
-        let mut diags = rules::fo001(air, &section, mode);
-        diags.extend(rules::fo004(air, &section, mode));
-        diags
+        Vec::new()
     }
 }

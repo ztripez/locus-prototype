@@ -49,15 +49,14 @@ impl Paradigm for ModuleOwnership {
         // No automatic inference — module budgets come from the user.
         serde_json::Value::Null
     }
-    fn check(&self, air: &AirWorkspace, lockfile: &Lockfile, mode: CheckMode) -> Vec<Diagnostic> {
-        let section: lockfile_schema::MoSection =
-            lockfile.paradigm_section(MO_PREFIX).unwrap_or_default();
-        let mut diags = rules::mo001(air, &section, mode);
-        diags.extend(rules::mo002(air, &section, mode));
-        diags.extend(rules::mo003(air, mode));
-        diags.extend(rules::mo004(air, &section, mode));
-        diags.extend(rules::mo005(air, mode));
-        diags
+    fn check(
+        &self,
+        _air: &AirWorkspace,
+        _lockfile: &Lockfile,
+        _mode: CheckMode,
+    ) -> Vec<Diagnostic> {
+        // Migrated to RuleDefinition (MO001–MO005). Legacy path is now a no-op.
+        Vec::new()
     }
     fn suggest(&self, air: &AirWorkspace, lockfile: &Lockfile) -> Vec<crate::init::Suggestion> {
         init::suggest(air, lockfile)

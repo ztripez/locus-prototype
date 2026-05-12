@@ -14,9 +14,43 @@ use locus_air::{AirItem, AirWorkspace};
 
 use super::super::lockfile_schema::OtSection;
 use super::helpers::lookup_concept;
-use crate::diagnostics::{CheckMode, Diagnostic, Severity};
+use crate::diagnostics::{CheckMode, Severity};
+use crate::governance::finding::{FindingSource, RuleFinding};
+use crate::governance::ids::{FindingIdMinter, ParadigmId, RuleId};
+use crate::governance::rule::{RuleContext, RuleDefinition};
 
-pub fn ot006(air: &AirWorkspace, section: &OtSection, mode: CheckMode) -> Vec<Diagnostic> {
+pub struct Ot006Rule;
+
+pub static OT006_RULE: Ot006Rule = Ot006Rule;
+
+const OT006_ID: RuleId = RuleId::new("OT006");
+const OT_PARADIGM: ParadigmId = ParadigmId::new("OT");
+
+impl RuleDefinition for Ot006Rule {
+    fn id(&self) -> RuleId {
+        OT006_ID
+    }
+    fn paradigm(&self) -> ParadigmId {
+        OT_PARADIGM
+    }
+    fn title(&self) -> &'static str {
+        "unregistered conversion between accepted endpoints"
+    }
+    fn default_severity(&self) -> Severity {
+        Severity::Warning
+    }
+    fn observe(&self, ctx: &RuleContext<'_>) -> Vec<RuleFinding> {
+        let section: OtSection = ctx.lockfile.paradigm_section("OT").unwrap_or_default();
+        produce_findings(ctx.air, &section, ctx.mode, ctx.finding_ids)
+    }
+}
+
+pub(crate) fn produce_findings(
+    air: &AirWorkspace,
+    section: &OtSection,
+    mode: CheckMode,
+    finding_ids: &FindingIdMinter,
+) -> Vec<RuleFinding> {
     // Build a per-concept (accepted-symbol, accepted-converter-symbol) map
     // upfront so the per-conversion lookup is cheap.
     let mut concept_for_symbol: BTreeMap<String, String> = BTreeMap::new();
@@ -54,28 +88,33 @@ pub fn ot006(air: &AirWorkspace, section: &OtSection, mode: CheckMode) -> Vec<Di
                 if accepted {
                     continue;
                 }
-                out.push(ot006_diagnostic(c, from_concept, mode));
+                out.push(ot006_finding(c, from_concept, mode, finding_ids));
             }
         }
     }
     out
 }
 
-fn ot006_diagnostic(
+fn ot006_finding(
     c: &locus_air::AirConversion,
     from_concept: &str,
     mode: CheckMode,
-) -> Diagnostic {
-    Diagnostic {
-        rule_id: "OT006".to_string(),
-        severity: mode.elevate(Severity::Warning),
-        span: c.span.clone(),
+    finding_ids: &FindingIdMinter,
+) -> RuleFinding {
+    RuleFinding {
+        id: finding_ids.next(),
+        source: FindingSource::RegisteredRule(OT006_ID),
+        rule_id: Some(OT006_ID),
+        paradigm_id: Some(OT_PARADIGM),
+        default_severity: mode.elevate(Severity::Warning),
+        span: Some(c.span.clone()),
         concept: Some(from_concept.to_string()),
         message: format!(
             "`{}` converts between accepted symbols of concept `{}` \
              but is not recorded as an accepted converter",
             c.symbol, from_concept
         ),
+        evidence: vec![],
         why: vec![
             format!("from `{}` (accepted)", c.from),
             format!("to `{}` (accepted)", c.to),
@@ -86,5 +125,6 @@ fn ot006_diagnostic(
              converter symbol manually under the concept's `converters` list"
                 .to_string(),
         ),
+        diagnostic_code: None,
     }
 }

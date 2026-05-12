@@ -1,8 +1,8 @@
 //! OT rules.
 //!
 //! Each rule lives in its own sub-module under `rules/`. This file is the
-//! registration entry point — it re-exports each rule's public function so
-//! call sites in `mod.rs` continue to write `rules::ot001(...)`.
+//! registration entry point — it re-exports each rule's static singleton
+//! so call sites in registries can reference `rules::ot001::OT001_RULE` etc.
 //!
 //! Implemented:
 //! - [`ot001`]: duplicate canonical for a single concept
@@ -48,20 +48,19 @@ pub mod ot010;
 pub mod ot011;
 pub mod ot012;
 
-pub use ot001::ot001;
-// OT002 migrated to RuleDefinition (#71 P2). Legacy `ot002` function
-// deleted; the module is kept for `Ot002Rule` / `OT002_RULE` exports.
+// All rules migrated to RuleDefinition (#71 P4).
+pub use ot001::OT001_RULE;
 pub use ot002::{OT002_RULE, Ot002Rule};
-pub use ot003::ot003;
-pub use ot004::ot004;
-pub use ot005::ot005;
-pub use ot006::ot006;
-pub use ot007::ot007;
-pub use ot008::ot008;
-pub use ot009::ot009;
-pub use ot010::ot010;
-pub use ot011::ot011;
-pub use ot012::ot012;
+pub use ot003::OT003_RULE;
+pub use ot004::OT004_RULE;
+pub use ot005::OT005_RULE;
+pub use ot006::OT006_RULE;
+pub use ot007::OT007_RULE;
+pub use ot008::OT008_RULE;
+pub use ot009::OT009_RULE;
+pub use ot010::OT010_RULE;
+pub use ot011::OT011_RULE;
+pub use ot012::OT012_RULE;
 
 // Test-only re-exports so rules_tests.rs (compiled as a submodule of this
 // file) can call private helpers via `use super::*;` as before the split.

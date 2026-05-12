@@ -44,7 +44,10 @@ impl Paradigm for UtilityDiscipline {
         // an empty section; the user adds patterns via `locus ut add-utility-path`.
         serde_json::Value::Null
     }
-    fn check(&self, air: &AirWorkspace, lockfile: &Lockfile, mode: CheckMode) -> Vec<Diagnostic> {
+    fn check(&self, _air: &AirWorkspace, lockfile: &Lockfile, _mode: CheckMode) -> Vec<Diagnostic> {
+        // All UT rules migrated to RuleDefinition (#71 P4); only the LOCUS002
+        // vacancy nudge remains here so vacant-by-definition paradigms keep
+        // surfacing onboarding guidance.
         let section: lockfile_schema::UtSection =
             lockfile.paradigm_section(UT_PREFIX).unwrap_or_default();
         if section.is_vacant() && !lockfile.is_acknowledged_empty(UT_PREFIX) {
@@ -63,12 +66,7 @@ impl Paradigm for UtilityDiscipline {
                 ],
             )];
         }
-        let mut diags = rules::ut001(air, &section, mode);
-        diags.extend(rules::ut002(air, &section, mode));
-        diags.extend(rules::ut003(air, &section, mode));
-        diags.extend(rules::ut004(air, &section, mode));
-        diags.extend(rules::ut005(air, &section, mode));
-        diags
+        Vec::new()
     }
     fn suggest(&self, air: &AirWorkspace, lockfile: &Lockfile) -> Vec<crate::init::Suggestion> {
         init::suggest(air, lockfile)

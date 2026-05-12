@@ -18,6 +18,9 @@ use locus_air::{AirClosureMethodCall, AirItem, AirWorkspace};
 use super::super::lockfile_schema::FlSection;
 use super::helpers::callsite_in_invariant_owner;
 use crate::diagnostics::{CheckMode, Diagnostic, Severity};
+use crate::governance::finding::{FindingSource, RuleFinding};
+use crate::governance::ids::{ParadigmId, RuleId};
+use crate::governance::rule::{RuleContext, RuleDefinition};
 
 pub fn fl006(air: &AirWorkspace, section: &FlSection, mode: CheckMode) -> Vec<Diagnostic> {
     if section.invariant_owner_paths.is_empty() {
@@ -86,5 +89,47 @@ fn diagnostic_for_fl006(
              with `// locus: allow FL006 reason=\"…\" expires=\"YYYY-MM-DD\"`"
                 .into(),
         ),
+    }
+}
+
+pub struct Fl006Rule;
+pub static FL006_RULE: Fl006Rule = Fl006Rule;
+
+const FL006_ID: RuleId = RuleId::new("FL006");
+const FL006_PARADIGM: ParadigmId = ParadigmId::new("FL");
+
+impl RuleDefinition for Fl006Rule {
+    fn id(&self) -> RuleId {
+        FL006_ID
+    }
+    fn paradigm(&self) -> ParadigmId {
+        FL006_PARADIGM
+    }
+    fn title(&self) -> &'static str {
+        "`map_err(|_|)` discarding error argument"
+    }
+    fn default_severity(&self) -> crate::diagnostics::Severity {
+        crate::diagnostics::Severity::Warning
+    }
+    fn observe(&self, ctx: &RuleContext<'_>) -> Vec<RuleFinding> {
+        use super::super::lockfile_schema::FlSection;
+        let section: FlSection = ctx.lockfile.paradigm_section("FL").unwrap_or_default();
+        fl006(ctx.air, &section, ctx.mode)
+            .into_iter()
+            .map(|d| RuleFinding {
+                id: ctx.finding_ids.next(),
+                source: FindingSource::RegisteredRule(FL006_ID),
+                rule_id: Some(FL006_ID),
+                paradigm_id: Some(FL006_PARADIGM),
+                default_severity: d.severity,
+                span: Some(d.span),
+                concept: d.concept,
+                message: d.message,
+                evidence: vec![],
+                why: d.why,
+                suggested_fix: d.suggested_fix,
+                diagnostic_code: None,
+            })
+            .collect()
     }
 }
