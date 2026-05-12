@@ -74,8 +74,12 @@ pub fn run(args: InitArgs) -> Result<()> {
 
     println!("wrote {}", written.display());
     if !args.no_agent_instructions {
-        let agent_file = upsert_agent_instructions(&args.workspace)
-            .with_context(|| format!("write Locus agent instructions under {}", args.workspace.display()))?;
+        let agent_file = upsert_agent_instructions(&args.workspace).with_context(|| {
+            format!(
+                "write Locus agent instructions under {}",
+                args.workspace.display()
+            )
+        })?;
         println!("updated {}", agent_file.display());
     }
     print_init_sections_summary(&registry, &lockfile);
