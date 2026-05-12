@@ -19,7 +19,7 @@
 // locus: ot canonical
 
 use super::Paradigm;
-use crate::diagnostics::{CheckMode, Diagnostic, vacant_paradigm_diagnostic};
+use crate::diagnostics::{CheckMode, Diagnostic};
 use crate::lockfile::Lockfile;
 use locus_air::AirWorkspace;
 
@@ -44,31 +44,16 @@ impl Paradigm for UtilityDiscipline {
         // an empty section; the user adds patterns via `locus ut add-utility-path`.
         serde_json::Value::Null
     }
-    fn check(&self, air: &AirWorkspace, lockfile: &Lockfile, mode: CheckMode) -> Vec<Diagnostic> {
-        let section: lockfile_schema::UtSection =
-            lockfile.paradigm_section(UT_PREFIX).unwrap_or_default();
-        if section.is_vacant() && !lockfile.is_acknowledged_empty(UT_PREFIX) {
-            return vec![vacant_paradigm_diagnostic(
-                UT_PREFIX,
-                "Utility / Shared Module Discipline",
-                &[
-                    (
-                        "utility_paths",
-                        "module patterns identifying utility / helper modules",
-                    ),
-                    (
-                        "generic_utility_patterns",
-                        "module-name patterns flagging generic-utility naming (UT003)",
-                    ),
-                ],
-            )];
-        }
-        let mut diags = rules::ut001(air, &section, mode);
-        diags.extend(rules::ut002(air, &section, mode));
-        diags.extend(rules::ut003(air, &section, mode));
-        diags.extend(rules::ut004(air, &section, mode));
-        diags.extend(rules::ut005(air, &section, mode));
-        diags
+    fn check(
+        &self,
+        _air: &AirWorkspace,
+        _lockfile: &Lockfile,
+        _mode: CheckMode,
+    ) -> Vec<Diagnostic> {
+        // All UT rules migrated to RuleDefinition (#71 P4).
+        // Detection runs through the governance pipeline; this legacy
+        // path is now a no-op.
+        Vec::new()
     }
     fn suggest(&self, air: &AirWorkspace, lockfile: &Lockfile) -> Vec<crate::init::Suggestion> {
         init::suggest(air, lockfile)

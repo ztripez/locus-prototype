@@ -119,6 +119,15 @@ impl RuleRegistry {
                 &crate::paradigms::config_data::rules::CF001_RULE,
                 &crate::paradigms::config_data::rules::CF002_RULE,
                 &crate::paradigms::config_data::rules::CF003_RULE,
+                &crate::paradigms::test_architecture::rules::TA001_RULE,
+                &crate::paradigms::test_architecture::rules::TA002_RULE,
+                &crate::paradigms::test_architecture::rules::TA003_RULE,
+                &crate::paradigms::test_architecture::rules::TA004_RULE,
+                &crate::paradigms::utility_discipline::rules::UT001_RULE,
+                &crate::paradigms::utility_discipline::rules::UT002_RULE,
+                &crate::paradigms::utility_discipline::rules::UT003_RULE,
+                &crate::paradigms::utility_discipline::rules::UT004_RULE,
+                &crate::paradigms::utility_discipline::rules::UT005_RULE,
             ],
         };
         debug_assert!(

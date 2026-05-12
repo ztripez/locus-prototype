@@ -9,23 +9,6 @@ use crate::governance::ids::ParadigmId;
 use crate::governance::paradigm::ParadigmDefinition;
 use crate::governance::rule::RuleDefinition;
 
-macro_rules! paradigm_def {
-    ($struct_name:ident, $id:literal, $title:literal) => {
-        pub struct $struct_name;
-        impl ParadigmDefinition for $struct_name {
-            fn id(&self) -> ParadigmId {
-                ParadigmId::new($id)
-            }
-            fn title(&self) -> &'static str {
-                $title
-            }
-            fn rules(&self) -> &'static [&'static dyn RuleDefinition] {
-                &[]
-            }
-        }
-    };
-}
-
 // OT breaks out of the macro — all 12 rules migrated to RuleDefinition (#71 P4).
 pub struct OtParadigmDef;
 impl ParadigmDefinition for OtParadigmDef {
@@ -374,8 +357,45 @@ impl ParadigmDefinition for RwParadigmDef {
         &RULES
     }
 }
-paradigm_def!(TaParadigmDef, "TA", "Test Architecture");
-paradigm_def!(UtParadigmDef, "UT", "Utility Discipline");
+// TA breaks out of the macro — 4 rules migrated (TA001/002/003/004 in #71 P4).
+pub struct TaParadigmDef;
+impl ParadigmDefinition for TaParadigmDef {
+    fn id(&self) -> ParadigmId {
+        ParadigmId::new("TA")
+    }
+    fn title(&self) -> &'static str {
+        "Test Architecture"
+    }
+    fn rules(&self) -> &'static [&'static dyn RuleDefinition] {
+        static RULES: [&dyn RuleDefinition; 4] = [
+            &crate::paradigms::test_architecture::rules::TA001_RULE,
+            &crate::paradigms::test_architecture::rules::TA002_RULE,
+            &crate::paradigms::test_architecture::rules::TA003_RULE,
+            &crate::paradigms::test_architecture::rules::TA004_RULE,
+        ];
+        &RULES
+    }
+}
+// UT breaks out of the macro — 5 rules migrated (UT001/002/003/004/005 in #71 P4).
+pub struct UtParadigmDef;
+impl ParadigmDefinition for UtParadigmDef {
+    fn id(&self) -> ParadigmId {
+        ParadigmId::new("UT")
+    }
+    fn title(&self) -> &'static str {
+        "Utility Discipline"
+    }
+    fn rules(&self) -> &'static [&'static dyn RuleDefinition] {
+        static RULES: [&dyn RuleDefinition; 5] = [
+            &crate::paradigms::utility_discipline::rules::UT001_RULE,
+            &crate::paradigms::utility_discipline::rules::UT002_RULE,
+            &crate::paradigms::utility_discipline::rules::UT003_RULE,
+            &crate::paradigms::utility_discipline::rules::UT004_RULE,
+            &crate::paradigms::utility_discipline::rules::UT005_RULE,
+        ];
+        &RULES
+    }
+}
 
 pub static ALL_PARADIGM_DEFS: &[&dyn ParadigmDefinition] = &[
     &OtParadigmDef,
