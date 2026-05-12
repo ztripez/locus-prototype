@@ -2,6 +2,29 @@
   "policies": [
     "registry-integrity",
     "registry-coherence",
+    "concept-source-of-truth",
     "default-pass-through"
+  ],
+  "concepts": [
+    {
+      "id": "rule",
+      "source_of_truth": "RuleDefinition",
+      "registry": "RuleRegistry"
+    },
+    {
+      "id": "paradigm",
+      "source_of_truth": "ParadigmDefinition",
+      "registry": "ParadigmRegistry"
+    },
+    {
+      "id": "policy",
+      "source_of_truth": "PolicyDefinition",
+      "registry": "PolicyRegistry"
+    },
+    {
+      "id": "governance-code",
+      "source_of_truth": "GovernanceDiagnosticRegistry",
+      "registry": "GovernanceDiagnosticRegistry"
+    }
   ]
 }

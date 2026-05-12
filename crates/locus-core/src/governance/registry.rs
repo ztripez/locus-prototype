@@ -259,6 +259,9 @@ impl GovernanceDiagnosticRegistry {
                 // #75 — architecture-policy MVP. RegistryCoherencePolicy
                 // surfaces drift between `.locus/arch.json` and registries.
                 ("LOCUS004", PolicyId::new("registry-coherence")),
+                // #94 — architecture-intent MVP. ConceptSourceOfTruthPolicy
+                // surfaces bypasses of declared concept source-of-truth paths.
+                ("LOCUS005", PolicyId::new("concept-source-of-truth")),
             ],
         }
     }
@@ -333,10 +336,14 @@ fn standard_policies() -> Vec<&'static dyn PolicyDefinition> {
     // RegistryIntegrityPolicy MUST come before DefaultPassThroughPolicy.
     // RegistryCoherencePolicy follows registry_integrity so the
     // migration-debt sweep is reported before arch-drift advisories.
-    // Future policies (ExceptionPolicy, ...) insert before pass-through.
+    // ConceptSourceOfTruthPolicy (#94) follows registry_coherence so
+    // declared-concept bypasses are reported after drift but before
+    // pass-through materialises the rest. Future policies
+    // (ExceptionPolicy, ...) insert before pass-through.
     vec![
         &crate::governance::policies::registry_integrity::RegistryIntegrityPolicy,
         &crate::governance::policies::registry_coherence::RegistryCoherencePolicy,
+        &crate::governance::policies::concept_sot::ConceptSourceOfTruthPolicy,
         &crate::governance::policies::default::DefaultPassThroughPolicy,
     ]
 }
@@ -416,6 +423,42 @@ mod tests {
         let g = GovernanceDiagnosticRegistry::standard();
         assert!(g.contains("LOCUS004"));
         assert_eq!(g.owner("LOCUS004").unwrap().as_str(), "registry-coherence");
+    }
+
+    #[test]
+    fn governance_diagnostic_registry_knows_locus005() {
+        let g = GovernanceDiagnosticRegistry::standard();
+        assert!(g.contains("LOCUS005"));
+        assert_eq!(
+            g.owner("LOCUS005").unwrap().as_str(),
+            "concept-source-of-truth"
+        );
+    }
+
+    #[test]
+    fn concept_sot_policy_runs_after_registry_coherence_and_before_pass_through() {
+        let reg = PolicyRegistry::standard();
+        let ids: Vec<&str> = reg.iter().map(|p| p.id().as_str()).collect();
+        let rc = ids
+            .iter()
+            .position(|&id| id == "registry-coherence")
+            .expect("registry-coherence must be in standard registry");
+        let cs = ids
+            .iter()
+            .position(|&id| id == "concept-source-of-truth")
+            .expect("concept-source-of-truth must be in standard registry");
+        let pt = ids
+            .iter()
+            .position(|&id| id == "default-pass-through")
+            .expect("default-pass-through must be in standard registry");
+        assert!(
+            rc < cs,
+            "registry-coherence ({rc}) must come before concept-source-of-truth ({cs})"
+        );
+        assert!(
+            cs < pt,
+            "concept-source-of-truth ({cs}) must come before default-pass-through ({pt})"
+        );
     }
 
     #[test]

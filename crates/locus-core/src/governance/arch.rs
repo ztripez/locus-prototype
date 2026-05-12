@@ -20,6 +20,27 @@ pub struct ArchDeclaration {
     /// Match `PolicyId` literals (e.g. `"registry-integrity"`).
     #[serde(default)]
     pub policies: Vec<String>,
+    /// Declared architecture concepts. Each concept names its
+    /// source-of-truth path (a trait/registry pair). Bypasses are
+    /// surfaced by `ConceptSourceOfTruthPolicy` as LOCUS005.
+    #[serde(default)]
+    pub concepts: Vec<ConceptDeclaration>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+pub struct ConceptDeclaration {
+    /// Stable concept identifier (kebab-case): `"rule"`, `"paradigm"`,
+    /// `"policy"`, `"governance-code"`.
+    pub id: String,
+    /// The architectural source-of-truth — the trait or registry name
+    /// that owns the concept (e.g. `"RuleDefinition"`,
+    /// `"GovernanceDiagnosticRegistry"`).
+    pub source_of_truth: String,
+    /// The registry that holds canonical instances of the concept
+    /// (e.g. `"RuleRegistry"`, `"ParadigmRegistry"`). For concepts where
+    /// the source of truth and the registry are the same
+    /// (`governance-code`), repeat the name.
+    pub registry: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -117,5 +138,86 @@ mod tests {
     #[test]
     fn arch_relative_path_is_dot_locus_arch_json() {
         assert_eq!(ARCH_RELATIVE_PATH, ".locus/arch.json");
+    }
+
+    #[test]
+    fn parses_concept_bearing_declaration() {
+        let tmp = tempfile::tempdir().unwrap();
+        write_arch(
+            tmp.path(),
+            r#"{
+                "policies": ["registry-integrity"],
+                "concepts": [
+                    {
+                        "id": "rule",
+                        "source_of_truth": "RuleDefinition",
+                        "registry": "RuleRegistry"
+                    },
+                    {
+                        "id": "governance-code",
+                        "source_of_truth": "GovernanceDiagnosticRegistry",
+                        "registry": "GovernanceDiagnosticRegistry"
+                    }
+                ]
+            }"#,
+        );
+        match ArchDeclaration::load(tmp.path()) {
+            ArchLoadOutcome::Present(decl) => {
+                assert_eq!(decl.policies, vec!["registry-integrity".to_string()]);
+                assert_eq!(decl.concepts.len(), 2);
+                assert_eq!(decl.concepts[0].id, "rule");
+                assert_eq!(decl.concepts[0].source_of_truth, "RuleDefinition");
+                assert_eq!(decl.concepts[0].registry, "RuleRegistry");
+                assert_eq!(decl.concepts[1].id, "governance-code");
+                assert_eq!(
+                    decl.concepts[1].source_of_truth,
+                    "GovernanceDiagnosticRegistry"
+                );
+                assert_eq!(decl.concepts[1].registry, "GovernanceDiagnosticRegistry");
+            }
+            other => panic!("expected Present; got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn rejects_concept_missing_required_field() {
+        // `registry` is required; this declaration omits it.
+        let tmp = tempfile::tempdir().unwrap();
+        write_arch(
+            tmp.path(),
+            r#"{
+                "policies": [],
+                "concepts": [
+                    {"id": "rule", "source_of_truth": "RuleDefinition"}
+                ]
+            }"#,
+        );
+        match ArchDeclaration::load(tmp.path()) {
+            ArchLoadOutcome::Invalid(msg) => {
+                assert!(
+                    msg.contains("registry") || msg.contains("missing"),
+                    "expected parse error to mention missing field; got `{msg}`"
+                );
+            }
+            other => panic!("expected Invalid for malformed concept; got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn defaults_concepts_to_empty_when_omitted() {
+        // Backward compat: an arch.json with only `policies` (no
+        // `concepts` key) still parses, and `concepts` defaults to [].
+        let tmp = tempfile::tempdir().unwrap();
+        write_arch(tmp.path(), r#"{"policies": ["registry-integrity"]}"#);
+        match ArchDeclaration::load(tmp.path()) {
+            ArchLoadOutcome::Present(decl) => {
+                assert_eq!(decl.policies.len(), 1);
+                assert!(
+                    decl.concepts.is_empty(),
+                    "concepts should default to empty when key is omitted"
+                );
+            }
+            other => panic!("expected Present; got {other:?}"),
+        }
     }
 }

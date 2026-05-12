@@ -329,8 +329,10 @@ mod tests {
             policies: vec![
                 "registry-integrity".into(),
                 "registry-coherence".into(),
+                "concept-source-of-truth".into(),
                 "default-pass-through".into(),
             ],
+            concepts: Vec::new(),
         });
         let rules = RuleRegistry::standard();
         let paradigms = ParadigmRegistry::standard();
@@ -381,6 +383,7 @@ mod tests {
     fn emits_one_locus004_per_declared_but_unregistered_policy() {
         let arch = ArchLoadOutcome::Present(ArchDeclaration {
             policies: vec!["nonexistent-policy".into(), "another-ghost".into()],
+            concepts: Vec::new(),
         });
         let rules = RuleRegistry::with_rules(Vec::new());
         let paradigms = ParadigmRegistry::empty();
@@ -407,7 +410,10 @@ mod tests {
 
     #[test]
     fn emits_one_locus004_per_registered_but_undeclared_policy() {
-        let arch = ArchLoadOutcome::Present(ArchDeclaration { policies: vec![] });
+        let arch = ArchLoadOutcome::Present(ArchDeclaration {
+            policies: vec![],
+            concepts: Vec::new(),
+        });
         let rules = RuleRegistry::with_rules(Vec::new());
         let paradigms = ParadigmRegistry::empty();
         let policies = PolicyRegistry::standard();
@@ -420,6 +426,7 @@ mod tests {
         for expected in [
             "registry-integrity",
             "registry-coherence",
+            "concept-source-of-truth",
             "default-pass-through",
         ] {
             assert!(
@@ -439,7 +446,10 @@ mod tests {
         // paradigm prefix — ZZ001 / ZZ satisfies that, so the registry
         // accepts the rule. But ParadigmRegistry::empty() has no ZZ
         // ParadigmDefinition, so the coherence policy must flag drift.
-        let arch = ArchLoadOutcome::Present(ArchDeclaration { policies: vec![] });
+        let arch = ArchLoadOutcome::Present(ArchDeclaration {
+            policies: vec![],
+            concepts: Vec::new(),
+        });
         let rules = RuleRegistry::with_rules(vec![&R_GHOST]);
         let paradigms = ParadigmRegistry::empty();
         let policies = PolicyRegistry::with_policies(Vec::new());
@@ -466,7 +476,10 @@ mod tests {
     fn emits_locus004_when_paradigm_references_unregistered_rule() {
         // The YY ParadigmDefinition references rule YY001, but YY001 is NOT
         // in the rule registry — this is the inverse drift direction.
-        let arch = ArchLoadOutcome::Present(ArchDeclaration { policies: vec![] });
+        let arch = ArchLoadOutcome::Present(ArchDeclaration {
+            policies: vec![],
+            concepts: Vec::new(),
+        });
         let rules = RuleRegistry::with_rules(Vec::new());
         let paradigms = ParadigmRegistry::with_paradigms(vec![&PARADIGM_WITH_DANGLING_RULE]);
         let policies = PolicyRegistry::with_policies(Vec::new());

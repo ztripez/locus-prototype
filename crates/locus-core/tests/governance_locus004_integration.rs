@@ -73,8 +73,10 @@ fn arch_matching_standard_registry_is_silent() {
         policies: vec![
             "registry-integrity".into(),
             "registry-coherence".into(),
+            "concept-source-of-truth".into(),
             "default-pass-through".into(),
         ],
+        concepts: Vec::new(),
     });
     let out = governance::run_with_arch(&air, &lf, CheckMode::Human, &arch);
     let locus004: Vec<_> = out
@@ -96,9 +98,11 @@ fn extra_declared_policy_produces_locus004_drift() {
         policies: vec![
             "registry-integrity".into(),
             "registry-coherence".into(),
+            "concept-source-of-truth".into(),
             "default-pass-through".into(),
             "ghost-policy".into(),
         ],
+        concepts: Vec::new(),
     });
     let out = governance::run_with_arch(&air, &lf, CheckMode::Human, &arch);
     let drift: Vec<_> = out
