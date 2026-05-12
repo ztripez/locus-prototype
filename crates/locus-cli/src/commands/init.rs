@@ -355,7 +355,7 @@ mod tests {
         assert!(updated.contains("# Agent guide"));
         assert!(updated.contains("After."));
         assert!(!updated.contains("old text"));
-        assert!(updated.contains("Treat findings as architecture feedback"));
+        assert!(updated.contains("treat findings as architecture feedback"));
         assert_eq!(updated.matches(LOCUS_BLOCK_START).count(), 1);
     }
 
