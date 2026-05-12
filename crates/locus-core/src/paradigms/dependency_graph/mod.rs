@@ -6,7 +6,8 @@
 //! lockfile's DG section.
 //!
 //! All DG rules (DG001–DG004) are now migrated to `RuleDefinition` in the
-//! governance spine (#71). The legacy `check()` path returns empty.
+//! governance spine (#71). The legacy `check()` retains only the LOCUS002
+//! vacancy-nudge emission for unconfigured paradigms.
 
 // locus: ot canonical
 
