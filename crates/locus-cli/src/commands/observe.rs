@@ -176,17 +176,35 @@ fn render_crate_edges<W: Write>(
     out: &mut W,
     air: &locus_air::AirWorkspace,
 ) -> io::Result<()> {
+    // Restrict to workspace-internal edges. The underlying
+    // `collect_crate_edges` keys on first-segment of import paths, which on
+    // real codebases includes external crates (`std`, `bevy`, `serde`, ...)
+    // and Rust keyword-like prefixes (`super`, `crate`, ...) that aren't
+    // crate dependencies. The survey's architectural signal is the
+    // internal dependency graph; everything else is noise.
+    // Cargo package names use hyphens (`bevy-mcp`); Rust crate roots in
+    // module paths use underscores (`bevy_mcp`). Normalize so the filter
+    // matches what `collect_crate_edges` keys on.
+    let workspace_crates: std::collections::HashSet<String> = air
+        .packages
+        .iter()
+        .map(|pkg| pkg.name.replace('-', "_"))
+        .collect();
     let edges =
         locus_core::paradigms::dependency_graph::collect_crate_edges(air);
     writeln!(out)?;
-    writeln!(out, "Cross-crate edges:")?;
-    if edges.is_empty() {
+    writeln!(out, "Cross-crate edges (workspace-internal):")?;
+    let internal: Vec<&(String, String)> = edges
+        .keys()
+        .filter(|(a, b)| workspace_crates.contains(a) && workspace_crates.contains(b))
+        .collect();
+    if internal.is_empty() {
         writeln!(out, "  (none detected)")?;
         return Ok(());
     }
     // `edges` is a BTreeMap keyed on `(importer, imported)` so iteration is
     // already lexicographic.
-    for (importer, imported) in edges.keys() {
+    for (importer, imported) in internal {
         writeln!(out, "  {importer} -> {imported}")?;
     }
     Ok(())

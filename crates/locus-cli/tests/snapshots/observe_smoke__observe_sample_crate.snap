@@ -21,8 +21,8 @@ Largest modules (top 5):
   <FIXTURE>/src/lib.rs (<N> lines)
   <FIXTURE>/src/shadow.rs (<N> lines)
 
-Cross-crate edges:
-  sample_crate -> identity
+Cross-crate edges (workspace-internal):
+  (none detected)
 
 Advisory pressure
 =================
