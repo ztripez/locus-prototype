@@ -12,6 +12,117 @@ warning[OT002]: `sample_crate::shadow::UserModel` is concept-shaped but not acce
   - field overlap with `User`: 100%
   fix: annotate as boundary: `// locus: ot boundary user <boundary-name>` above `UserModel`, or remove and use `sample_crate::identity::User` directly
 
+info[LOCUS002]: paradigm DG (Dependency Graph / Direction) has no definitions; rules cannot fire until you declare its concepts
+  --> locus.lock:1
+  concept: DG
+  - `paradigms.DG.forbidden_edges` is empty — edges the workspace forbids (DG001)
+  - `paradigms.DG.features` is empty — named feature regions with `public_api` patterns (DG003)
+  - `paradigms.DG.shared_paths` is empty — module patterns for shared infrastructure (DG004)
+  - vacant-by-definition: rules under DG cannot fire until at least one declaration list is populated
+  fix: populate `paradigms.DG` in `locus.lock` (use the matching `locus dg ...` mutators, or hand-edit), or add `"DG"` to `acknowledged_empty` in `locus.lock` to silence this paradigm
+
+info[LOCUS002]: paradigm BO (Boundary Ownership) has no definitions; rules cannot fire until you declare its concepts
+  --> locus.lock:1
+  concept: BO
+  - `paradigms.BO.domain_paths` is empty — module patterns identifying domain code
+  - `paradigms.BO.forbidden_in_domain` is empty — import paths domain code must not reach
+  - `paradigms.BO.persistence_type_patterns` is empty — persistence-shaped types forbidden in domain signatures
+  - `paradigms.BO.canonical_paths` is empty — module patterns identifying canonical types (BO004)
+  - vacant-by-definition: rules under BO cannot fire until at least one declaration list is populated
+  fix: populate `paradigms.BO` in `locus.lock` (use the matching `locus bo ...` mutators, or hand-edit), or add `"BO"` to `acknowledged_empty` in `locus.lock` to silence this paradigm
+
+info[LOCUS002]: paradigm CF (Config/Data Ownership) has no definitions; rules cannot fire until you declare its concepts
+  --> locus.lock:1
+  concept: CF
+  - `paradigms.CF.config_paths` is empty — module patterns identifying the config layer (where env reads / decision constants legitimately live)
+  - vacant-by-definition: rules under CF cannot fire until at least one declaration list is populated
+  fix: populate `paradigms.CF` in `locus.lock` (use the matching `locus cf ...` mutators, or hand-edit), or add `"CF"` to `acknowledged_empty` in `locus.lock` to silence this paradigm
+
+info[LOCUS002]: paradigm CR (Composition Root Ownership) has no definitions; rules cannot fire until you declare its concepts
+  --> locus.lock:1
+  concept: CR
+  - `paradigms.CR.composition_root_paths` is empty — module patterns identifying composition roots / bootstrap modules
+  - vacant-by-definition: rules under CR cannot fire until at least one declaration list is populated
+  fix: populate `paradigms.CR` in `locus.lock` (use the matching `locus cr ...` mutators, or hand-edit), or add `"CR"` to `acknowledged_empty` in `locus.lock` to silence this paradigm
+
+info[LOCUS002]: paradigm DA (Demand-Driven Architecture) has no definitions; rules cannot fire until you declare its concepts
+  --> locus.lock:1
+  concept: DA
+  - `paradigms.DA.enabled` is empty — master switch — set to `true` to opt in to DA001/002/007
+  - vacant-by-definition: rules under DA cannot fire until at least one declaration list is populated
+  fix: populate `paradigms.DA` in `locus.lock` (use the matching `locus da ...` mutators, or hand-edit), or add `"DA"` to `acknowledged_empty` in `locus.lock` to silence this paradigm
+
+info[LOCUS002]: paradigm ER (Error Taxonomy Ownership) has no definitions; rules cannot fire until you declare its concepts
+  --> locus.lock:1
+  concept: ER
+  - `paradigms.ER.forbidden_error_types` is empty — patterns matching catch-all error shapes forbidden as `Result<_, E>`
+  - `paradigms.ER.domain_paths` is empty — module patterns identifying domain code (ER003)
+  - `paradigms.ER.boundary_error_patterns` is empty — patterns matching boundary error types (ER003)
+  - `paradigms.ER.error_collapse_owner_paths` is empty — module patterns where catch-all `Err(_) => default` is legitimate (ER005)
+  - vacant-by-definition: rules under ER cannot fire until at least one declaration list is populated
+  fix: populate `paradigms.ER` in `locus.lock` (use the matching `locus er ...` mutators, or hand-edit), or add `"ER"` to `acknowledged_empty` in `locus.lock` to silence this paradigm
+
+info[LOCUS002]: paradigm FL (Failure Lineage Ownership) has no definitions; rules cannot fire until you declare its concepts
+  --> locus.lock:1
+  concept: FL
+  - `paradigms.FL.invariant_owner_paths` is empty — module patterns where panic-shaped/silent-discard callees are legitimate (typically `*::tests::*`)
+  - `paradigms.FL.domain_paths` is empty — module patterns identifying domain code (FL001)
+  - `paradigms.FL.boundary_error_patterns` is empty — patterns matching boundary error types (FL001)
+  - `paradigms.FL.retry_policy_owner_paths` is empty — module patterns for declared retry-policy modules (FL012)
+  - vacant-by-definition: rules under FL cannot fire until at least one declaration list is populated
+  fix: populate `paradigms.FL` in `locus.lock` (use the matching `locus fl ...` mutators, or hand-edit), or add `"FL"` to `acknowledged_empty` in `locus.lock` to silence this paradigm
+
+info[LOCUS002]: paradigm FO (Feature Ownership) has no definitions; rules cannot fire until you declare its concepts
+  --> locus.lock:1
+  concept: FO
+  - `paradigms.FO.features` is empty — named feature regions (`name` + `module` pattern)
+  - `paradigms.FO.shared_paths` is empty — module patterns identifying shared cross-feature regions (FO004)
+  - vacant-by-definition: rules under FO cannot fire until at least one declaration list is populated
+  fix: populate `paradigms.FO` in `locus.lock` (use the matching `locus fo ...` mutators, or hand-edit), or add `"FO"` to `acknowledged_empty` in `locus.lock` to silence this paradigm
+
+info[LOCUS002]: paradigm PA (Port/Adapter Ownership) has no definitions; rules cannot fire until you declare its concepts
+  --> locus.lock:1
+  concept: PA
+  - `paradigms.PA.application_paths` is empty — module patterns identifying application/domain code
+  - `paradigms.PA.concrete_adapter_patterns` is empty — import paths application/domain code must not reach
+  - `paradigms.PA.adapter_type_patterns` is empty — type patterns identifying concrete adapters
+  - vacant-by-definition: rules under PA cannot fire until at least one declaration list is populated
+  fix: populate `paradigms.PA` in `locus.lock` (use the matching `locus pa ...` mutators, or hand-edit), or add `"PA"` to `acknowledged_empty` in `locus.lock` to silence this paradigm
+
+info[LOCUS002]: paradigm RM (Responsibility Mixing) has no definitions; rules cannot fire until you declare its concepts
+  --> locus.lock:1
+  concept: RM
+  - `paradigms.RM.default_max_action_kinds` is empty — per-function cap on distinct action kinds (RM001)
+  - `paradigms.RM.converter_paths` is empty — module patterns for converter modules (RM002)
+  - `paradigms.RM.handler_paths` is empty — module patterns for orchestration handlers (RM003)
+  - `paradigms.RM.repository_paths` is empty — module patterns for repository modules (RM004)
+  - `paradigms.RM.validator_paths` is empty — module patterns for validator modules (RM005)
+  - `paradigms.RM.domain_paths_rm` is empty — module patterns for domain types (RM006)
+  - vacant-by-definition: rules under RM cannot fire until at least one declaration list is populated
+  fix: populate `paradigms.RM` in `locus.lock` (use the matching `locus rm ...` mutators, or hand-edit), or add `"RM"` to `acknowledged_empty` in `locus.lock` to silence this paradigm
+
+info[LOCUS002]: paradigm RW (Runtime Work Ownership) has no definitions; rules cannot fire until you declare its concepts
+  --> locus.lock:1
+  concept: RW
+  - `paradigms.RW.runtime_owner_paths` is empty — module patterns identifying runtime owners (job queues, supervisors, runtime entry points)
+  - vacant-by-definition: rules under RW cannot fire until at least one declaration list is populated
+  fix: populate `paradigms.RW` in `locus.lock` (use the matching `locus rw ...` mutators, or hand-edit), or add `"RW"` to `acknowledged_empty` in `locus.lock` to silence this paradigm
+
+info[LOCUS002]: paradigm TA (Test Architecture Ownership) has no definitions; rules cannot fire until you declare its concepts
+  --> locus.lock:1
+  concept: TA
+  - `paradigms.TA.test_paths` is empty — module patterns identifying test code (e.g. `*::tests::*`, `tests::*`)
+  - vacant-by-definition: rules under TA cannot fire until at least one declaration list is populated
+  fix: populate `paradigms.TA` in `locus.lock` (use the matching `locus ta ...` mutators, or hand-edit), or add `"TA"` to `acknowledged_empty` in `locus.lock` to silence this paradigm
+
+info[LOCUS002]: paradigm UT (Utility / Shared Module Discipline) has no definitions; rules cannot fire until you declare its concepts
+  --> locus.lock:1
+  concept: UT
+  - `paradigms.UT.utility_paths` is empty — module patterns identifying utility / helper modules
+  - `paradigms.UT.generic_utility_patterns` is empty — module-name patterns flagging generic-utility naming (UT003)
+  - vacant-by-definition: rules under UT cannot fire until at least one declaration list is populated
+  fix: populate `paradigms.UT` in `locus.lock` (use the matching `locus ut ...` mutators, or hand-edit), or add `"UT"` to `acknowledged_empty` in `locus.lock` to silence this paradigm
+
 warning[PG003]: new exempt path `*::test::*` in `paradigms.CX.exempt_paths`
   --> locus.lock:1
   - exemption silences the rule entirely for matching modules; prefer narrowing the rule via overrides with debt metadata, or fixing the underlying code
@@ -24,6 +135,6 @@ warning[PG007]: new exempt path `*::test::*` in `paradigms.CX.exempt_paths` lack
   - PG007 is unaffected by `--allow-policy-calibration`: calibration accepts the addition itself (PG003), but does not waive the requirement to record why, when to revisit, and who owns it
   fix: populate `reason` (why this exemption exists), `expires` (`YYYY-MM-DD` review date), and `owner` (team/individual). Use the struct form: `{"pattern": "…", "reason": "…", "expires": "YYYY-MM-DD", "owner": "…"}`.
 
-summary: 0 error(s), 3 warning(s), 0 advisory.
+summary: 0 error(s), 3 warning(s), 13 advisory.
 
 STDERR:

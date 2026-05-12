@@ -22,7 +22,7 @@
 // locus: ot canonical
 
 use super::Paradigm;
-use crate::diagnostics::{CheckMode, Diagnostic};
+use crate::diagnostics::{CheckMode, Diagnostic, vacant_paradigm_diagnostic};
 use crate::lockfile::Lockfile;
 use locus_air::AirWorkspace;
 
@@ -46,15 +46,36 @@ impl Paradigm for ErrorTaxonomy {
         // ER002+ may populate accepted-error entries here.
         serde_json::Value::Null
     }
-    fn check(
-        &self,
-        _air: &AirWorkspace,
-        _lockfile: &Lockfile,
-        _mode: CheckMode,
-    ) -> Vec<Diagnostic> {
-        // All ER rules migrated to RuleDefinition (#71 P4).
-        // Detection runs through the governance pipeline; this legacy
-        // path is now a no-op.
+    fn check(&self, _air: &AirWorkspace, lockfile: &Lockfile, _mode: CheckMode) -> Vec<Diagnostic> {
+        // All ER rules migrated to RuleDefinition (#71 P4); only the LOCUS002
+        // vacancy nudge remains here so vacant-by-definition paradigms keep
+        // surfacing onboarding guidance.
+        let section: lockfile_schema::ErSection =
+            lockfile.paradigm_section(ER_PREFIX).unwrap_or_default();
+        if section.is_vacant() && !lockfile.is_acknowledged_empty(ER_PREFIX) {
+            return vec![vacant_paradigm_diagnostic(
+                ER_PREFIX,
+                "Error Taxonomy Ownership",
+                &[
+                    (
+                        "forbidden_error_types",
+                        "patterns matching catch-all error shapes forbidden as `Result<_, E>`",
+                    ),
+                    (
+                        "domain_paths",
+                        "module patterns identifying domain code (ER003)",
+                    ),
+                    (
+                        "boundary_error_patterns",
+                        "patterns matching boundary error types (ER003)",
+                    ),
+                    (
+                        "error_collapse_owner_paths",
+                        "module patterns where catch-all `Err(_) => default` is legitimate (ER005)",
+                    ),
+                ],
+            )];
+        }
         Vec::new()
     }
 }

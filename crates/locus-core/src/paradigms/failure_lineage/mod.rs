@@ -46,7 +46,7 @@
 // locus: ot canonical
 
 use super::Paradigm;
-use crate::diagnostics::{CheckMode, Diagnostic};
+use crate::diagnostics::{CheckMode, Diagnostic, vacant_paradigm_diagnostic};
 use crate::lockfile::Lockfile;
 use locus_air::AirWorkspace;
 
@@ -71,15 +71,36 @@ impl Paradigm for FailureLineage {
         // via future `locus fl ...` commands.
         serde_json::Value::Null
     }
-    fn check(
-        &self,
-        _air: &AirWorkspace,
-        _lockfile: &Lockfile,
-        _mode: CheckMode,
-    ) -> Vec<Diagnostic> {
-        // All FL rules migrated to RuleDefinition (#71 P4).
-        // Detection runs through the governance pipeline; this legacy
-        // path is now a no-op.
+    fn check(&self, _air: &AirWorkspace, lockfile: &Lockfile, _mode: CheckMode) -> Vec<Diagnostic> {
+        // All FL rules migrated to RuleDefinition (#71 P4); only the LOCUS002
+        // vacancy nudge remains here so vacant-by-definition paradigms keep
+        // surfacing onboarding guidance.
+        let section: lockfile_schema::FlSection =
+            lockfile.paradigm_section(FL_PREFIX).unwrap_or_default();
+        if section.is_vacant() && !lockfile.is_acknowledged_empty(FL_PREFIX) {
+            return vec![vacant_paradigm_diagnostic(
+                FL_PREFIX,
+                "Failure Lineage Ownership",
+                &[
+                    (
+                        "invariant_owner_paths",
+                        "module patterns where panic-shaped/silent-discard callees are legitimate (typically `*::tests::*`)",
+                    ),
+                    (
+                        "domain_paths",
+                        "module patterns identifying domain code (FL001)",
+                    ),
+                    (
+                        "boundary_error_patterns",
+                        "patterns matching boundary error types (FL001)",
+                    ),
+                    (
+                        "retry_policy_owner_paths",
+                        "module patterns for declared retry-policy modules (FL012)",
+                    ),
+                ],
+            )];
+        }
         Vec::new()
     }
 }

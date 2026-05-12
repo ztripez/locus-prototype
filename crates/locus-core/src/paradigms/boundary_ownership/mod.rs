@@ -18,7 +18,7 @@
 // locus: ot canonical
 
 use super::Paradigm;
-use crate::diagnostics::{CheckMode, Diagnostic};
+use crate::diagnostics::{CheckMode, Diagnostic, vacant_paradigm_diagnostic};
 use crate::lockfile::Lockfile;
 use locus_air::AirWorkspace;
 
@@ -43,15 +43,33 @@ impl Paradigm for BoundaryOwnership {
         // directly (or via a future `locus bo` mutator).
         serde_json::Value::Null
     }
-    fn check(
-        &self,
-        _air: &AirWorkspace,
-        _lockfile: &Lockfile,
-        _mode: CheckMode,
-    ) -> Vec<Diagnostic> {
-        // All BO rules migrated to RuleDefinition (#71 P4).
-        // Detection runs through the governance pipeline; this legacy
-        // path is now a no-op.
+    fn check(&self, _air: &AirWorkspace, lockfile: &Lockfile, _mode: CheckMode) -> Vec<Diagnostic> {
+        // All BO rules migrated to RuleDefinition (#71 P4); only the LOCUS002
+        // vacancy nudge remains here so vacant-by-definition paradigms keep
+        // surfacing onboarding guidance.
+        let section: lockfile_schema::BoSection =
+            lockfile.paradigm_section(BO_PREFIX).unwrap_or_default();
+        if section.is_vacant() && !lockfile.is_acknowledged_empty(BO_PREFIX) {
+            return vec![vacant_paradigm_diagnostic(
+                BO_PREFIX,
+                "Boundary Ownership",
+                &[
+                    ("domain_paths", "module patterns identifying domain code"),
+                    (
+                        "forbidden_in_domain",
+                        "import paths domain code must not reach",
+                    ),
+                    (
+                        "persistence_type_patterns",
+                        "persistence-shaped types forbidden in domain signatures",
+                    ),
+                    (
+                        "canonical_paths",
+                        "module patterns identifying canonical types (BO004)",
+                    ),
+                ],
+            )];
+        }
         Vec::new()
     }
 }

@@ -20,7 +20,7 @@
 // locus: ot canonical
 
 use super::Paradigm;
-use crate::diagnostics::{CheckMode, Diagnostic};
+use crate::diagnostics::{CheckMode, Diagnostic, vacant_paradigm_diagnostic};
 use crate::lockfile::Lockfile;
 use locus_air::AirWorkspace;
 
@@ -43,15 +43,32 @@ impl Paradigm for PortAdapter {
         // No automatic inference — port/adapter exemptions come from review.
         serde_json::Value::Null
     }
-    fn check(
-        &self,
-        _air: &AirWorkspace,
-        _lockfile: &Lockfile,
-        _mode: CheckMode,
-    ) -> Vec<Diagnostic> {
-        // All PA rules migrated to RuleDefinition (#71 P4).
-        // Detection runs through the governance pipeline; this legacy
-        // path is now a no-op.
+    fn check(&self, _air: &AirWorkspace, lockfile: &Lockfile, _mode: CheckMode) -> Vec<Diagnostic> {
+        // All PA rules migrated to RuleDefinition (#71 P4); only the LOCUS002
+        // vacancy nudge remains here so vacant-by-definition paradigms keep
+        // surfacing onboarding guidance.
+        let section: lockfile_schema::PaSection =
+            lockfile.paradigm_section(PA_PREFIX).unwrap_or_default();
+        if section.is_vacant() && !lockfile.is_acknowledged_empty(PA_PREFIX) {
+            return vec![vacant_paradigm_diagnostic(
+                PA_PREFIX,
+                "Port/Adapter Ownership",
+                &[
+                    (
+                        "application_paths",
+                        "module patterns identifying application/domain code",
+                    ),
+                    (
+                        "concrete_adapter_patterns",
+                        "import paths application/domain code must not reach",
+                    ),
+                    (
+                        "adapter_type_patterns",
+                        "type patterns identifying concrete adapters",
+                    ),
+                ],
+            )];
+        }
         Vec::new()
     }
 }

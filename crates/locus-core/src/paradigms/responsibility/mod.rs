@@ -18,7 +18,7 @@
 // locus: ot canonical
 
 use super::Paradigm;
-use crate::diagnostics::{CheckMode, Diagnostic};
+use crate::diagnostics::{CheckMode, Diagnostic, vacant_paradigm_diagnostic};
 use crate::lockfile::Lockfile;
 use locus_air::AirWorkspace;
 
@@ -44,15 +44,44 @@ impl Paradigm for Responsibility {
         // opts in by setting `default_max_action_kinds` in the lockfile.
         serde_json::Value::Null
     }
-    fn check(
-        &self,
-        _air: &AirWorkspace,
-        _lockfile: &Lockfile,
-        _mode: CheckMode,
-    ) -> Vec<Diagnostic> {
-        // All RM rules migrated to RuleDefinition (#71 P4).
-        // Detection runs through the governance pipeline; this legacy
-        // path is now a no-op.
+    fn check(&self, _air: &AirWorkspace, lockfile: &Lockfile, _mode: CheckMode) -> Vec<Diagnostic> {
+        // All RM rules migrated to RuleDefinition (#71 P4); only the LOCUS002
+        // vacancy nudge remains here so vacant-by-definition paradigms keep
+        // surfacing onboarding guidance.
+        let section: lockfile_schema::RmSection =
+            lockfile.paradigm_section(RM_PREFIX).unwrap_or_default();
+        if section.is_vacant() && !lockfile.is_acknowledged_empty(RM_PREFIX) {
+            return vec![vacant_paradigm_diagnostic(
+                RM_PREFIX,
+                "Responsibility Mixing",
+                &[
+                    (
+                        "default_max_action_kinds",
+                        "per-function cap on distinct action kinds (RM001)",
+                    ),
+                    (
+                        "converter_paths",
+                        "module patterns for converter modules (RM002)",
+                    ),
+                    (
+                        "handler_paths",
+                        "module patterns for orchestration handlers (RM003)",
+                    ),
+                    (
+                        "repository_paths",
+                        "module patterns for repository modules (RM004)",
+                    ),
+                    (
+                        "validator_paths",
+                        "module patterns for validator modules (RM005)",
+                    ),
+                    (
+                        "domain_paths_rm",
+                        "module patterns for domain types (RM006)",
+                    ),
+                ],
+            )];
+        }
         Vec::new()
     }
     fn suggest(&self, air: &AirWorkspace, lockfile: &Lockfile) -> Vec<crate::init::Suggestion> {

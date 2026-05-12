@@ -11,7 +11,7 @@
 // locus: ot canonical
 
 use super::Paradigm;
-use crate::diagnostics::{CheckMode, Diagnostic};
+use crate::diagnostics::{CheckMode, Diagnostic, vacant_paradigm_diagnostic};
 use crate::init::Suggestion;
 use crate::lockfile::Lockfile;
 use locus_air::AirWorkspace;
@@ -38,14 +38,30 @@ impl Paradigm for DependencyGraph {
         serde_json::Value::Null
     }
 
-    fn check(
-        &self,
-        _air: &AirWorkspace,
-        _lockfile: &Lockfile,
-        _mode: CheckMode,
-    ) -> Vec<Diagnostic> {
+    fn check(&self, _air: &AirWorkspace, lockfile: &Lockfile, _mode: CheckMode) -> Vec<Diagnostic> {
         // All DG rules (DG001–DG004) are now driven through the governance
-        // spine RuleDefinition pipeline. Nothing left to run here.
+        // spine RuleDefinition pipeline. Only the LOCUS002 vacancy nudge
+        // remains here so vacant-by-definition paradigms keep surfacing
+        // onboarding guidance.
+        let section: lockfile_schema::DgSection =
+            lockfile.paradigm_section(DG_PREFIX).unwrap_or_default();
+        if section.is_vacant() && !lockfile.is_acknowledged_empty(DG_PREFIX) {
+            return vec![vacant_paradigm_diagnostic(
+                DG_PREFIX,
+                "Dependency Graph / Direction",
+                &[
+                    ("forbidden_edges", "edges the workspace forbids (DG001)"),
+                    (
+                        "features",
+                        "named feature regions with `public_api` patterns (DG003)",
+                    ),
+                    (
+                        "shared_paths",
+                        "module patterns for shared infrastructure (DG004)",
+                    ),
+                ],
+            )];
+        }
         Vec::new()
     }
 
