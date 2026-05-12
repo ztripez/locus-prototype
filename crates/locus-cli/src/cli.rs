@@ -28,65 +28,65 @@ pub struct Cli {
 pub enum Command {
     /// Scan a Rust workspace and emit AIR JSON.
     EmitAir(EmitAirArgs),
-    /// Build `locus.lock` from a fresh workspace scan.
+    /// Build `.locus/lock.json` from a fresh workspace scan.
     Init(InitArgs),
     /// Run all enabled paradigms against a workspace and report diagnostics.
     Check(CheckArgs),
-    /// Record a symbol's accepted ownership in `locus.lock` (OT paradigm).
+    /// Record a symbol's accepted ownership in `.locus/lock.json` (OT paradigm).
     #[command(subcommand)]
     Accept(AcceptCommand),
-    /// Manage AB (Abstraction Discipline) declarations in `locus.lock`.
+    /// Manage AB (Abstraction Discipline) declarations in `.locus/lock.json`.
     #[command(subcommand)]
     Ab(AbCommand),
-    /// Manage BO (Boundary Ownership) declarations in `locus.lock`.
+    /// Manage BO (Boundary Ownership) declarations in `.locus/lock.json`.
     #[command(subcommand)]
     Bo(BoCommand),
-    /// Manage CF (Config/Data Ownership) declarations in `locus.lock`.
+    /// Manage CF (Config/Data Ownership) declarations in `.locus/lock.json`.
     #[command(subcommand)]
     Cf(CfCommand),
-    /// Manage CR (Composition Root Ownership) declarations in `locus.lock`.
+    /// Manage CR (Composition Root Ownership) declarations in `.locus/lock.json`.
     #[command(subcommand)]
     Cr(CrCommand),
-    /// Manage CX (Complexity Budget) declarations in `locus.lock`.
+    /// Manage CX (Complexity Budget) declarations in `.locus/lock.json`.
     #[command(subcommand)]
     Cx(CxCommand),
-    /// Manage DA (Demand-Driven Architecture) declarations in `locus.lock`.
+    /// Manage DA (Demand-Driven Architecture) declarations in `.locus/lock.json`.
     #[command(subcommand)]
     Da(DaCommand),
-    /// Manage DC (Documentation / Comment Ownership) declarations in `locus.lock`.
+    /// Manage DC (Documentation / Comment Ownership) declarations in `.locus/lock.json`.
     #[command(subcommand)]
     Dc(DcCommand),
-    /// Manage DG (Dependency Graph) declarations in `locus.lock`.
+    /// Manage DG (Dependency Graph) declarations in `.locus/lock.json`.
     #[command(subcommand)]
     Dg(DgCommand),
-    /// Manage ER (Error Taxonomy) declarations in `locus.lock`.
+    /// Manage ER (Error Taxonomy) declarations in `.locus/lock.json`.
     #[command(subcommand)]
     Er(ErCommand),
-    /// Manage FL (Failure Lineage) declarations in `locus.lock`.
+    /// Manage FL (Failure Lineage) declarations in `.locus/lock.json`.
     #[command(subcommand)]
     Fl(FlCommand),
-    /// Manage FO (Feature Ownership) declarations in `locus.lock`.
+    /// Manage FO (Feature Ownership) declarations in `.locus/lock.json`.
     #[command(subcommand)]
     Fo(FoCommand),
-    /// Manage MO (Module / File Ownership) declarations in `locus.lock`.
+    /// Manage MO (Module / File Ownership) declarations in `.locus/lock.json`.
     #[command(subcommand)]
     Mo(MoCommand),
-    /// Manage OB (Observability Ownership) declarations in `locus.lock`.
+    /// Manage OB (Observability Ownership) declarations in `.locus/lock.json`.
     #[command(subcommand)]
     Ob(ObCommand),
-    /// Manage PA (Port/Adapter Ownership) declarations in `locus.lock`.
+    /// Manage PA (Port/Adapter Ownership) declarations in `.locus/lock.json`.
     #[command(subcommand)]
     Pa(PaCommand),
-    /// Manage RM (Responsibility Mixing) declarations in `locus.lock`.
+    /// Manage RM (Responsibility Mixing) declarations in `.locus/lock.json`.
     #[command(subcommand)]
     Rm(RmCommand),
-    /// Manage RW (Runtime Work Ownership) declarations in `locus.lock`.
+    /// Manage RW (Runtime Work Ownership) declarations in `.locus/lock.json`.
     #[command(subcommand)]
     Rw(RwCommand),
-    /// Manage TA (Test Architecture Ownership) declarations in `locus.lock`.
+    /// Manage TA (Test Architecture Ownership) declarations in `.locus/lock.json`.
     #[command(subcommand)]
     Ta(TaCommand),
-    /// Manage UT (Utility / Shared Module Discipline) declarations in `locus.lock`.
+    /// Manage UT (Utility / Shared Module Discipline) declarations in `.locus/lock.json`.
     #[command(subcommand)]
     Ut(UtCommand),
     /// List active and expired exceptions across `// locus: allow` hints and
@@ -94,6 +94,6 @@ pub enum Command {
     Debt(DebtArgs),
     /// Print the rule-spec section for a given rule id (e.g. `OT004`).
     Explain(ExplainArgs),
-    /// Remove expired lockfile exceptions from `locus.lock`.
+    /// Remove expired lockfile exceptions from `.locus/lock.json`.
     Prune(PruneArgs),
 }

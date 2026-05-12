@@ -1,4 +1,4 @@
-//! Shape of the OB section inside `locus.lock`.
+//! Shape of the OB section inside `.locus/lock.json`.
 //!
 //! Rules family OB (Observability Ownership): logs, metrics, events, and
 //! audit records that represent system behaviour must use accepted owners and

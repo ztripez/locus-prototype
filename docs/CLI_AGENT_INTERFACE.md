@@ -7,14 +7,14 @@ The Locus CLI is not only a human linter command. It is the local architectural 
 The CLI has two jobs:
 
 1. Tell the agent what architectural problem it is about to create or has already created.
-2. Tell the agent the narrow, deterministic command path for recording accepted architectural intent in `locus.lock`.
+2. Tell the agent the narrow, deterministic command path for recording accepted architectural intent in `.locus/lock.json`.
 
 The CLI must stay compact enough to fit into agent context. It should prefer short, actionable diagnostics over long explanations, and expose deeper explanation only when asked.
 
 ## Design constraints
 
 - `locus check` remains deterministic. No LLM decides pass/fail.
-- Agents should not hand-edit `locus.lock`.
+- Agents should not hand-edit `.locus/lock.json`.
 - Every lockfile write goes through a typed CLI mutator.
 - Diagnostic output should include a next action, not just a rule violation.
 - The compact agent instruction block should fit in `AGENTS.md` without becoming project documentation.
@@ -30,8 +30,8 @@ locus init --workspace .
 
 Required behaviour:
 
-- scan the workspace and promote accepted source hints into `locus.lock`,
-- create `locus.lock` when missing,
+- scan the workspace and promote accepted source hints into `.locus/lock.json`,
+- create `.locus/lock.json` when missing,
 - preserve existing accepted ownership decisions,
 - refuse to silently delete lockfile entries that still have source references,
 - add a small Locus section to `AGENTS.md` when the file exists,
@@ -59,7 +59,7 @@ This repository uses Locus for deterministic architecture checks. Before changin
 locus check --workspace . --changed --agent-strict
 ```
 
-If Locus reports a violation, do not hand-edit `locus.lock`. Either change the code to use the accepted owner/boundary/converter, or use the matching `locus accept ...` / `locus <paradigm> ...` command when the architecture decision is intentional.
+If Locus reports a violation, do not hand-edit `.locus/lock.json`. Either change the code to use the accepted owner/boundary/converter, or use the matching `locus accept ...` / `locus <paradigm> ...` command when the architecture decision is intentional.
 
 For more context, run:
 
@@ -105,7 +105,7 @@ Rules for agent output:
 - include rule id, severity, file span, problem, accepted owner when known, and next action,
 - include the exact command to ask for deeper explanation,
 - include lockfile mutation commands only when they are valid for that rule family,
-- never suggest editing `locus.lock` manually.
+- never suggest editing `.locus/lock.json` manually.
 
 ## `locus explain`
 
@@ -281,6 +281,6 @@ The renderer should be versioned by content, not by timestamp, so repeated runs 
 
 - Do not dump the entire paradigm catalogue into agent context.
 - Do not ask agents to infer architectural intent from prose when the lockfile can answer it.
-- Do not make `locus.lock` an editable DSL.
+- Do not make `.locus/lock.json` an editable DSL.
 - Do not let an LLM decide whether a diagnostic is valid.
 - Do not add framework-specific commands before the normalized loader facts exist.

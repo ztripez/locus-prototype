@@ -1,7 +1,7 @@
 //! CF — Config/Data Ownership.
 //!
 //! Spec: `docs/PARADIGMS.md` §"Paradigm 2: Config/Data Ownership". Reads the
-//! declared config layer from `paradigms.CF` in `locus.lock` and flags
+//! declared config layer from `paradigms.CF` in `.locus/lock.json` and flags
 //! decision-data ownership leaks: env reads, magic decision constants,
 //! and hardcoded provider/model/topic IDs outside that layer.
 //!

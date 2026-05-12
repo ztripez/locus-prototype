@@ -9,7 +9,8 @@
 //! drop an entry into `exempt_paths`. None of those improve the
 //! underlying architecture; they suppress the rule. Policy Guard
 //! detects exactly those mutations by comparing the current lockfile
-//! against a **baseline** (typically `git show origin/main:locus.lock`).
+//! against a **baseline** (typically
+//! `git show origin/main:.locus/lock.json`).
 //!
 //! The principle (#44):
 //!
@@ -252,7 +253,7 @@ fn pg_strict_severity(mode: CheckMode) -> Severity {
 }
 
 fn lockfile_span() -> AirSpan {
-    AirSpan::new("locus.lock", 1, 1)
+    AirSpan::new(crate::lockfile::LOCKFILE_RELATIVE_PATH, 1, 1)
 }
 
 // ---- PG000 baseline missing --------------------------------------
@@ -267,7 +268,8 @@ fn baseline_missing_diagnostic(mode: CheckMode) -> Diagnostic {
             "Policy Guard could not resolve a baseline lockfile; policy widening cannot be audited"
                 .to_string(),
         why: vec![
-            "tried to read the baseline `locus.lock` via `git show <baseline>:locus.lock`"
+            "tried to read the baseline lockfile via \
+             `git show <baseline>:.locus/lock.json`"
                 .to_string(),
             "the baseline ref / file / git itself was unavailable; PG001-PG004/PG006 cannot \
              compare against a baseline"
@@ -280,7 +282,7 @@ fn baseline_missing_diagnostic(mode: CheckMode) -> Diagnostic {
             "ensure the workspace is a git repo with a reachable baseline ref \
              (default chain: `origin/main` → `origin/master` → `main` → `master` → `HEAD~1`); \
              pass `--baseline <ref>` to set explicitly. If this is the first commit \
-             before `locus.lock` existed, pass `--allow-missing-policy-baseline` to \
+             before `.locus/lock.json` existed, pass `--allow-missing-policy-baseline` to \
              explicitly accept the audit gap."
                 .into(),
         ),
@@ -743,7 +745,7 @@ fn override_metadata_diagnostic(
         suggested_fix: Some(
             "populate `reason` (why the override exists), `expires` \
              (`YYYY-MM-DD` review date), and `owner` (team/individual). \
-             Add via the lockfile editor or hand-edit `locus.lock`."
+             Add via the lockfile editor or hand-edit `.locus/lock.json`."
                 .into(),
         ),
     })
@@ -954,7 +956,7 @@ fn check_new_acknowledged_empty(
                 ],
                 suggested_fix: Some(
                     "if deliberate, re-run with `--allow-policy-calibration`. \
-                     Otherwise populate the paradigm's section in `locus.lock`."
+                     Otherwise populate the paradigm's section in `.locus/lock.json`."
                         .into(),
                 ),
             }

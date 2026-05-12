@@ -164,7 +164,7 @@ fn rw002_diagnostic(
              pool, a worker, a blocking-allowed task) and call it through \
              a port; or, if `{module_path}` really is a legitimate \
              blocking owner, expand `paradigms.RW.runtime_owner_paths` in \
-             `locus.lock` to include it"
+             `.locus/lock.json` to include it"
         )),
     }
 }
@@ -228,7 +228,7 @@ fn diagnostic_for(
              orchestrator, supervisor, or runtime entry point) and have \
              this code submit work to it through a port; or, if \
              `{module_path}` really is a legitimate runtime owner, expand \
-             `paradigms.RW.runtime_owner_paths` in `locus.lock` to \
+             `paradigms.RW.runtime_owner_paths` in `.locus/lock.json` to \
              include it"
         )),
     }
@@ -344,7 +344,7 @@ fn rw003_diagnostic(
              module — supervisors, runtime cores, worker pools — and have \
              this code talk to it through a port. If `{module_path}` is in \
              fact a legitimate runtime owner, expand \
-             `paradigms.RW.runtime_owner_paths` in `locus.lock`. To loosen \
+             `paradigms.RW.runtime_owner_paths` in `.locus/lock.json`. To loosen \
              type detection, edit \
              `paradigms.RW.runtime_state_type_patterns`.",
             t.symbol
@@ -441,7 +441,7 @@ fn rw004_diagnostic(
             "globals are runtime state; move `{}` into a runtime-owner \
              module and inject it where needed. If this *is* a legitimate \
              runtime-owner location, expand \
-             `paradigms.RW.runtime_owner_paths` in `locus.lock`; to widen \
+             `paradigms.RW.runtime_owner_paths` in `.locus/lock.json`; to widen \
              or narrow detection, edit \
              `paradigms.RW.singleton_name_patterns` or \
              `paradigms.RW.runtime_state_type_patterns`.",

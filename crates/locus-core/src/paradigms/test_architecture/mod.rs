@@ -2,7 +2,7 @@
 //!
 //! Spec: `docs/PARADIGMS.md` §"Paradigm 19: Test Architecture Ownership".
 //! Reads declared test module patterns from `paradigms.TA.test_paths` in
-//! `locus.lock` and flags public types defined inside any matching module —
+//! `.locus/lock.json` and flags public types defined inside any matching module —
 //! tests must not create new domain truth, and a public type in test code is
 //! typically a shadow of a domain concept that belongs on the canonical
 //! production path.
@@ -39,7 +39,7 @@ impl Paradigm for TestArchitecture {
     fn init(&self, _air: &AirWorkspace) -> serde_json::Value {
         // Test status is a user assertion, not an inference. `init` returns
         // an empty section; the user adds patterns via the TA edit surface
-        // (future) or by hand-editing `locus.lock`.
+        // (future) or by hand-editing `.locus/lock.json`.
         serde_json::Value::Null
     }
     fn check(&self, _air: &AirWorkspace, lockfile: &Lockfile, _mode: CheckMode) -> Vec<Diagnostic> {

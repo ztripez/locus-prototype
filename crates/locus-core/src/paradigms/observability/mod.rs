@@ -2,7 +2,7 @@
 //!
 //! Spec: `docs/PARADIGMS.md` §"Paradigm 18: Observability Ownership". Reads
 //! the observer-module / forbidden-log-target split from `paradigms.OB` in
-//! `locus.lock` and flags raw `println!` / `dbg!` (and equivalents) called
+//! `.locus/lock.json` and flags raw `println!` / `dbg!` (and equivalents) called
 //! from outside the declared observer modules.
 //!
 //! Phase scope so far:

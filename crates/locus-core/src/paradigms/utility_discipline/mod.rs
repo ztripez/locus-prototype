@@ -2,7 +2,7 @@
 //!
 //! Spec: `docs/PARADIGMS.md` §"Paradigm 11: Utility / Shared Module
 //! Discipline". Reads declared utility module patterns from
-//! `paradigms.UT.utility_paths` in `locus.lock` and flags public types
+//! `paradigms.UT.utility_paths` in `.locus/lock.json` and flags public types
 //! defined inside any matching module — utility modules are by definition
 //! domain-free, and a public type carries semantics that should live in a
 //! domain/feature module instead.

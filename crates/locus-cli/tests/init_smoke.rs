@@ -17,8 +17,16 @@ fn init_against_sample_crate_emits_expected_checklist() {
     let stdout = String::from_utf8_lossy(&output.stdout).to_string();
 
     let mut settings = insta::Settings::clone_current();
-    settings.add_filter(r"wrote .*locus\.lock", "wrote <PATH>/locus.lock");
-    settings.add_filter(r"updated .*locus\.lock", "updated <PATH>/locus.lock");
+    settings.add_filter(
+        r"wrote .*\.locus/lock\.json",
+        "wrote <PATH>/.locus/lock.json",
+    );
+    settings.add_filter(
+        r"updated .*\.locus/lock\.json",
+        "updated <PATH>/.locus/lock.json",
+    );
+    settings.add_filter(r"updated .*AGENTS\.md", "updated <PATH>/AGENTS.md");
+    settings.add_filter(r"updated .*CLAUDE\.md", "updated <PATH>/CLAUDE.md");
     settings.bind(|| insta::assert_snapshot!("init_sample_crate", stdout));
 }
 
@@ -45,8 +53,16 @@ fn init_against_cluster_crate_snapshots_checklist() {
     let stdout = String::from_utf8_lossy(&output.stdout).to_string();
 
     let mut settings = insta::Settings::clone_current();
-    settings.add_filter(r"wrote .*locus\.lock", "wrote <PATH>/locus.lock");
-    settings.add_filter(r"updated .*locus\.lock", "updated <PATH>/locus.lock");
+    settings.add_filter(
+        r"wrote .*\.locus/lock\.json",
+        "wrote <PATH>/.locus/lock.json",
+    );
+    settings.add_filter(
+        r"updated .*\.locus/lock\.json",
+        "updated <PATH>/.locus/lock.json",
+    );
+    settings.add_filter(r"updated .*AGENTS\.md", "updated <PATH>/AGENTS.md");
+    settings.add_filter(r"updated .*CLAUDE\.md", "updated <PATH>/CLAUDE.md");
     settings.bind(|| insta::assert_snapshot!("init_cluster_crate", stdout));
 
     assert!(
@@ -91,7 +107,7 @@ fn cluster_round_trip_persists_accepted_concept() {
         first_out.contains("[concept]"),
         "expected heuristic election to surface a [concept] suggestion on first init; got:\n{first_out}"
     );
-    let lockfile_path = workspace_dir.path().join("locus.lock");
+    let lockfile_path = workspace_dir.path().join(".locus/lock.json");
     let initial = std::fs::read_to_string(&lockfile_path).unwrap();
     assert!(
         !initial.contains("\"user\""),

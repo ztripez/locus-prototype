@@ -30,7 +30,7 @@ pub struct CheckArgs {
     /// resolves from `origin/main`, `origin/master`, `main`, `master`,
     /// `HEAD~1`. Pass an explicit ref (e.g. `--baseline origin/develop`)
     /// to override. Also used by Policy Guard (`PG001`-`PG004`) to read
-    /// the baseline `locus.lock`.
+    /// the baseline `.locus/lock.json`.
     #[arg(long)]
     pub baseline: Option<String>,
     /// Acknowledge that this run is calibrating policy (raising budgets,
@@ -47,7 +47,7 @@ pub struct CheckArgs {
     pub allow_policy_calibration: bool,
     /// Acknowledge that no baseline lockfile is available for the
     /// Policy Guard audit (e.g. shallow CI clone, first commit before
-    /// `locus.lock` existed). Without this flag, PG000 fires Fatal
+    /// `.locus/lock.json` existed). Without this flag, PG000 fires Fatal
     /// under `--agent-strict` so that a missing audit can't silently
     /// disable the gate. See issue #44.
     #[arg(long)]

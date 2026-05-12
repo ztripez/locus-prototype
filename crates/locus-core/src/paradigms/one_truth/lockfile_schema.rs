@@ -1,4 +1,4 @@
-//! Shape of the OT section inside `locus.lock`.
+//! Shape of the OT section inside `.locus/lock.json`.
 //!
 //! Each entry carries its `source` (hint / init / accepted) so reviewers
 //! can tell why a symbol was promoted. `init` means "Locus inferred this
