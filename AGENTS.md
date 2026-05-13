@@ -251,6 +251,29 @@ regardless of underlying severity), and next declarations to consider (suggestio
 
 Use `locus check` once you're ready to enforce.
 
+### `locus query <kind>` — oracle lookup over AIR
+
+Read-only architectural lookup. Answers "where does Locus see `<kind>` in this workspace?"
+
+```bash
+locus query canonical
+locus query converter
+locus query hot-path --json
+```
+
+Supported kinds: `canonical`, `boundary`, `converter`, plus the 11 normalized fact kinds
+(`spawned-work`, `config-read`, `logging`, `external-io`, `persistence-write`,
+`blocking-call`, `hot-path`, `request-context`, `boundary-entry`, `runtime-state-owner`,
+`background-worker`).
+
+Default output: aligned rows of `<symbol>  <path>:<line>`. Pass `--json` for a structured
+array consumable by agents/tooling. Unknown kinds exit code 2 with the supported list on
+stderr.
+
+This is the oracle surface — `check` is the gate, `observe` is the survey, `query` is the
+lookup. `query` is lockfile-free and runs over the AIR scan only; `check` and `observe`
+both load `.locus/lock.json` (for rule policy and declarations respectively).
+
 ## Implementation roadmap
 
 - ✅ AIR emission v13 (language-agnostic naming pass on top of v12 — `EnumMatch` → `DiscriminatedMatch`, `Visibility::Crate` → `Module`, `CallKind::Macro`/`DiscardKind::Macro` → `Meta`, `ArmBodyShape::Propagate` → `ErrorPropagation`, `AirItem::PartialIfLet` → `PartialResultMatch` with typed enum variant, `ConversionMechanism::From/TryFrom/InherentMethod/FreeFn` → `InfallibleAdapter/FallibleAdapter/InstanceMethod/FreeFunction` plus new `FactoryFunction`, `AirImpl` → `AirImplBlock` with `interface`/`target_type`/`dispatch`, unified `decorators` field replacing `derives`+`attrs`, added `path_segments` and `symbol_segments` for delimiter-portable matching, added `FallbackPattern` enum on `AirFallbackCall`. The Rust adapter remains the only adapter today; the schema is now ready for TS / Python / Go / Swift adapters to plug in without parallel-AIR shapes for shared concepts).

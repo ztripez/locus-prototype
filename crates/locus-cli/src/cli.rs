@@ -15,6 +15,7 @@ use crate::commands::{
         ob::ObCommand, pa::PaCommand, rm::RmCommand, rw::RwCommand, ta::TaCommand, ut::UtCommand,
     },
     prune::PruneArgs,
+    query::QueryArgs,
 };
 
 #[derive(Parser, Debug)]
@@ -99,4 +100,6 @@ pub enum Command {
     Observe(ObserveArgs),
     /// Remove expired lockfile exceptions from `.locus/lock.json`.
     Prune(PruneArgs),
+    /// Query AIR for symbols matching a given architectural kind (oracle command, not a gate).
+    Query(QueryArgs),
 }

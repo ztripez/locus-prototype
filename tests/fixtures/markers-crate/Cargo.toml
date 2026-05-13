@@ -1,0 +1,17 @@
+# Standalone fixture crate. NOT part of the locus workspace — `[workspace]`
+# below severs membership so `cargo build --workspace` ignores it.
+#
+# Used by the `locus query` integration tests to exercise the markers
+# loader: `// locus: fact <fact_kind>` source hints get promoted into
+# `AirFact` entries with the matching `FactKind`.
+
+[workspace]
+
+[package]
+name = "markers-crate"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[lib]
+path = "src/lib.rs"

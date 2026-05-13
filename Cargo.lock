@@ -375,6 +375,7 @@ dependencies = [
  "locus-report",
  "locus-rust",
  "predicates",
+ "serde",
  "serde_json",
  "tempfile",
  "thiserror",
