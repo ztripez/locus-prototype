@@ -11,6 +11,8 @@
 
 use serde::{Deserialize, Serialize};
 
+use super::lib_rs_kind::LibRsKindEntry;
+
 /// Default budget for `default_max_public_types` when none is set in the
 /// lockfile. Five is a deliberate "small but not trivial" threshold — most
 /// well-factored modules sit at one or two public types; six begins to feel
@@ -56,6 +58,10 @@ pub struct MoSection {
     /// — same as `MoOverride::module`.
     #[serde(default)]
     pub persistence_import_patterns: Vec<String>,
+    /// MO005 — per-crate `lib.rs` kind declarations. Schema + lookup
+    /// helper live in the sibling `lib_rs_kind` module.
+    #[serde(default)]
+    pub lib_rs_kinds: Vec<LibRsKindEntry>,
 }
 
 /// Built-in default handler-name patterns when
@@ -307,6 +313,8 @@ mod tests {
 
     #[test]
     fn round_trips_through_serde() {
+        // `lib_rs_kinds` round-trip lives in the `lib_rs_kind` module's
+        // own tests; this test covers the rest of the section.
         let s = MoSection {
             default_max_public_types: Some(7),
             overrides: vec![MoOverride {
@@ -317,6 +325,7 @@ mod tests {
             entropy_threshold: Some(4),
             handler_name_patterns: vec!["on_*".into()],
             persistence_import_patterns: vec!["*::redis::*".into()],
+            ..Default::default()
         };
         let j = serde_json::to_value(&s).unwrap();
         let back: MoSection = serde_json::from_value(j).unwrap();

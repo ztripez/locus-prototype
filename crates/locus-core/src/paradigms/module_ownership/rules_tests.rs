@@ -62,10 +62,7 @@ fn n_pub_types(n: usize) -> Vec<AirItem> {
 fn configured(default_budget: u32) -> MoSection {
     MoSection {
         default_max_public_types: Some(default_budget),
-        overrides: Vec::new(),
-        entropy_threshold: None,
-        handler_name_patterns: Vec::new(),
-        persistence_import_patterns: Vec::new(),
+        ..Default::default()
     }
 }
 
@@ -716,7 +713,7 @@ fn air_with_module_path_and_file(
 fn mo005_flags_struct_in_main() {
     let air =
         air_with_module_and_items("locus_cli::main", vec![type_item("Cli", TypeKind::Struct)]);
-    let diags = mo005(&air, CheckMode::Human);
+    let diags = mo005(&air, &MoSection::default(), CheckMode::Human);
     assert_eq!(diags.len(), 1, "expected one diag, got {diags:?}");
     assert_eq!(diags[0].rule_id, "MO005");
     assert_eq!(diags[0].severity, Severity::Warning);
@@ -738,7 +735,7 @@ fn mo005_flags_enum_in_main() {
         "locus_cli::main",
         vec![type_item("Command", TypeKind::Enum)],
     );
-    let diags = mo005(&air, CheckMode::Human);
+    let diags = mo005(&air, &MoSection::default(), CheckMode::Human);
     assert_eq!(diags.len(), 1, "expected one diag, got {diags:?}");
     assert_eq!(diags[0].rule_id, "MO005");
     assert!(
@@ -754,7 +751,7 @@ fn mo005_flags_enum_in_main() {
 #[test]
 fn mo005_flags_trait_in_main() {
     let air = air_with_module_and_items("pkg::main", vec![type_item("Runner", TypeKind::Trait)]);
-    let diags = mo005(&air, CheckMode::Human);
+    let diags = mo005(&air, &MoSection::default(), CheckMode::Human);
     assert_eq!(diags.len(), 1, "expected one diag, got {diags:?}");
     assert!(diags[0].message.contains("trait"));
 }
@@ -762,7 +759,7 @@ fn mo005_flags_trait_in_main() {
 #[test]
 fn mo005_flags_impl_block_in_main() {
     let air = air_with_module_and_items("pkg::main", vec![impl_item("Cli")]);
-    let diags = mo005(&air, CheckMode::Human);
+    let diags = mo005(&air, &MoSection::default(), CheckMode::Human);
     assert_eq!(diags.len(), 1, "expected one diag, got {diags:?}");
     assert!(diags[0].message.contains("impl block"));
     assert!(diags[0].message.contains("Cli"));
@@ -772,7 +769,7 @@ fn mo005_flags_impl_block_in_main() {
 fn mo005_flags_long_helper_function_in_main() {
     // Function named `helper_xyz` — not a permitted name, any line count fires.
     let air = air_with_module_and_items("pkg::main", vec![func_with_lines("helper_xyz", 10)]);
-    let diags = mo005(&air, CheckMode::Human);
+    let diags = mo005(&air, &MoSection::default(), CheckMode::Human);
     assert_eq!(diags.len(), 1, "expected one diag, got {diags:?}");
     assert!(
         diags[0].message.contains("helper_xyz"),
@@ -785,7 +782,7 @@ fn mo005_flags_named_fn_exceeding_budget_in_main() {
     // `main` is a permitted name but exceeds the line budget.
     let budget = MO005_THIN_FN_MAX_LINES;
     let air = air_with_module_and_items("pkg::main", vec![func_with_lines("main", budget + 1)]);
-    let diags = mo005(&air, CheckMode::Human);
+    let diags = mo005(&air, &MoSection::default(), CheckMode::Human);
     assert_eq!(diags.len(), 1, "expected one diag, got {diags:?}");
     assert!(
         diags[0].message.contains("main"),
@@ -802,7 +799,7 @@ fn mo005_silent_for_thin_main_fn() {
     // A small `fn main` (≤ budget lines) is allowed — classic composition glue.
     let budget = MO005_THIN_FN_MAX_LINES;
     let air = air_with_module_and_items("pkg::main", vec![func_with_lines("main", budget)]);
-    let diags = mo005(&air, CheckMode::Human);
+    let diags = mo005(&air, &MoSection::default(), CheckMode::Human);
     assert!(
         diags.is_empty(),
         "expected no diags for thin main fn, got {diags:?}"
@@ -814,7 +811,7 @@ fn mo005_silent_for_thin_run_fn() {
     // `fn run(cli: Cli) -> Result<()> { commands::run(cli) }` — thin dispatch
     // glue; allowed.
     let air = air_with_module_and_items("pkg::main", vec![func_with_lines("run", 5)]);
-    let diags = mo005(&air, CheckMode::Human);
+    let diags = mo005(&air, &MoSection::default(), CheckMode::Human);
     assert!(
         diags.is_empty(),
         "expected no diags for thin run fn, got {diags:?}"
@@ -824,7 +821,7 @@ fn mo005_silent_for_thin_run_fn() {
 #[test]
 fn mo005_silent_for_thin_init_fn() {
     let air = air_with_module_and_items("pkg::main", vec![func_with_lines("init", 3)]);
-    let diags = mo005(&air, CheckMode::Human);
+    let diags = mo005(&air, &MoSection::default(), CheckMode::Human);
     assert!(
         diags.is_empty(),
         "expected no diags for thin init fn, got {diags:?}"
@@ -842,7 +839,7 @@ fn mo005_silent_for_imports_in_main() {
             import("crate::cli::Cli"),
         ],
     );
-    let diags = mo005(&air, CheckMode::Human);
+    let diags = mo005(&air, &MoSection::default(), CheckMode::Human);
     assert!(
         diags.is_empty(),
         "expected no diags for imports, got {diags:?}"
@@ -850,14 +847,13 @@ fn mo005_silent_for_imports_in_main() {
 }
 
 #[test]
-fn mo005_does_not_fire_on_lib_rs_in_first_pass() {
-    // The issue (#67) allowed lib.rs/mod.rs behavior to be "covered or
-    // explicitly scoped out" in the first pass. lib.rs is scoped out
-    // because it covers several distinct shapes (thin re-export surface,
-    // canonical-data crate surface like locus-air, composition root,
-    // accidental god module) that require their own design pass before
-    // MO005 can apply meaningfully. See follow-up issue for lib.rs
-    // entrypoint handling.
+fn mo005_canonical_data_lib_rs_silent_under_heuristic() {
+    // Issue #69 design pass: lib.rs is classified by lockfile entry or
+    // heuristic. A single `pub struct` with zero `pub use` imports is the
+    // canonical-data shape — the heuristic resolves it to `CanonicalData`
+    // and MO005 stays silent. (Cargo emits a flat `module_path` for the
+    // lib root, e.g. `test_pkg` with no `::lib` suffix; the basename
+    // `lib.rs` is what triggers the entrypoint classification.)
     let air = AirWorkspace {
         schema_version: AIR_SCHEMA_VERSION,
         packages: vec![AirPackage {
@@ -866,7 +862,7 @@ fn mo005_does_not_fire_on_lib_rs_in_first_pass() {
             root_dir: "/".into(),
             files: vec![AirFile {
                 path: "src/lib.rs".into(),
-                module_path: Some("test_pkg::lib".to_string()),
+                module_path: Some("test_pkg".to_string()),
                 items: vec![type_item("Foo", TypeKind::Struct)],
                 hints: Vec::new(),
                 parse_error: None,
@@ -875,12 +871,11 @@ fn mo005_does_not_fire_on_lib_rs_in_first_pass() {
         }],
         facts: Vec::new(),
     };
-    let diagnostics = mo005(&air, CheckMode::Human);
+    let diagnostics = mo005(&air, &MoSection::default(), CheckMode::Human);
     assert!(
         diagnostics.is_empty(),
-        "MO005 must NOT fire on lib.rs in this first pass; \
-         lib.rs handling is deferred to a follow-up issue. \
-         Got: {diagnostics:?}"
+        "MO005 must NOT fire on canonical-data lib.rs (heuristic: zero `pub use` \
+         + ≥1 declaration). Got: {diagnostics:?}"
     );
 }
 
@@ -904,7 +899,7 @@ fn mo005_applies_to_mod_module() {
         }],
         facts: Vec::new(),
     };
-    let diags = mo005(&air, CheckMode::Human);
+    let diags = mo005(&air, &MoSection::default(), CheckMode::Human);
     assert_eq!(
         diags.len(),
         1,
@@ -924,7 +919,7 @@ fn mo005_does_not_apply_to_non_entrypoint_files() {
             type_item("Bar", TypeKind::Enum),
         ],
     );
-    let diags = mo005(&air, CheckMode::Human);
+    let diags = mo005(&air, &MoSection::default(), CheckMode::Human);
     assert!(
         diags.is_empty(),
         "MO005 must not fire on non-entrypoint modules; got {diags:?}"
@@ -940,7 +935,7 @@ fn mo005_does_not_fire_on_module_path_containing_main_as_non_suffix() {
         "main_loop.rs",
         vec![type_item("State", TypeKind::Struct)],
     );
-    let diags = mo005(&air, CheckMode::Human);
+    let diags = mo005(&air, &MoSection::default(), CheckMode::Human);
     assert!(
         diags.is_empty(),
         "MO005 must not fire on `main_loop` module; got {diags:?}"
@@ -958,7 +953,7 @@ fn mo005_multiple_violations_emit_one_diagnostic_per_item() {
             impl_item("Cli"),
         ],
     );
-    let diags = mo005(&air, CheckMode::Human);
+    let diags = mo005(&air, &MoSection::default(), CheckMode::Human);
     assert_eq!(
         diags.len(),
         3,
@@ -969,7 +964,7 @@ fn mo005_multiple_violations_emit_one_diagnostic_per_item() {
 #[test]
 fn mo005_agent_strict_elevates_to_fatal() {
     let air = air_with_module_and_items("pkg::main", vec![type_item("Foo", TypeKind::Struct)]);
-    let diags = mo005(&air, CheckMode::AgentStrict);
+    let diags = mo005(&air, &MoSection::default(), CheckMode::AgentStrict);
     assert_eq!(diags.len(), 1);
     assert_eq!(diags[0].severity, Severity::Fatal);
 }
@@ -997,11 +992,11 @@ fn mo005_skips_files_without_module_path() {
         facts: Vec::new(),
     };
     assert!(
-        mo005(&air_no_path, CheckMode::Human).is_empty(),
+        mo005(&air_no_path, &MoSection::default(), CheckMode::Human).is_empty(),
         "must skip files with no module_path"
     );
     // But with a module_path it fires normally.
-    let diags = mo005(&air, CheckMode::Human);
+    let diags = mo005(&air, &MoSection::default(), CheckMode::Human);
     assert_eq!(diags.len(), 1);
 }
 
@@ -1009,7 +1004,7 @@ fn mo005_skips_files_without_module_path() {
 fn mo005_flags_conversion_in_entrypoint() {
     // A converter in an entrypoint module is misplaced.
     let air = air_with_module_and_items("pkg::main", vec![conversion_item("FooDto", "Foo")]);
-    let diags = mo005(&air, CheckMode::Human);
+    let diags = mo005(&air, &MoSection::default(), CheckMode::Human);
     assert_eq!(diags.len(), 1, "expected conversion to fire; got {diags:?}");
     assert_eq!(diags[0].rule_id, "MO005");
 }
@@ -1027,7 +1022,7 @@ fn mo005_detects_binary_crate_root_by_file_path() {
             type_item("Command", TypeKind::Enum),
         ],
     );
-    let diags = mo005(&air, CheckMode::Human);
+    let diags = mo005(&air, &MoSection::default(), CheckMode::Human);
     assert_eq!(
         diags.len(),
         2,
@@ -1180,7 +1175,7 @@ fn mo005_silent_for_composition_host_pattern() {
         paradigm_impl_thin("MyParadigm"),
     ];
     let air = mod_rs_air("my_crate::paradigms::my_paradigm::mod", items);
-    let diags = mo005(&air, CheckMode::Human);
+    let diags = mo005(&air, &MoSection::default(), CheckMode::Human);
     assert!(
         diags.is_empty(),
         "composition-host pattern (unit struct + thin impl Paradigm) must be silent; \
@@ -1197,7 +1192,7 @@ fn mo005_fires_for_non_paradigm_impl_in_mod_rs() {
         non_paradigm_impl("SomeOtherTrait", "Foo"),
     ];
     let air = mod_rs_air("x::foo::mod", items);
-    let diags = mo005(&air, CheckMode::Human);
+    let diags = mo005(&air, &MoSection::default(), CheckMode::Human);
     // Both the struct (now without a matching Paradigm impl) and the non-Paradigm
     // impl should fire.
     assert!(
@@ -1219,7 +1214,7 @@ fn mo005_fires_for_paradigm_impl_with_long_method_in_mod_rs() {
         paradigm_impl_over_budget("BigParadigm"),
     ];
     let air = mod_rs_air("x::paradigms::big::mod", items);
-    let diags = mo005(&air, CheckMode::Human);
+    let diags = mo005(&air, &MoSection::default(), CheckMode::Human);
     assert!(
         !diags.is_empty(),
         "impl Paradigm with total span >120 lines must fire; got {diags:?}"
@@ -1236,7 +1231,7 @@ fn mo005_fires_for_paradigm_impl_on_non_local_target() {
     // declared in this file (not in same_file_items as a unit struct).
     let items = vec![paradigm_impl_thin("ForeignType")];
     let air = mod_rs_air("x::paradigms::mod", items);
-    let diags = mo005(&air, CheckMode::Human);
+    let diags = mo005(&air, &MoSection::default(), CheckMode::Human);
     assert!(
         !diags.is_empty(),
         "impl Paradigm on non-local type must fire (local unit struct not found); \
@@ -1254,7 +1249,7 @@ fn mo005_fires_for_paradigm_impl_on_non_unit_struct() {
     // The host is not a unit struct — composition-host pattern requires unit struct.
     let items = vec![struct_with_fields("Foo"), paradigm_impl_thin("Foo")];
     let air = mod_rs_air("x::paradigms::mod", items);
-    let diags = mo005(&air, CheckMode::Human);
+    let diags = mo005(&air, &MoSection::default(), CheckMode::Human);
     assert!(
         !diags.is_empty(),
         "impl Paradigm on non-unit struct must fire; got {diags:?}"
@@ -1271,7 +1266,7 @@ fn mo005_silent_for_unit_struct_paired_with_paradigm_impl() {
     // is allowed. This test verifies the struct-level silent pass.
     let items = vec![unit_struct_item("Host"), paradigm_impl_thin("Host")];
     let air = mod_rs_air("x::paradigms::my::mod", items);
-    let diags = mo005(&air, CheckMode::Human);
+    let diags = mo005(&air, &MoSection::default(), CheckMode::Human);
     assert!(
         diags.is_empty(),
         "host unit struct paired with allowed impl Paradigm must not be flagged; \
@@ -1285,7 +1280,7 @@ fn mo005_arbitrary_impl_in_mod_rs_still_fires() {
     // is still forbidden — the composition-host exception does not apply.
     let items = vec![unit_struct_item("State"), inherent_impl("State")];
     let air = mod_rs_air("x::paradigms::mod", items);
-    let diags = mo005(&air, CheckMode::Human);
+    let diags = mo005(&air, &MoSection::default(), CheckMode::Human);
     assert!(
         !diags.is_empty(),
         "inherent impl block in mod.rs must still fire; got {diags:?}"
@@ -1308,7 +1303,7 @@ fn mo005_composition_host_pattern_in_main_rs_still_fires() {
         paradigm_impl_thin("MyParadigm"),
     ];
     let air = main_rs_air("my_crate::main", items);
-    let diags = mo005(&air, CheckMode::Human);
+    let diags = mo005(&air, &MoSection::default(), CheckMode::Human);
     assert!(
         !diags.is_empty(),
         "composition-host pattern in main.rs must fire MO005 — \
@@ -1322,4 +1317,286 @@ fn mo005_composition_host_pattern_in_main_rs_still_fires() {
         diags.iter().any(|d| d.message.contains("impl block")),
         "expected impl-block diagnostic for impl Paradigm in main.rs; got {diags:?}"
     );
+}
+
+// ---- MO005 lib.rs classification tests (issue #69) ----
+
+/// Build a `lib.rs` workspace at the given crate-level `module_path`
+/// containing the supplied items.
+fn lib_rs_air(module_path: &str, items: Vec<AirItem>) -> AirWorkspace {
+    AirWorkspace {
+        schema_version: AIR_SCHEMA_VERSION,
+        packages: vec![AirPackage {
+            name: "x".into(),
+            version: "0".into(),
+            root_dir: "/".into(),
+            files: vec![AirFile {
+                path: "src/lib.rs".into(),
+                module_path: Some(module_path.to_string()),
+                items,
+                hints: Vec::new(),
+                parse_error: None,
+                line_count: 200,
+            }],
+        }],
+        facts: Vec::new(),
+    }
+}
+
+fn pub_use_import(path: &str) -> AirItem {
+    AirItem::Import(locus_air::AirImport {
+        path: path.into(),
+        path_segments: Vec::new(),
+        visibility: Visibility::Public,
+        span: AirSpan::new("src/lib.rs", 1, 1),
+    })
+}
+
+#[test]
+fn mo005_lib_rs_thin_reexport_shape_silent() {
+    // Only `pub use` re-exports, no declarations → thin-reexport shape.
+    // The heuristic recognises D == 0 and stays silent.
+    let air = lib_rs_air(
+        "thin_pkg",
+        vec![
+            pub_use_import("foo::Foo"),
+            pub_use_import("bar::Bar"),
+            pub_use_import("baz::Baz"),
+        ],
+    );
+    let diags = mo005(&air, &MoSection::default(), CheckMode::Human);
+    assert!(
+        diags.is_empty(),
+        "thin re-export lib.rs (only `pub use`) must be silent; got {diags:?}"
+    );
+}
+
+#[test]
+fn mo005_lib_rs_canonical_data_shape_silent() {
+    // Many `pub` declarations, zero `pub use` → canonical-data shape.
+    // Even at 30 public types (like locus-air), MO005 stays silent.
+    let mut items = Vec::new();
+    for i in 0..30 {
+        items.push(type_item(&format!("T{i}"), TypeKind::Struct));
+    }
+    let air = lib_rs_air("locus_air", items);
+    let diags = mo005(&air, &MoSection::default(), CheckMode::Human);
+    assert!(
+        diags.is_empty(),
+        "canonical-data lib.rs (R=0, D>0) must be silent; got {} diags",
+        diags.len()
+    );
+}
+
+#[test]
+fn mo005_lib_rs_small_composition_root_silent() {
+    // `pub use` + a few `pub` declarations (D_pub ≤ budget=5) → small
+    // composition root. Mirrors locus-rust's shape (1 pub enum + 3 pub fns
+    // + 5 pub uses).
+    let mut items = vec![
+        pub_use_import("hints::scan_hints"),
+        pub_use_import("loaders::MarkersLoader"),
+        type_item("ScanError", TypeKind::Enum),
+        func_with_lines("scan", 5),
+        func_with_lines("scan_raw", 32),
+        func_with_lines("default_loaders", 7),
+    ];
+    // Add a private function for realism — should not be counted.
+    items.push(AirItem::Function(AirFunction {
+        name: "apply_default_loaders".into(),
+        symbol: "x::apply_default_loaders".into(),
+        visibility: Visibility::Private,
+        params: Vec::new(),
+        return_type: None,
+        span: AirSpan::new("src/lib.rs", 100, 110),
+        line_count: 10,
+        decorators: Vec::new(),
+        symbol_segments: Vec::new(),
+        doc: None,
+    }));
+    let air = lib_rs_air("locus_rust", items);
+    let diags = mo005(&air, &MoSection::default(), CheckMode::Human);
+    assert!(
+        diags.is_empty(),
+        "small composition-root lib.rs (R>0, D_pub ≤ {}) must be silent; got {diags:?}",
+        super::LIB_RS_COMPOSITION_ROOT_DECL_BUDGET
+    );
+}
+
+#[test]
+fn mo005_lib_rs_god_module_shape_fires() {
+    // `pub use` + many public declarations (D_pub > budget) → accidental
+    // god module. Every declaration is flagged.
+    let mut items = vec![pub_use_import("foo::Foo"), pub_use_import("bar::Bar")];
+    // 6 public types exceeds budget of 5.
+    for i in 0..6 {
+        items.push(type_item(&format!("T{i}"), TypeKind::Struct));
+    }
+    let air = lib_rs_air("god_pkg", items);
+    let diags = mo005(&air, &MoSection::default(), CheckMode::Human);
+    assert_eq!(
+        diags.len(),
+        6,
+        "god-module lib.rs (R>0, D_pub > budget) must fire on every \
+         declaration; got {diags:?}"
+    );
+    assert!(
+        diags.iter().all(|d| d
+            .suggested_fix
+            .as_deref()
+            .unwrap_or("")
+            .contains("paradigms.MO.lib_rs_kinds")),
+        "lib.rs diagnostics must mention the lockfile escape hatch in \
+         their suggested_fix; got {:?}",
+        diags
+            .iter()
+            .map(|d| d.suggested_fix.clone())
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn mo005_lib_rs_lockfile_canonical_data_skips_rule_entirely() {
+    // Explicit lockfile entry → MO005 skips the file regardless of the
+    // heuristic's shape. Even a god-module shape (R>0, D>>budget) is
+    // silenced because the user has accepted the canonical-data kind.
+    use super::super::lib_rs_kind::{LibRsKind, LibRsKindEntry};
+    let mut items = vec![pub_use_import("foo::Foo")];
+    for i in 0..20 {
+        items.push(type_item(&format!("T{i}"), TypeKind::Struct));
+    }
+    let air = lib_rs_air("flat_pkg", items);
+    let section = MoSection {
+        lib_rs_kinds: vec![LibRsKindEntry {
+            module: "flat_pkg".into(),
+            kind: LibRsKind::CanonicalData,
+            reason: Some("intentional flat data contract".into()),
+            ..Default::default()
+        }],
+        ..Default::default()
+    };
+    let diags = mo005(&air, &section, CheckMode::Human);
+    assert!(
+        diags.is_empty(),
+        "lockfile lib_rs_kinds=canonical-data must silence MO005 entirely; \
+         got {diags:?}"
+    );
+}
+
+#[test]
+fn mo005_lib_rs_lockfile_composition_root_skips_rule_entirely() {
+    // `composition-root` kind also skips MO005 — the user has accepted
+    // declarations + glue at the crate root. MO001/MO002 still apply.
+    use super::super::lib_rs_kind::{LibRsKind, LibRsKindEntry};
+    let mut items = vec![pub_use_import("foo::Foo")];
+    for i in 0..10 {
+        items.push(type_item(&format!("T{i}"), TypeKind::Struct));
+    }
+    let air = lib_rs_air("comp_pkg", items);
+    let section = MoSection {
+        lib_rs_kinds: vec![LibRsKindEntry {
+            module: "comp_pkg".into(),
+            kind: LibRsKind::CompositionRoot,
+            ..Default::default()
+        }],
+        ..Default::default()
+    };
+    let diags = mo005(&air, &section, CheckMode::Human);
+    assert!(
+        diags.is_empty(),
+        "lockfile lib_rs_kinds=composition-root must silence MO005; got {diags:?}"
+    );
+}
+
+#[test]
+fn mo005_lib_rs_lockfile_thin_reexport_forces_strict_scoping() {
+    // Explicit `thin-reexport` overrides the canonical-data heuristic: a
+    // lib.rs with declarations and zero `pub use` is normally treated as
+    // canonical-data, but the user has asked for main.rs-style scoping.
+    use super::super::lib_rs_kind::{LibRsKind, LibRsKindEntry};
+    let air = lib_rs_air("strict_pkg", vec![type_item("Foo", TypeKind::Struct)]);
+    let section = MoSection {
+        lib_rs_kinds: vec![LibRsKindEntry {
+            module: "strict_pkg".into(),
+            kind: LibRsKind::ThinReexport,
+            reason: Some("crate root must remain a thin surface".into()),
+            ..Default::default()
+        }],
+        ..Default::default()
+    };
+    let diags = mo005(&air, &section, CheckMode::Human);
+    assert_eq!(
+        diags.len(),
+        1,
+        "lockfile lib_rs_kinds=thin-reexport must enforce main.rs scoping \
+         (canonical-data heuristic does NOT apply); got {diags:?}"
+    );
+    assert!(diags[0].message.contains("Foo"));
+}
+
+#[test]
+fn mo005_lib_rs_empty_file_silent() {
+    // Empty `lib.rs` (e.g. a placeholder stub crate) — D == 0, R == 0 →
+    // thin re-export. No diagnostics.
+    let air = lib_rs_air("locus_report", Vec::new());
+    let diags = mo005(&air, &MoSection::default(), CheckMode::Human);
+    assert!(
+        diags.is_empty(),
+        "empty lib.rs must be silent; got {diags:?}"
+    );
+}
+
+#[test]
+fn mo005_lib_rs_detection_via_basename_not_module_path() {
+    // Cargo emits a flat `module_path` for the lib root (e.g.
+    // `my_pkg`, no `::lib` suffix). Detection must come from the file
+    // basename, not the module path.
+    let air = AirWorkspace {
+        schema_version: AIR_SCHEMA_VERSION,
+        packages: vec![AirPackage {
+            name: "my_pkg".into(),
+            version: "0".into(),
+            root_dir: "/".into(),
+            files: vec![AirFile {
+                path: "crates/my-pkg/src/lib.rs".into(),
+                module_path: Some("my_pkg".to_string()),
+                items: vec![
+                    pub_use_import("foo::Foo"),
+                    // 6 public types — over budget, would fire if classified
+                    // as a lib.rs entrypoint.
+                    type_item("T0", TypeKind::Struct),
+                    type_item("T1", TypeKind::Struct),
+                    type_item("T2", TypeKind::Struct),
+                    type_item("T3", TypeKind::Struct),
+                    type_item("T4", TypeKind::Struct),
+                    type_item("T5", TypeKind::Struct),
+                ],
+                hints: Vec::new(),
+                parse_error: None,
+                line_count: 100,
+            }],
+        }],
+        facts: Vec::new(),
+    };
+    let diags = mo005(&air, &MoSection::default(), CheckMode::Human);
+    assert_eq!(
+        diags.len(),
+        6,
+        "lib.rs detection via basename (not module-path suffix) must \
+         classify this file and fire on each over-budget declaration; \
+         got {diags:?}"
+    );
+}
+
+#[test]
+fn mo005_lib_rs_agent_strict_elevates_to_fatal() {
+    // The strict elevation works the same as for main.rs.
+    let mut items = vec![pub_use_import("foo::Foo")];
+    for i in 0..6 {
+        items.push(type_item(&format!("T{i}"), TypeKind::Struct));
+    }
+    let air = lib_rs_air("god_pkg", items);
+    let diags = mo005(&air, &MoSection::default(), CheckMode::AgentStrict);
+    assert_eq!(diags.len(), 6);
+    assert!(diags.iter().all(|d| d.severity == Severity::Fatal));
 }
