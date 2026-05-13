@@ -22,8 +22,8 @@ capped by the weakest layer in its derivation chain.
 
 ### Layer 1 — raw source scan (no AST)
 
-**File:** `crates/locus-rust/src/hints.rs` —
-`scan_hints(source, file_path) -> Vec<AirHint>` (line 25).
+**File:** `crates/locus-rust/src/hints.rs`, function `scan_hints`
+(`pub fn scan_hints(source, file_path) -> Vec<AirHint>`).
 
 `syn` strips comments, so `// locus:` annotations are read directly
 from the source string before parsing. Each hint binds to the next
@@ -53,8 +53,8 @@ body or between two attributes, the binding may surprise you.
 
 ### Layer 2 — `syn` AST scan
 
-**File:** `crates/locus-rust/src/visitor.rs` —
-`collect_items(file, file_path, module) -> Vec<AirItem>` (line 31).
+**File:** `crates/locus-rust/src/visitor.rs`, function `collect_items`
+(`pub fn collect_items(file, file_path, module) -> Vec<AirItem>`).
 
 This is the real Rust parser. `syn::parse_file` produces a typed AST;
 the visitor walks `syn::Item` / `syn::ImplItem` / `syn::Expr` and emits
@@ -85,8 +85,8 @@ code a `tracing::instrument` or `tokio::main` actually emits.
 
 ### Layer 3 — rendered AIR text
 
-**File:** `crates/locus-rust/src/type_render.rs` — `render_type` (line
-20) and `render_path` (line 27).
+**File:** `crates/locus-rust/src/type_render.rs`, functions
+`render_type` and `render_path`.
 
 Type paths and symbols are rendered to strings (`Vec<Result<User,
 Error>>`, `pkg::module::Type`) for storage in AIR. Whitespace is
@@ -121,11 +121,13 @@ the Rust adapter today:
 
 **Converter detection by name shape** (`visitor.rs`):
 
-- Free function: `fn to_*` / `fn from_*` / `fn into_*` / `fn map_*` /
-  `fn convert_*` → `ConversionMechanism::FreeFunction` (line 548).
-- Inherent method: `fn to_*` / `fn into_*` → `InstanceMethod` (line 561).
-- Trait impl: text-equality on the last path segment of the impl's
-  trait — `From` or `TryFrom` only (line 327).
+- Free function (`free_fn_converter_kind`): `fn to_*` / `fn from_*` /
+  `fn into_*` / `fn map_*` / `fn convert_*` →
+  `ConversionMechanism::FreeFunction`.
+- Inherent method (`inherent_method_converter_kind`): `fn to_*` /
+  `fn into_*` → `InstanceMethod`.
+- Trait impl (`emit_impl_trait_conversion`): text-equality on the
+  last path segment of the impl's trait — `From` or `TryFrom` only.
 
 The visitor does not check that a function's argument or return type
 actually matches the "from / to" relationship implied by the name. For
@@ -135,7 +137,7 @@ distinct from `Self`. Within those guards, an inherent method like
 `fn to_inert(&self) -> ()` whose return type is unrelated to any real
 conversion is still emitted as an `AirConversion(from=Self, to=())`.
 
-**`Result` / `Option` unwrapping** (`visitor.rs` line 580,
+**`Result` / `Option` unwrapping** (`visitor.rs`,
 `strip_result_or_option`):
 
 ```rust
@@ -150,8 +152,7 @@ backed type stripping; if the source uses a type alias
 (`type MyResult<T> = Result<T, MyError>`), it is not seen as a
 `Result`.
 
-**Module-path inference** (`module_path.rs` lines 21–51,
-`derive_module_path`):
+**Module-path inference** (`module_path.rs`, `derive_module_path`):
 
 The module path of a file is inferred from its **filesystem location**
 relative to `src/`. `#[path = "..."]` overrides are not honoured;
@@ -159,7 +160,7 @@ relative to `src/`. `#[path = "..."]` overrides are not honoured;
 correct for idiomatic Rust layouts and wrong for crates that
 deliberately rearrange their module tree.
 
-**Import normalisation** (`visitor.rs` lines 444–452,
+**Import normalisation** (`visitor.rs`,
 `normalize_use_path`):
 
 `crate::X` is rewritten to `<lib_crate_name>::X` so AIR symbols are
@@ -193,15 +194,19 @@ Maps callee path strings to `FactKind`:
 | `TcpStream::*`, `print!` / `println!`, …   | `ExternalIo` / `Logging` |
 
 **Confidence is hardcoded at 0.9** — these are syntactic recognitions,
-not verified facts. Method calls (`CallKind::Method`) are skipped
-entirely (visitor.rs line 214) because the receiver type is unknown
-without name resolution, so `my_executor.spawn(…)` does not match the
+not verified facts. The matcher for `SpawnedWork` is literally
+`callee == "spawn" || callee.ends_with("::spawn")` (`loaders/std_rt.rs`,
+`classify`).
+
+Method calls (`CallKind::Method`) are skipped entirely (see
+`StdRtLoader::classify`) because the receiver type is unknown without
+name resolution, so `my_executor.spawn(…)` does not match the
 `*::spawn` pattern.
 
-A function named `custom_spawn::do_work` *will* match `*::spawn`
-because the matcher walks path segments. This is a known false
-positive surface and is one of the things the issue #110 documentation
-exists to make explicit.
+A user-defined path like `my_executor::spawn` *will* match because the
+matcher compares trailing path text. This is a known false-positive
+surface — the boundary test
+`layer4_std_rt_loader_matches_user_defined_spawn` pins it.
 
 ### `MarkersLoader`
 
@@ -239,8 +244,11 @@ current adapter.
    - find a syntactic proxy (e.g. presence of `async` keyword in the
      function signature, which is captured),
    - require the user to mark the function with `// locus: fact …`,
-   - or document the rule as advisory-only and tag the fact's
-     confidence accordingly (future work — see "Future work" below).
+   - document the rule as advisory-only and tag the fact's confidence
+     accordingly (future work — see "Future work" below),
+   - or scope the rule for the rustc-backed adapter mode tracked by
+     [#111](https://github.com/ztripez/locus/issues/111) instead of
+     shipping it against `syn` facts.
 
 4. **Does this rule need macro expansion?**
    "Does this `#[tokio::main]` spawn a runtime?" — "What does
@@ -266,8 +274,8 @@ The tests cover, at minimum:
   ignore raw-string content.
 - Layer 2: `syn::parse_file` errors are surfaced as `parse_error`
   rather than aborting the whole scan.
-- Layer 3: type rendering normalises whitespace and is stable across
-  reorderings the language treats as equivalent.
+- Layer 3: type rendering normalises whitespace; type aliases are
+  preserved as written (no resolution to the underlying definition).
 - Layer 4 (false-positive surface): a function named `to_string` that
   returns `()` is still classified as a converter; a custom
   `my_module::spawn` matches the std-rt `*::spawn` recognition.
@@ -287,11 +295,12 @@ forgotten:
   `AirFact` and let rules consume it (e.g. demoting a Layer-4-only
   finding to Advisory). Tracked separately from #110.
 
-- **Rustc-backed adapter mode.** A second adapter mode that runs
-  inside a rustc plugin / driver would lift the Layer-4 ceiling for
-  rules that need real type and macro information. Explicitly listed
-  as a non-goal in #110 until the syntactic adapter boundary is
-  documented and exhausted.
+- **Rustc-backed adapter mode.** Tracked by [#111](https://github.com/ztripez/locus/issues/111).
+  This is not part of #110's implementation scope, but it is the
+  intended path for rules that require resolved names, resolved types,
+  macro expansion, or trait / method resolution. This document should
+  help classify which rules are safe with `syn` (the four-layer
+  ceiling) and which must wait for rustc-backed facts.
 
 - **`#[path = "..."]` and `#[cfg]` module overrides.** Currently
   `derive_module_path` infers from the filesystem only. Real support

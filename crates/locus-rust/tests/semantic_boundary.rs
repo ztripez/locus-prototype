@@ -153,21 +153,71 @@ fn layer2_macro_invocation_is_observed_not_expanded() {
 
 #[test]
 fn layer2_parse_error_does_not_abort_the_scanner() {
-    // `scan_file` wraps `syn::parse_file` so a broken source ends up as
-    // an `AirFile` with `parse_error: Some(...)` and `items: []` rather
-    // than panicking. The workspace-level wrapping is straightforward;
-    // the real assertion is that `syn::parse_file` itself returns `Err`
-    // on broken Rust, which is what `scan_file` then propagates.
-    let result = syn::parse_file("pub fn !!! not rust\n");
-    assert!(
-        result.is_err(),
-        "broken source must return Err, not panic; got {result:?}"
-    );
+    // End-to-end pin of `scan_file`'s parse-error containment: a file
+    // with broken Rust must produce an `AirFile` with
+    // `parse_error: Some(...)` and `items: []` while the rest of the
+    // workspace scans normally. A weaker test that only exercised
+    // `syn::parse_file` would still pass if `scan_file` regressed to
+    // panicking or dropping `parse_error`.
+    //
+    // Uses `CARGO_TARGET_TMPDIR` so no extra dev-dep is needed.
+    use std::fs;
+    let tmp_root = std::path::PathBuf::from(env!("CARGO_TARGET_TMPDIR"));
+    let crate_dir = tmp_root.join("semantic_boundary_parse_error");
+    // Clean up any prior run's directory so the test is hermetic.
+    let _ = fs::remove_dir_all(&crate_dir);
+    let src_dir = crate_dir.join("src");
+    fs::create_dir_all(&src_dir).expect("mkdir src");
+    fs::write(
+        crate_dir.join("Cargo.toml"),
+        indoc! {r#"
+            # Empty [workspace] keeps this temp crate out of the outer
+            # locus workspace so `cargo metadata` doesn't complain.
+            [workspace]
 
-    // Valid source still parses; collect_items handles it.
-    let ok: syn::File = syn::parse_file("pub fn ok() {}").expect("valid parses");
-    let items = collect_items(&ok, "ok.rs", Some("pkg"));
-    assert!(items.iter().any(|i| matches!(i, AirItem::Function(_))));
+            [package]
+            name = "brokencrate"
+            version = "0.0.0"
+            edition = "2024"
+
+            [lib]
+            path = "src/lib.rs"
+        "#},
+    )
+    .expect("Cargo.toml");
+    fs::write(src_dir.join("lib.rs"), "pub fn ok() {}\n").expect("lib.rs");
+    fs::write(src_dir.join("bad.rs"), "pub fn !!! not rust\n").expect("bad.rs");
+
+    let air = locus_rust::scan_raw(&crate_dir).expect("scan_raw must not abort");
+
+    let pkg = air
+        .packages
+        .iter()
+        .find(|p| p.name == "brokencrate")
+        .expect("brokencrate package scanned");
+    let bad = pkg
+        .files
+        .iter()
+        .find(|f| f.path.ends_with("bad.rs"))
+        .expect("bad.rs included in scan");
+    assert!(
+        bad.parse_error.is_some(),
+        "parse_error must be set on broken source; got {bad:?}"
+    );
+    assert!(
+        bad.items.is_empty(),
+        "items must be empty on parse failure; got {:?}",
+        bad.items
+    );
+    let ok = pkg
+        .files
+        .iter()
+        .find(|f| f.path.ends_with("lib.rs"))
+        .expect("lib.rs included in scan");
+    assert!(
+        ok.parse_error.is_none(),
+        "valid file's parse_error must stay None"
+    );
 }
 
 // ─── layer 3: rendered AIR text ─────────────────────────────────────────
