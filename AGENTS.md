@@ -250,7 +250,8 @@ array consumable by agents/tooling. Unknown kinds exit code 2 with the supported
 stderr.
 
 This is the oracle surface — `check` is the gate, `observe` is the survey, `query` is the
-lookup. None of the three loads `.locus/lock.json`; they all reuse the AIR scan path.
+lookup. `query` is lockfile-free and runs over the AIR scan only; `check` and `observe`
+both load `.locus/lock.json` (for rule policy and declarations respectively).
 
 ## Implementation roadmap
 

@@ -6,6 +6,10 @@ fn sample_fixture() -> std::path::PathBuf {
     std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/sample-crate")
 }
 
+fn markers_fixture() -> std::path::PathBuf {
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/markers-crate")
+}
+
 #[test]
 fn query_canonical_finds_ot_canonical_hints() {
     let bin = env!("CARGO_BIN_EXE_locus");
@@ -114,4 +118,58 @@ fn query_json_output_parses() {
     assert!(first.get("path").is_some());
     assert!(first.get("line").is_some());
     assert_eq!(first["kind"], "canonical");
+}
+
+/// Positive coverage for the `query_fact` / `locate_fact` path. Uses the
+/// markers-crate fixture which has `// locus: fact hot-path` annotations
+/// promoted to `AirFact` entries by the markers loader. Without this
+/// test, every fact-derived kind is only covered indirectly by the
+/// kebab→FactKind mapping unit test.
+#[test]
+fn query_hot_path_finds_marker_fact() {
+    let bin = env!("CARGO_BIN_EXE_locus");
+    let assert = Command::new(bin)
+        .arg("query")
+        .arg("hot-path")
+        .arg("--workspace")
+        .arg(markers_fixture())
+        .assert()
+        .success();
+    let out = String::from_utf8_lossy(&assert.get_output().stdout).into_owned();
+    assert!(out.contains("hot-path"), "header missing; out: {out}");
+    assert!(
+        out.contains("markers_crate::frame_step"),
+        "expected the marker-annotated symbol; out: {out}"
+    );
+    assert!(
+        !out.contains("no matches detected"),
+        "expected at least one row; out: {out}"
+    );
+}
+
+/// JSON-mode coverage of the fact-derived path: the row must carry
+/// `source` (loader name) and `evidence` fields, distinguishing it from
+/// hint-derived rows.
+#[test]
+fn query_hot_path_json_includes_source_field() {
+    let bin = env!("CARGO_BIN_EXE_locus");
+    let assert = Command::new(bin)
+        .arg("query")
+        .arg("hot-path")
+        .arg("--workspace")
+        .arg(markers_fixture())
+        .arg("--json")
+        .assert()
+        .success();
+    let out = String::from_utf8_lossy(&assert.get_output().stdout).into_owned();
+    let parsed: serde_json::Value =
+        serde_json::from_str(&out).unwrap_or_else(|e| panic!("not valid JSON: {e}\nout: {out}"));
+    let arr = parsed.as_array().expect("expected array");
+    assert!(!arr.is_empty(), "expected ≥1 row; got: {out}");
+    let first = &arr[0];
+    assert_eq!(first["kind"], "hot-path");
+    assert!(
+        first.get("source").is_some(),
+        "fact rows must carry a `source` field"
+    );
 }
