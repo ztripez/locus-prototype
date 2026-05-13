@@ -2,13 +2,12 @@
 //! findings, unknown concept ids emit one Advisory, and finding-source
 //! mismatch (unregistered policy id) produces a bypass.
 
-use super::super::RuleFinding;
 use super::{governance_code_concept, policy_concept, policy_finding_with_code, run_with};
 use crate::diagnostics::Severity;
 use crate::governance::arch::{
     ArchDeclaration, ArchLoadOutcome, ConceptDeclaration, ConceptEnforcement,
 };
-use crate::governance::finding::FindingStore;
+use crate::governance::finding::{FindingStore, RuleFinding};
 use crate::governance::registry::{ParadigmRegistry, PolicyRegistry, RuleRegistry};
 
 #[test]
