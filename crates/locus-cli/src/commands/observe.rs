@@ -85,12 +85,8 @@ fn render_top_level_modules<W: Write>(
     Ok(())
 }
 
-fn render_concept_clusters<W: Write>(
-    out: &mut W,
-    air: &locus_air::AirWorkspace,
-) -> io::Result<()> {
-    let mut clusters =
-        locus_core::paradigms::one_truth::infer::cluster_concepts(air);
+fn render_concept_clusters<W: Write>(out: &mut W, air: &locus_air::AirWorkspace) -> io::Result<()> {
+    let mut clusters = locus_core::paradigms::one_truth::infer::cluster_concepts(air);
     // Sort by member count descending, then by stem for determinism.
     clusters.sort_by(|a, b| {
         b.members
@@ -169,10 +165,7 @@ fn render_layers<W: Write>(out: &mut W, air: &locus_air::AirWorkspace) -> io::Re
     Ok(())
 }
 
-fn render_largest_modules<W: Write>(
-    out: &mut W,
-    air: &locus_air::AirWorkspace,
-) -> io::Result<()> {
+fn render_largest_modules<W: Write>(out: &mut W, air: &locus_air::AirWorkspace) -> io::Result<()> {
     let mut files: Vec<(&str, u32)> = Vec::new();
     for pkg in &air.packages {
         for file in &pkg.files {
@@ -193,10 +186,7 @@ fn render_largest_modules<W: Write>(
     Ok(())
 }
 
-fn render_crate_edges<W: Write>(
-    out: &mut W,
-    air: &locus_air::AirWorkspace,
-) -> io::Result<()> {
+fn render_crate_edges<W: Write>(out: &mut W, air: &locus_air::AirWorkspace) -> io::Result<()> {
     // Restrict to workspace-internal edges. The underlying
     // `collect_crate_edges` keys on first-segment of import paths, which on
     // real codebases includes external crates (`std`, `bevy`, `serde`, ...)
@@ -211,8 +201,7 @@ fn render_crate_edges<W: Write>(
         .iter()
         .map(|pkg| pkg.name.replace('-', "_"))
         .collect();
-    let edges =
-        locus_core::paradigms::dependency_graph::collect_crate_edges(air);
+    let edges = locus_core::paradigms::dependency_graph::collect_crate_edges(air);
     writeln!(out)?;
     writeln!(out, "Cross-crate edges (workspace-internal):")?;
     let internal: Vec<&(String, String)> = edges
