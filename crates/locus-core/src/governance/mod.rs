@@ -26,7 +26,9 @@ pub mod policy;
 pub mod registry;
 pub mod rule;
 
-pub use arch::{ARCH_RELATIVE_PATH, ArchDeclaration, ArchLoadOutcome, ConceptDeclaration};
+pub use arch::{
+    ARCH_RELATIVE_PATH, ArchDeclaration, ArchLoadOutcome, ConceptDeclaration, ConceptEnforcement,
+};
 pub use decision::{Decision, DecisionStatus, SeverityChange};
 pub use evidence::{Confidence, Evidence, LegacyEvidence};
 pub use finding::{FindingSource, FindingStore, RuleFinding};

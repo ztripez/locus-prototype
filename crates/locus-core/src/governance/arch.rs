@@ -41,6 +41,32 @@ pub struct ConceptDeclaration {
     /// the source of truth and the registry are the same
     /// (`governance-code`), repeat the name.
     pub registry: String,
+    /// Whether bypass findings for this concept have gating teeth.
+    /// Defaults to `Advisory` — the post-#100 MVP behavior. Set to
+    /// `Enforced` (per #99) when the concept's source-of-truth
+    /// contract is firm and bypasses must block CI under
+    /// `--agent-strict`.
+    #[serde(default)]
+    pub enforcement: ConceptEnforcement,
+}
+
+/// Per-concept enforcement mode: whether `LOCUS005` bypass findings
+/// carry gating severity (`Enforced`) or remain pure guide signal
+/// (`Advisory`). Per-concept so onboarding can graduate concept-by-concept.
+///
+/// See `docs/superpowers/specs/2026-05-11-governance-spine-design.md`
+/// and issue #99.
+#[derive(Debug, Clone, Copy, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum ConceptEnforcement {
+    /// Bypasses surface as LOCUS005 Advisory findings — visible but
+    /// not a gate. Default for new declarations.
+    #[default]
+    Advisory,
+    /// Bypasses surface as LOCUS005 Warning findings, elevated to
+    /// Fatal under `--agent-strict`. Use when a concept's
+    /// source-of-truth contract is firm and bypasses must block CI.
+    Enforced,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -218,6 +244,96 @@ mod tests {
                 );
             }
             other => panic!("expected Present; got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn enforcement_defaults_to_advisory_when_field_omitted() {
+        // Backward compat for arch.json files that pre-date #99: a
+        // concept without an `enforcement` field still parses, and
+        // enforcement defaults to Advisory (the post-#100 behavior).
+        let tmp = tempfile::tempdir().unwrap();
+        write_arch(
+            tmp.path(),
+            r#"{
+                "policies": [],
+                "concepts": [
+                    {
+                        "id": "rule",
+                        "source_of_truth": "RuleDefinition",
+                        "registry": "RuleRegistry"
+                    }
+                ]
+            }"#,
+        );
+        match ArchDeclaration::load(tmp.path()) {
+            ArchLoadOutcome::Present(decl) => {
+                assert_eq!(decl.concepts.len(), 1);
+                assert_eq!(decl.concepts[0].enforcement, ConceptEnforcement::Advisory);
+            }
+            other => panic!("expected Present; got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_explicit_advisory_and_enforced_modes() {
+        let tmp = tempfile::tempdir().unwrap();
+        write_arch(
+            tmp.path(),
+            r#"{
+                "policies": [],
+                "concepts": [
+                    {
+                        "id": "rule",
+                        "source_of_truth": "RuleDefinition",
+                        "registry": "RuleRegistry",
+                        "enforcement": "advisory"
+                    },
+                    {
+                        "id": "paradigm",
+                        "source_of_truth": "ParadigmDefinition",
+                        "registry": "ParadigmRegistry",
+                        "enforcement": "enforced"
+                    }
+                ]
+            }"#,
+        );
+        match ArchDeclaration::load(tmp.path()) {
+            ArchLoadOutcome::Present(decl) => {
+                assert_eq!(decl.concepts[0].enforcement, ConceptEnforcement::Advisory);
+                assert_eq!(decl.concepts[1].enforcement, ConceptEnforcement::Enforced);
+            }
+            other => panic!("expected Present; got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn rejects_malformed_enforcement_value() {
+        // An unknown enforcement string should produce Invalid, not
+        // silently fall back to Advisory.
+        let tmp = tempfile::tempdir().unwrap();
+        write_arch(
+            tmp.path(),
+            r#"{
+                "policies": [],
+                "concepts": [
+                    {
+                        "id": "rule",
+                        "source_of_truth": "RuleDefinition",
+                        "registry": "RuleRegistry",
+                        "enforcement": "bogus"
+                    }
+                ]
+            }"#,
+        );
+        match ArchDeclaration::load(tmp.path()) {
+            ArchLoadOutcome::Invalid(msg) => {
+                assert!(
+                    !msg.is_empty(),
+                    "Invalid variant should carry a non-empty error string"
+                );
+            }
+            other => panic!("expected Invalid for malformed enforcement; got {other:?}"),
         }
     }
 }
