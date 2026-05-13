@@ -2,11 +2,24 @@ use std::io::{self, BufWriter, Write};
 use std::path::PathBuf;
 
 use anyhow::{Context, Result};
-use locus_core::{
-    CheckMode, Diagnostic, Lockfile, Severity, apply_exceptions, governance, today_utc,
-};
+use locus_core::governance::Decision;
+use locus_core::{CheckMode, Diagnostic, Lockfile, apply_exceptions, governance, today_utc};
+use locus_report::{DecisionMetadata, DecisionRecord};
 
 use crate::diff;
+
+// locus: ot boundary cli.check cli
+#[derive(clap::ValueEnum, Clone, Debug, Default, PartialEq, Eq)]
+pub enum OutputFormat {
+    /// Human-readable per-diagnostic blocks plus a severity summary.
+    #[default]
+    Text,
+    /// Stable JSON shape (`locus_report::json`). Schema-versioned.
+    Json,
+    /// SARIF v2.1.0 (`locus_report::sarif`). Suitable for GitHub
+    /// code-scanning and other static-analysis ingest pipelines.
+    Sarif,
+}
 
 // locus: ot boundary cli.check cli
 #[derive(clap::Args, Debug)]
@@ -17,9 +30,12 @@ pub struct CheckArgs {
     /// Treat warnings as fatal. Use this for LLM-generated patches.
     #[arg(long)]
     pub agent_strict: bool,
-    /// Emit diagnostics as JSON instead of human-readable text.
-    #[arg(long)]
-    pub json: bool,
+    /// Output format. `text` for humans, `json` for tooling, `sarif`
+    /// for CI ingest (e.g. GitHub code-scanning). SARIF and JSON
+    /// represent the final policy decisions, not raw rule findings —
+    /// see issue #29.
+    #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
+    pub format: OutputFormat,
     /// Filter diagnostics to files modified since the baseline ref.
     /// Combines tracked changes between baseline and HEAD, working-tree
     /// changes, and untracked-but-not-ignored files. Useful in CI to
@@ -65,41 +81,103 @@ pub fn run(args: CheckArgs) -> Result<()> {
         CheckMode::Human
     };
 
-    // Run the governance pipeline. Returns diagnostics already
-    // materialized through DefaultPassThroughPolicy — byte-identical to
-    // the prior `for paradigm in registry() { paradigm.check(...) }` loop
-    // under P1's empty rule registry.
-    //
-    // `run_with_workspace_root` loads `.locus/arch.json` from the workspace
-    // and threads the outcome into `RegistryCoherencePolicy` (LOCUS004).
-    let governance_out =
-        governance::run_with_workspace_root(&air, &lockfile, mode, &args.workspace);
-    let all = governance_out.diagnostics;
+    let mut records = governance_records(&air, &lockfile, mode, &args.workspace);
 
     // Apply exceptions BEFORE Policy Guard — PG must not be suppressible by
     // the same lockfile it audits. See #44.
     let today = today_utc();
-    let all = apply_exceptions(all, &air, &lockfile, Some(&today));
+    records = apply_exceptions_to_records(records, &air, &lockfile, &today);
 
     // --changed filter is applied before PG so PG diagnostics bypass it
     // (PG is global; it must not be hidden by a PR-scoped diff filter).
-    let mut all = apply_changed_filter(all, &args)?;
+    records = apply_changed_filter_records(records, &args)?;
 
     // Policy Guard appended last: after apply_exceptions and --changed.
-    append_policy_guard(&mut all, &lockfile, &args, mode)?;
+    append_policy_guard_records(&mut records, &lockfile, &args, mode)?;
 
-    emit_output(&all, args.json)?;
+    emit_output(&records, &args.format)?;
 
-    let any_fatal = all.iter().any(|d| d.severity.is_fatal());
+    let any_fatal = records.iter().any(|r| r.diagnostic.severity.is_fatal());
     if any_fatal {
         std::process::exit(1);
     }
     Ok(())
 }
 
-fn apply_changed_filter(all: Vec<Diagnostic>, args: &CheckArgs) -> Result<Vec<Diagnostic>> {
+/// Run the governance pipeline and pair each emitted diagnostic with
+/// the decision metadata that produced it. `run_with_workspace_root`
+/// loads `.locus/arch.json` from the workspace and threads the outcome
+/// into `RegistryCoherencePolicy` (LOCUS004). Output is byte-identical
+/// to the legacy paradigm loop under `DefaultPassThroughPolicy`; the
+/// extra metadata only surfaces in `--format json|sarif`.
+fn governance_records(
+    air: &locus_air::AirWorkspace,
+    lockfile: &Lockfile,
+    mode: CheckMode,
+    workspace_root: &std::path::Path,
+) -> Vec<DecisionRecord> {
+    let out = governance::run_with_workspace_root(air, lockfile, mode, workspace_root);
+    out.diagnostics
+        .iter()
+        .zip(&out.emitted_decisions)
+        .map(|(diag, dec)| DecisionRecord::with_decision(diag.clone(), decision_to_metadata(dec)))
+        .collect()
+}
+
+fn decision_to_metadata(d: &Decision) -> DecisionMetadata {
+    DecisionMetadata {
+        policy_id: d.policy.as_str().to_string(),
+        status: d.status.clone(),
+        severity_change: d.severity_change.clone(),
+        rationale: d.rationale.clone(),
+    }
+}
+
+/// Re-apply lockfile exceptions to `(diagnostic, decision?)` records.
+/// `apply_exceptions` operates on plain `Diagnostic`s; we strip the
+/// decision metadata to call it, then re-pair survivors by their
+/// `(rule_id, span)` key. Filtered-out diagnostics drop their pairing
+/// naturally. Expired-exception LOCUS001 warnings inserted by
+/// `apply_exceptions` are wrapped without decision metadata since they
+/// don't flow through the governance pipeline today.
+fn apply_exceptions_to_records(
+    records: Vec<DecisionRecord>,
+    air: &locus_air::AirWorkspace,
+    lockfile: &Lockfile,
+    today: &str,
+) -> Vec<DecisionRecord> {
+    use std::collections::HashMap;
+    type Key = (String, String, u32);
+    let pre: Vec<Diagnostic> = records.iter().map(|r| r.diagnostic.clone()).collect();
+    let mut decision_by_key: HashMap<Key, DecisionMetadata> = HashMap::new();
+    for r in &records {
+        if let Some(dec) = &r.decision {
+            let key = (
+                r.diagnostic.rule_id.clone(),
+                r.diagnostic.span.file.clone(),
+                r.diagnostic.span.line_start,
+            );
+            decision_by_key.entry(key).or_insert_with(|| dec.clone());
+        }
+    }
+    let post = apply_exceptions(pre, air, lockfile, Some(today));
+    post.into_iter()
+        .map(|d| {
+            let key = (d.rule_id.clone(), d.span.file.clone(), d.span.line_start);
+            match decision_by_key.get(&key) {
+                Some(dec) => DecisionRecord::with_decision(d, dec.clone()),
+                None => DecisionRecord::from_diagnostic(d),
+            }
+        })
+        .collect()
+}
+
+fn apply_changed_filter_records(
+    records: Vec<DecisionRecord>,
+    args: &CheckArgs,
+) -> Result<Vec<DecisionRecord>> {
     if !args.changed {
-        return Ok(all);
+        return Ok(records);
     }
     let workspace_abs = args
         .workspace
@@ -112,18 +190,18 @@ fn apply_changed_filter(all: Vec<Diagnostic>, args: &CheckArgs) -> Result<Vec<Di
                 workspace_abs.display()
             )
         })?;
-    Ok(all
+    Ok(records
         .into_iter()
-        .filter(|d| {
+        .filter(|r| {
             changed
                 .iter()
-                .any(|rel| diff::paths_match(&d.span.file, rel, &workspace_abs))
+                .any(|rel| diff::paths_match(&r.diagnostic.span.file, rel, &workspace_abs))
         })
         .collect())
 }
 
-fn append_policy_guard(
-    all: &mut Vec<Diagnostic>,
+fn append_policy_guard_records(
+    records: &mut Vec<DecisionRecord>,
     lockfile: &Lockfile,
     args: &CheckArgs,
     mode: CheckMode,
@@ -139,7 +217,7 @@ fn append_policy_guard(
     if args.allow_policy_calibration && !pg.is_empty() {
         report_policy_calibration(&pg)?;
     }
-    all.extend(pg);
+    records.extend(pg.into_iter().map(DecisionRecord::from_diagnostic));
     Ok(())
 }
 
@@ -167,61 +245,14 @@ fn report_policy_calibration(pg: &[Diagnostic]) -> Result<()> {
     Ok(())
 }
 
-pub fn emit_output(all: &[Diagnostic], json: bool) -> Result<()> {
+pub fn emit_output(records: &[DecisionRecord], format: &OutputFormat) -> Result<()> {
     let stdout = io::stdout();
     let mut out = BufWriter::new(stdout.lock());
-    if json {
-        serde_json::to_writer_pretty(&mut out, all)?;
-        writeln!(out)?;
-    } else {
-        report_text(&mut out, all)?;
+    match format {
+        OutputFormat::Text => locus_report::text::write(&mut out, records)?,
+        OutputFormat::Json => locus_report::json::write(&mut out, records)?,
+        OutputFormat::Sarif => locus_report::sarif::write(&mut out, records)?,
     }
     out.flush()?;
-    Ok(())
-}
-
-pub fn report_text<W: Write>(out: &mut W, diags: &[Diagnostic]) -> io::Result<()> {
-    if diags.is_empty() {
-        writeln!(out, "no diagnostics — workspace is clean.")?;
-        return Ok(());
-    }
-    let mut fatal = 0usize;
-    let mut warning = 0usize;
-    let mut advisory = 0usize;
-    for d in diags {
-        let label = match d.severity {
-            Severity::Fatal => {
-                fatal += 1;
-                "error"
-            }
-            Severity::Warning => {
-                warning += 1;
-                "warning"
-            }
-            Severity::Advisory => {
-                advisory += 1;
-                "info"
-            }
-        };
-        writeln!(
-            out,
-            "{label}[{}]: {}\n  --> {}:{}",
-            d.rule_id, d.message, d.span.file, d.span.line_start
-        )?;
-        if let Some(c) = &d.concept {
-            writeln!(out, "  concept: {c}")?;
-        }
-        for reason in &d.why {
-            writeln!(out, "  - {reason}")?;
-        }
-        if let Some(fix) = &d.suggested_fix {
-            writeln!(out, "  fix: {fix}")?;
-        }
-        writeln!(out)?;
-    }
-    writeln!(
-        out,
-        "summary: {fatal} error(s), {warning} warning(s), {advisory} advisory."
-    )?;
     Ok(())
 }

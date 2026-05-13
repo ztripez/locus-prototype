@@ -95,7 +95,16 @@
         {
           "module": "locus_report::*",
           "name": "locus_report",
-          "public_api": []
+          "public_api": [
+            "locus_report::DecisionRecord",
+            "locus_report::DecisionMetadata",
+            "locus_report::TOOL_NAME",
+            "locus_report::TOOL_VERSION",
+            "locus_report::TOOL_INFORMATION_URI",
+            "locus_report::text::*",
+            "locus_report::json::*",
+            "locus_report::sarif::*"
+          ]
         }
       ],
       "forbidden_edges": [],
