@@ -238,7 +238,7 @@ pub(super) fn matches_symbol_pattern(value: &str, pattern: &str) -> bool {
 }
 
 #[cfg(test)]
-mod prefer_higher_provenance_tests {
+mod tests {
     use super::*;
     use locus_air::{AirConversion, AirItem, AirSpan, ConversionMechanism};
 
