@@ -13,8 +13,8 @@ use assert_cmd::Command;
 #[test]
 fn observe_sample_crate_succeeds() {
     let bin = env!("CARGO_BIN_EXE_locus");
-    let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../tests/fixtures/sample-crate");
+    let src =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/sample-crate");
 
     let assert = Command::new(bin)
         .arg("observe")
