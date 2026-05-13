@@ -6,16 +6,18 @@ use std::collections::BTreeMap;
 
 use locus_air::{AirConversion, AirItem, AirSpan, AirWorkspace, FactProvenance};
 
-/// Deduplicate conversions by `(file, line_start, line_end, mechanism)`,
-/// keeping the highest-rank [`FactProvenance`] when more than one record
-/// covers the same impl block.
+/// Deduplicate conversions that point at the same impl block, keeping
+/// the highest-rank [`FactProvenance`].
 ///
-/// In practice this matters once a semantic adapter (e.g. the future
-/// `locus-rust-semantic` `RustAnalyzerBackend`) overlays
-/// `SemanticResolved` `AirConversion` entries on top of the syntactic
-/// adapter's `Heuristic` emissions. The OT converter rules consume the
-/// returned slice so semantic facts win without OT having to know which
-/// adapter produced them.
+/// Two records are considered "the same impl block" when they share
+/// `(file, line_start, line_end, mechanism, from, to)`. The endpoint
+/// types are part of the key so that valid Rust like
+/// `impl From<A> for B {} impl From<C> for D {}` on one line is NOT
+/// wrongly collapsed (Codex P1 on #115). This means a semantic backend
+/// that wants its records to overlay on top of the syntactic adapter's
+/// must emit matching `from` / `to` strings for the same impl — see
+/// `docs/superpowers/specs/2026-05-13-rustc-semantic-spike.md` for the
+/// phase-2 design discussion on canonical-path normalisation.
 ///
 /// `None` provenance is treated as `Heuristic` for ranking — that's the
 /// default backwards-compatible interpretation for v13 wire data.
@@ -32,6 +34,8 @@ pub(crate) fn prefer_higher_provenance<'a>(
             line_start: c.span.line_start,
             line_end: c.span.line_end,
             mechanism: format!("{:?}", c.mechanism),
+            from: c.from.clone(),
+            to: c.to.clone(),
         };
         let cur_rank = effective_rank(c.provenance.as_ref());
         let keep = match best.get(&key) {
@@ -51,6 +55,8 @@ struct ConvKey {
     line_start: u32,
     line_end: u32,
     mechanism: String,
+    from: String,
+    to: String,
 }
 
 fn effective_rank(p: Option<&FactProvenance>) -> u8 {
@@ -228,5 +234,79 @@ pub(super) fn matches_symbol_pattern(value: &str, pattern: &str) -> bool {
         (true, false) => value == stripped || value.ends_with(&format!("::{stripped}")),
         (false, true) => value == stripped || value.starts_with(&format!("{stripped}::")),
         (false, false) => pattern == value,
+    }
+}
+
+#[cfg(test)]
+mod prefer_higher_provenance_tests {
+    use super::*;
+    use locus_air::{AirConversion, AirItem, AirSpan, ConversionMechanism};
+
+    fn conv(file: &str, line: u32, from: &str, to: &str, p: Option<FactProvenance>) -> AirItem {
+        AirItem::Conversion(AirConversion {
+            from: from.into(),
+            to: to.into(),
+            mechanism: ConversionMechanism::InfallibleAdapter,
+            symbol: format!("{from}::to_{to}"),
+            span: AirSpan::new(file, line, line),
+            provenance: p,
+        })
+    }
+
+    #[test]
+    fn semantic_resolved_wins_over_heuristic_on_same_impl() {
+        let items = vec![
+            conv("t.rs", 5, "Foo", "Bar", Some(FactProvenance::Heuristic)),
+            conv(
+                "t.rs",
+                5,
+                "Foo",
+                "Bar",
+                Some(FactProvenance::SemanticResolved {
+                    backend: locus_air::SemanticBackend::RustAnalyzer,
+                }),
+            ),
+        ];
+        let kept = prefer_higher_provenance(&items);
+        assert_eq!(kept.len(), 1, "same-impl records must dedupe; got {kept:?}");
+        assert!(
+            matches!(
+                kept[0].provenance,
+                Some(FactProvenance::SemanticResolved { .. })
+            ),
+            "semantic-resolved should win; got {:?}",
+            kept[0].provenance,
+        );
+    }
+
+    #[test]
+    fn two_distinct_impls_on_same_line_are_not_collapsed() {
+        // Regression for the Codex P1 on #115: `impl From<A> for B {}
+        // impl From<C> for D {}` on one line emits two AirConversion
+        // records with the same `(file, line, mechanism)`. Including
+        // the endpoint types in the dedup key keeps them separate.
+        let items = vec![
+            conv("t.rs", 5, "A", "B", Some(FactProvenance::Heuristic)),
+            conv("t.rs", 5, "C", "D", Some(FactProvenance::Heuristic)),
+        ];
+        let kept = prefer_higher_provenance(&items);
+        assert_eq!(
+            kept.len(),
+            2,
+            "distinct conversions on the same line must NOT be collapsed; got {kept:?}",
+        );
+    }
+
+    #[test]
+    fn none_provenance_is_treated_as_heuristic_for_ranking() {
+        // Either record may win — both are rank 0 — but only one
+        // survives. The "v13 wire data deserialises as None" contract
+        // is what this pins.
+        let items = vec![
+            conv("t.rs", 5, "Foo", "Bar", None),
+            conv("t.rs", 5, "Foo", "Bar", Some(FactProvenance::Heuristic)),
+        ];
+        let kept = prefer_higher_provenance(&items);
+        assert_eq!(kept.len(), 1);
     }
 }
