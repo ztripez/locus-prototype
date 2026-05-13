@@ -9,18 +9,29 @@ use locus_air::{AirConversion, AirItem, AirSpan, AirWorkspace, FactProvenance};
 /// Deduplicate conversions that point at the same impl block, keeping
 /// the highest-rank [`FactProvenance`].
 ///
-/// Two records are considered "the same impl block" when they share
-/// `(file, line_start, line_end, mechanism, from, to)`. The endpoint
-/// types are part of the key so that valid Rust like
-/// `impl From<A> for B {} impl From<C> for D {}` on one line is NOT
-/// wrongly collapsed (Codex P1 on #115). This means a semantic backend
-/// that wants its records to overlay on top of the syntactic adapter's
-/// must emit matching `from` / `to` strings for the same impl — see
-/// `docs/superpowers/specs/2026-05-13-rustc-semantic-spike.md` for the
-/// phase-2 design discussion on canonical-path normalisation.
+/// Two records are "the same impl block" when they share
+/// `(file, line_start, line_end, mechanism, normalize(from), normalize(to))`
+/// where `normalize` strips module paths to the trailing identifier
+/// (e.g. `crate::dto::UserDto` → `UserDto`). Two reasons for that:
 ///
-/// `None` provenance is treated as `Heuristic` for ranking — that's the
-/// default backwards-compatible interpretation for v13 wire data.
+/// 1. **Codex P1 on #115:** distinct impls like `impl From<A> for B {}
+///    impl From<C> for D {}` sharing a line are NOT collapsed — their
+///    normalized endpoints differ.
+/// 2. **Spike contract (#111):** the semantic adapter emits fully-
+///    qualified canonical-path endpoints (per `ResolvedConversion`'s
+///    doc), and we want those records to overlay on the syntactic
+///    adapter's bare-name records for the same impl. The semantic
+///    backend should not have to degrade its fact shape to overlay.
+///
+/// **Known limitation:** generic endpoints with `::` *inside* the
+/// generic parameters (`Vec<crate::path::X>` vs `Vec<X>`) do not
+/// normalize to the same string today. Real-world conversion endpoints
+/// are usually concrete types, so this is a recorded edge case rather
+/// than a blocker — see
+/// `docs/superpowers/specs/2026-05-13-rustc-semantic-spike.md`.
+///
+/// `None` provenance is treated as `Heuristic` for ranking — the
+/// backwards-compatible interpretation for v13 wire data.
 pub(crate) fn prefer_higher_provenance<'a>(
     items: impl IntoIterator<Item = &'a AirItem>,
 ) -> Vec<&'a AirConversion> {
@@ -29,13 +40,18 @@ pub(crate) fn prefer_higher_provenance<'a>(
         let AirItem::Conversion(c) = item else {
             continue;
         };
+        // Endpoint normalisation uses the same `short_name` rule the
+        // rest of OT uses (last `::` segment) — see the helper below.
+        // Concrete types collapse to their bare name; generics carrying
+        // canonical paths inside parameters are a known limitation
+        // (see spike spec note).
         let key = ConvKey {
             file: c.span.file.clone(),
             line_start: c.span.line_start,
             line_end: c.span.line_end,
             mechanism: format!("{:?}", c.mechanism),
-            from: c.from.clone(),
-            to: c.to.clone(),
+            from_normalized: short_name(&c.from).to_string(),
+            to_normalized: short_name(&c.to).to_string(),
         };
         let cur_rank = effective_rank(c.provenance.as_ref());
         let keep = match best.get(&key) {
@@ -55,8 +71,8 @@ struct ConvKey {
     line_start: u32,
     line_end: u32,
     mechanism: String,
-    from: String,
-    to: String,
+    from_normalized: String,
+    to_normalized: String,
 }
 
 fn effective_rank(p: Option<&FactProvenance>) -> u8 {
@@ -283,8 +299,8 @@ mod tests {
     fn two_distinct_impls_on_same_line_are_not_collapsed() {
         // Regression for the Codex P1 on #115: `impl From<A> for B {}
         // impl From<C> for D {}` on one line emits two AirConversion
-        // records with the same `(file, line, mechanism)`. Including
-        // the endpoint types in the dedup key keeps them separate.
+        // records with the same `(file, line, mechanism)`. Distinct
+        // endpoint identifiers in the normalized key keep them apart.
         let items = vec![
             conv("t.rs", 5, "A", "B", Some(FactProvenance::Heuristic)),
             conv("t.rs", 5, "C", "D", Some(FactProvenance::Heuristic)),
@@ -295,6 +311,52 @@ mod tests {
             2,
             "distinct conversions on the same line must NOT be collapsed; got {kept:?}",
         );
+    }
+
+    #[test]
+    fn canonical_path_semantic_record_overlays_bare_name_syntactic() {
+        // Spike-contract pin (#111): the semantic adapter emits fully-
+        // qualified endpoints; the syntactic adapter emits bare names.
+        // Both must collapse to one record (semantic wins) without the
+        // semantic backend degrading its fact shape.
+        let items = vec![
+            // syntactic: bare names, as `locus-rust` emits today
+            conv(
+                "t.rs",
+                5,
+                "UserDto",
+                "User",
+                Some(FactProvenance::Heuristic),
+            ),
+            // semantic: fully-qualified canonical paths
+            conv(
+                "t.rs",
+                5,
+                "crate::dto::UserDto",
+                "crate::identity::User",
+                Some(FactProvenance::SemanticResolved {
+                    backend: locus_air::SemanticBackend::RustAnalyzer,
+                }),
+            ),
+        ];
+        let kept = prefer_higher_provenance(&items);
+        assert_eq!(
+            kept.len(),
+            1,
+            "canonical-path semantic record should overlay bare-name \
+             syntactic record on the same impl; got {kept:?}",
+        );
+        assert!(
+            matches!(
+                kept[0].provenance,
+                Some(FactProvenance::SemanticResolved { .. })
+            ),
+            "the semantic record should win",
+        );
+        // The surviving record keeps its canonical-path endpoints —
+        // the semantic backend's fact shape is preserved.
+        assert_eq!(kept[0].from, "crate::dto::UserDto");
+        assert_eq!(kept[0].to, "crate::identity::User");
     }
 
     #[test]

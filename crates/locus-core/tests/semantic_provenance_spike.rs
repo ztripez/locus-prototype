@@ -40,17 +40,15 @@ fn syntactic_conversion(file: &str, line: u32) -> AirItem {
     })
 }
 
-/// What a semantic backend would emit for the same impl block. Uses
-/// the same bare type names as the syntactic record so it dedupes on
-/// `(file, line, mechanism, from, to)` per the helper's contract.
-/// Phase 2 will design canonical-path normalisation so a semantic
-/// backend emitting `crate::dto::UserDto` can still overlay on a
-/// syntactic `UserDto` record — see
-/// `docs/superpowers/specs/2026-05-13-rustc-semantic-spike.md`.
+/// What a semantic backend emits for the same impl block: fully-
+/// qualified canonical type paths and `SemanticResolved` provenance.
+/// `prefer_higher_provenance` normalises endpoints by trailing
+/// identifier so the canonical paths overlay on the syntactic
+/// adapter's bare-name emission for the same impl.
 fn semantic_conversion(file: &str, line: u32) -> ResolvedConversion {
     ResolvedConversion::new(
-        "UserDto",
-        "User",
+        "crate::dto::UserDto",
+        "crate::identity::User",
         ConversionMechanism::FallibleAdapter,
         "crate::dto::impl TryFrom<UserDto> for User",
         AirSpan::new(file, line, line),
@@ -126,8 +124,8 @@ fn test_backend_emits_resolved_conversion() {
             backend: SemanticBackend::RustAnalyzer
         }),
     );
-    assert_eq!(facts[0].air.from, "UserDto");
-    assert_eq!(facts[0].air.to, "User");
+    assert_eq!(facts[0].air.from, "crate::dto::UserDto");
+    assert_eq!(facts[0].air.to, "crate::identity::User");
 }
 
 #[test]

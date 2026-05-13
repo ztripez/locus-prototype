@@ -42,9 +42,23 @@ the heavyweight `ra-ap-*` backend muddying the discussion.
 
 4. **OT consumer preference** (`crates/locus-core/src/paradigms/one_truth/`)
    - New `helpers::prefer_higher_provenance` deduplicates conversions
-     by `(file, line_start, line_end, mechanism)`, keeping the highest-
-     rank `FactProvenance` when more than one record covers the same
-     impl block.
+     by `(file, line_start, line_end, mechanism, normalize(from),
+     normalize(to))`, keeping the highest-rank `FactProvenance` when
+     more than one record covers the same impl block.
+   - **Overlay contract**: `normalize` strips module paths to the
+     trailing identifier (`crate::dto::UserDto` → `UserDto`). This is
+     what lets the semantic backend emit fully-qualified canonical
+     endpoints (per `ResolvedConversion`'s contract) and have its
+     records overlay on top of the syntactic adapter's bare-name
+     emissions without the semantic backend degrading its fact shape.
+   - Distinct impls on the same line (`impl From<A> for B {} impl
+     From<C> for D {}`) are NOT collapsed because their normalized
+     endpoints differ — this is the Codex P1 regression from #115.
+   - **Known limitation**: generic endpoints carrying canonical paths
+     inside their parameters (`Vec<crate::path::X>` vs `Vec<X>`) do
+     NOT normalize to the same key today. Real-world conversion
+     endpoints are usually concrete types; phase 2 can revisit when
+     `RustAnalyzerBackend`'s actual emission shape is known.
    - `OT006` and `OT007` consume the helper instead of iterating
      `file.items` directly. With no semantic adapter integrated yet
      this is a no-op in practice (only one record per impl in today's
