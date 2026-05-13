@@ -36,6 +36,12 @@ pub struct CheckArgs {
     /// see issue #29.
     #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
     pub format: OutputFormat,
+    /// Deprecated alias for `--format json`. Hidden from `--help` and
+    /// scheduled for removal in a later release; kept now so pre-#29
+    /// CI scripts and editor integrations keep working. When set,
+    /// overrides `--format`.
+    #[arg(long, hide = true)]
+    pub json: bool,
     /// Filter diagnostics to files modified since the baseline ref.
     /// Combines tracked changes between baseline and HEAD, working-tree
     /// changes, and untracked-but-not-ignored files. Useful in CI to
@@ -95,7 +101,8 @@ pub fn run(args: CheckArgs) -> Result<()> {
     // Policy Guard appended last: after apply_exceptions and --changed.
     append_policy_guard_records(&mut records, &lockfile, &args, mode)?;
 
-    emit_output(&records, &args.format)?;
+    let format = resolve_format(&args);
+    emit_output(&records, &format)?;
 
     let any_fatal = records.iter().any(|r| r.diagnostic.severity.is_fatal());
     if any_fatal {
@@ -124,6 +131,18 @@ fn governance_records(
         .collect()
 }
 
+/// Resolve the effective output format. `--json` is a deprecated alias
+/// for `--format json` kept so pre-#29 CI scripts don't break; when
+/// set it overrides `--format`. Removal will be a deliberate
+/// follow-up after a deprecation cycle.
+fn resolve_format(args: &CheckArgs) -> OutputFormat {
+    if args.json {
+        OutputFormat::Json
+    } else {
+        args.format.clone()
+    }
+}
+
 fn decision_to_metadata(d: &Decision) -> DecisionMetadata {
     DecisionMetadata {
         policy_id: d.policy.as_str().to_string(),
@@ -134,42 +153,48 @@ fn decision_to_metadata(d: &Decision) -> DecisionMetadata {
 }
 
 /// Re-apply lockfile exceptions to `(diagnostic, decision?)` records.
-/// `apply_exceptions` operates on plain `Diagnostic`s; we strip the
-/// decision metadata to call it, then re-pair survivors by their
-/// `(rule_id, span)` key. Filtered-out diagnostics drop their pairing
-/// naturally. Expired-exception LOCUS001 warnings inserted by
-/// `apply_exceptions` are wrapped without decision metadata since they
-/// don't flow through the governance pipeline today.
+/// `apply_exceptions` operates on plain `Diagnostic`s, so we strip the
+/// decision metadata, call it, and re-pair survivors against the
+/// pre-filter list. Matching uses full-`Diagnostic` equality (rule_id +
+/// severity + span + concept + message + why + suggested_fix) walked in
+/// order so duplicate findings — same rule + span but a different
+/// underlying decision — can't have their metadata swapped, and
+/// freshly-synthesized LOCUS001 expired-exception warnings fall through
+/// as decision-free records. Survivors preserve input order
+/// (`apply_exceptions` only filters or appends; it doesn't reorder),
+/// so a one-pass parallel walk is sufficient.
 fn apply_exceptions_to_records(
     records: Vec<DecisionRecord>,
     air: &locus_air::AirWorkspace,
     lockfile: &Lockfile,
     today: &str,
 ) -> Vec<DecisionRecord> {
-    use std::collections::HashMap;
-    type Key = (String, String, u32);
-    let pre: Vec<Diagnostic> = records.iter().map(|r| r.diagnostic.clone()).collect();
-    let mut decision_by_key: HashMap<Key, DecisionMetadata> = HashMap::new();
-    for r in &records {
-        if let Some(dec) = &r.decision {
-            let key = (
-                r.diagnostic.rule_id.clone(),
-                r.diagnostic.span.file.clone(),
-                r.diagnostic.span.line_start,
-            );
-            decision_by_key.entry(key).or_insert_with(|| dec.clone());
-        }
-    }
-    let post = apply_exceptions(pre, air, lockfile, Some(today));
-    post.into_iter()
-        .map(|d| {
-            let key = (d.rule_id.clone(), d.span.file.clone(), d.span.line_start);
-            match decision_by_key.get(&key) {
-                Some(dec) => DecisionRecord::with_decision(d, dec.clone()),
-                None => DecisionRecord::from_diagnostic(d),
+    let mut pre: Vec<(Diagnostic, Option<DecisionMetadata>)> = records
+        .into_iter()
+        .map(|r| (r.diagnostic, r.decision))
+        .collect();
+    let pre_diagnostics: Vec<Diagnostic> = pre.iter().map(|(d, _)| d.clone()).collect();
+    let post = apply_exceptions(pre_diagnostics, air, lockfile, Some(today));
+
+    let mut cursor = 0usize;
+    let mut out = Vec::with_capacity(post.len());
+    for d in post {
+        let mut matched: Option<DecisionRecord> = None;
+        while cursor < pre.len() {
+            if pre[cursor].0 == d {
+                let meta = pre[cursor].1.take();
+                cursor += 1;
+                matched = Some(match meta {
+                    Some(m) => DecisionRecord::with_decision(d.clone(), m),
+                    None => DecisionRecord::from_diagnostic(d.clone()),
+                });
+                break;
             }
-        })
-        .collect()
+            cursor += 1;
+        }
+        out.push(matched.unwrap_or_else(|| DecisionRecord::from_diagnostic(d)));
+    }
+    out
 }
 
 fn apply_changed_filter_records(
@@ -255,4 +280,114 @@ pub fn emit_output(records: &[DecisionRecord], format: &OutputFormat) -> Result<
     }
     out.flush()?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use locus_air::{AirSpan, AirWorkspace};
+    use locus_core::Severity;
+    use locus_core::governance::{DecisionStatus, SeverityChange};
+
+    fn diag_at(rule_id: &str, line_start: u32, line_end: u32, message: &str) -> Diagnostic {
+        Diagnostic {
+            rule_id: rule_id.into(),
+            severity: Severity::Warning,
+            span: AirSpan::new("src/foo.rs", line_start, line_end),
+            concept: None,
+            message: message.into(),
+            why: Vec::new(),
+            suggested_fix: None,
+        }
+    }
+
+    fn meta(policy: &str) -> DecisionMetadata {
+        DecisionMetadata {
+            policy_id: policy.into(),
+            status: DecisionStatus::Active,
+            severity_change: SeverityChange::Unchanged,
+            rationale: Vec::new(),
+        }
+    }
+
+    /// Two diagnostics share `(rule_id, file, line_start)` but differ in
+    /// `line_end` + message. The pre-fix HashMap re-pair (keyed only on
+    /// `(rule_id, file, line_start)`) would smear one decision over both
+    /// records. The full-fingerprint walk must keep them straight.
+    #[test]
+    fn apply_exceptions_to_records_keeps_distinct_decisions_for_same_span_start() {
+        let a = diag_at("OT001", 10, 12, "first");
+        let b = diag_at("OT001", 10, 15, "second");
+        let records = vec![
+            DecisionRecord::with_decision(a, meta("alpha")),
+            DecisionRecord::with_decision(b, meta("beta")),
+        ];
+        let air = AirWorkspace::new(Vec::new());
+        let lf = Lockfile::empty();
+        // No exceptions or hints → every record survives in input order.
+        let post = apply_exceptions_to_records(records, &air, &lf, "2026-05-13");
+        assert_eq!(post.len(), 2);
+        assert_eq!(
+            post[0].decision.as_ref().unwrap().policy_id,
+            "alpha",
+            "first record must retain its own policy id"
+        );
+        assert_eq!(
+            post[1].decision.as_ref().unwrap().policy_id,
+            "beta",
+            "second record must retain its own policy id, not get smeared from the first"
+        );
+    }
+
+    /// Two diagnostics with fully-identical fingerprints (rare but
+    /// allowed when governance happens to emit twice). The walk should
+    /// pair each post-entry with its own pre-entry in order, not lose
+    /// any decision metadata.
+    #[test]
+    fn apply_exceptions_to_records_pairs_identical_diagnostics_in_order() {
+        let d = diag_at("CX001", 5, 6, "over budget");
+        let records = vec![
+            DecisionRecord::with_decision(d.clone(), meta("first")),
+            DecisionRecord::with_decision(d.clone(), meta("second")),
+        ];
+        let air = AirWorkspace::new(Vec::new());
+        let lf = Lockfile::empty();
+        let post = apply_exceptions_to_records(records, &air, &lf, "2026-05-13");
+        assert_eq!(post.len(), 2);
+        // For identical fingerprints we can only assert that each post
+        // record carries SOME decision metadata; metadata identity
+        // between the two is governance-level concern.
+        assert!(post[0].decision.is_some());
+        assert!(post[1].decision.is_some());
+    }
+
+    #[test]
+    fn resolve_format_prefers_deprecated_json_alias_over_format_flag() {
+        let args = CheckArgs {
+            workspace: ".".into(),
+            agent_strict: false,
+            format: OutputFormat::Text,
+            json: true,
+            changed: false,
+            baseline: None,
+            allow_policy_calibration: false,
+            allow_missing_policy_baseline: false,
+        };
+        assert_eq!(resolve_format(&args), OutputFormat::Json);
+    }
+
+    #[test]
+    fn resolve_format_falls_back_to_format_flag_when_json_unset() {
+        let args = CheckArgs {
+            workspace: ".".into(),
+            agent_strict: false,
+            format: OutputFormat::Sarif,
+            json: false,
+            changed: false,
+            baseline: None,
+            allow_policy_calibration: false,
+            allow_missing_policy_baseline: false,
+        };
+        assert_eq!(resolve_format(&args), OutputFormat::Sarif);
+    }
 }

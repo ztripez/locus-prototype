@@ -106,6 +106,47 @@ fn sarif_format_emits_v210_envelope() {
 }
 
 #[test]
+fn deprecated_json_flag_still_emits_stable_json() {
+    // `--json` is hidden from `--help` but kept as an alias so pre-#29
+    // CI scripts and editor integrations keep working. It must produce
+    // the same envelope as `--format json`.
+    let bin = env!("CARGO_BIN_EXE_locus");
+    let out = Command::new(bin)
+        .arg("check")
+        .arg("--workspace")
+        .arg(fixture_path())
+        .arg("--json")
+        .output()
+        .expect("invoke locus check");
+    let stdout = std::str::from_utf8(&out.stdout).expect("utf-8 stdout");
+    let v: Value =
+        serde_json::from_str(stdout).expect("--json alias must still produce valid JSON");
+    assert_eq!(v["schema_version"], 1);
+    assert_eq!(v["tool"]["name"], "Locus");
+    assert!(v["results"].is_array());
+}
+
+#[test]
+fn deprecated_json_flag_overrides_format_text() {
+    // When both `--json` and `--format text` are passed, the deprecated
+    // alias wins. Documented behaviour so old scripts that explicitly
+    // pass `--json` aren't surprised by a future addition of `--format`.
+    let bin = env!("CARGO_BIN_EXE_locus");
+    let out = Command::new(bin)
+        .arg("check")
+        .arg("--workspace")
+        .arg(fixture_path())
+        .arg("--json")
+        .arg("--format")
+        .arg("text")
+        .output()
+        .expect("invoke locus check");
+    let stdout = std::str::from_utf8(&out.stdout).expect("utf-8 stdout");
+    let _: Value = serde_json::from_str(stdout)
+        .expect("--json must override --format text and still produce JSON");
+}
+
+#[test]
 fn default_format_is_human_text() {
     // `--format` defaults to text — same output as the legacy human
     // mode. We assert the well-known summary line is present.
