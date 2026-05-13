@@ -40,8 +40,11 @@
 //!   `module_overrides[*].max_module_lines`,
 //!   `MO.overrides[*].max_public_types`).
 //! - [`PG002_OVERRIDE_ADDED`] — a new override exists in current that
-//!   wasn't in baseline. Fires regardless of metadata. Calibration
-//!   mode downgrades to Advisory (legitimate, acknowledged
+//!   wasn't in baseline. Also covers parallel widening surfaces keyed by
+//!   `module`: `paradigms.MO.lib_rs_kinds` entries (a `canonical-data`
+//!   or `composition-root` kind silences MO005 for a crate root, same
+//!   shape as `paradigms.MO.overrides`). Fires regardless of metadata.
+//!   Calibration mode downgrades to Advisory (legitimate, acknowledged
 //!   calibration) but the addition stays visible.
 //! - [`PG003_EXEMPT_PATH_ADDED`] — a new entry in any `exempt_paths`
 //!   list vs baseline.
@@ -90,7 +93,7 @@ use crate::lockfile::{AcknowledgedEmpty, AcknowledgedEmptyEntry, Lockfile};
 use crate::paradigms::complexity_budget::lockfile_schema::{
     CxExemptPath, CxModuleOverride, CxOverride, CxSection,
 };
-use crate::paradigms::module_ownership::lockfile_schema::{MoOverride, MoSection};
+use crate::paradigms::module_ownership::lockfile_schema::{LibRsKindEntry, MoOverride, MoSection};
 use crate::paradigms::one_truth::lockfile_schema::OtSection;
 use locus_air::AirSpan;
 
@@ -670,6 +673,38 @@ fn check_new_overrides(
                 out.push(d);
             }
         }
+
+        // `lib_rs_kinds` is a parallel policy-widening surface to
+        // `overrides`: an entry with kind `canonical-data` or
+        // `composition-root` silences MO005 entirely for a crate's
+        // `lib.rs`. Without auditing it here, agents could clear strict
+        // CI by adding lib_rs_kinds entries without triggering
+        // PG002/PG006. Keyed by `module` — same identity contract as
+        // `overrides`.
+        let base_mo_lib_rs: std::collections::HashSet<&str> = base_mo
+            .lib_rs_kinds
+            .iter()
+            .map(|e| e.module.as_str())
+            .collect();
+        for entry in &cur_mo.lib_rs_kinds {
+            if base_mo_lib_rs.contains(entry.module.as_str()) {
+                continue;
+            }
+            out.push(override_added_diagnostic(
+                "paradigms.MO.lib_rs_kinds",
+                &entry.module,
+                mode,
+                calibration,
+            ));
+            if let Some(d) = override_metadata_diagnostic(
+                "paradigms.MO.lib_rs_kinds",
+                &entry.module,
+                lib_rs_kind_debt(entry),
+                mode,
+            ) {
+                out.push(d);
+            }
+        }
     }
     out
 }
@@ -732,11 +767,20 @@ fn mo_override_debt(o: &MoOverride) -> DebtMetadata<'_> {
     }
 }
 
-/// PG006 — fires when a new override lacks `reason` / `expires` /
+fn lib_rs_kind_debt(e: &LibRsKindEntry) -> DebtMetadata<'_> {
+    DebtMetadata {
+        reason: e.reason.as_deref(),
+        expires: e.expires.as_deref(),
+        owner: e.owner.as_deref(),
+    }
+}
+
+/// PG006 — fires when a new policy-widening entry (an override OR a
+/// `paradigms.MO.lib_rs_kinds` entry) lacks `reason` / `expires` /
 /// `owner`. Always uses strict severity (calibration does NOT
-/// downgrade): calibration legitimizes the act of adding the
-/// override (PG002 → Advisory under calibration), but it does NOT
-/// excuse missing justification.
+/// downgrade): calibration legitimizes the act of adding the entry
+/// (PG002 → Advisory under calibration), but it does NOT excuse missing
+/// justification.
 fn override_metadata_diagnostic(
     list_field: &str,
     module: &str,

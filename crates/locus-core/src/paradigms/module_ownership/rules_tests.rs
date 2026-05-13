@@ -1389,6 +1389,66 @@ fn mo005_lib_rs_canonical_data_shape_silent() {
 }
 
 #[test]
+fn mo005_lib_rs_private_only_decls_apply_main_rs_scoping() {
+    // R=0 (no `pub use`), D>0 (substantial declarations), D_pub=0 (every
+    // decl is private). This is NOT a canonical-data file — it is
+    // substantial implementation logic accumulating in the crate root.
+    // The heuristic must fall through to main.rs-style scoping so MO005
+    // surfaces each declaration.
+    let air = lib_rs_air(
+        "private_pkg",
+        vec![
+            private_helper_func("helper_a", 30),
+            private_helper_func("helper_b", 40),
+            private_struct("Internal"),
+        ],
+    );
+    let diags = mo005(&air, &MoSection::default(), CheckMode::Human);
+    assert!(
+        !diags.is_empty(),
+        "private-only lib.rs (R=0, D>0, D_pub=0) must NOT be classified as \
+         canonical-data — MO005 should fire on each substantial declaration. \
+         Got {diags:?}"
+    );
+    assert!(diags.iter().any(|d| d.message.contains("Internal")));
+    assert!(
+        diags
+            .iter()
+            .any(|d| d.message.contains("helper_a") || d.message.contains("helper_b")),
+    );
+}
+
+fn private_helper_func(name: &str, lines: u32) -> AirItem {
+    AirItem::Function(AirFunction {
+        name: name.into(),
+        symbol: format!("private_pkg::{name}"),
+        visibility: Visibility::Private,
+        params: Vec::new(),
+        return_type: None,
+        span: AirSpan::new("src/lib.rs", 1, lines),
+        line_count: lines,
+        decorators: Vec::new(),
+        symbol_segments: Vec::new(),
+        doc: None,
+    })
+}
+
+fn private_struct(name: &str) -> AirItem {
+    AirItem::Type(AirType {
+        kind: TypeKind::Struct,
+        name: name.into(),
+        symbol: format!("private_pkg::{name}"),
+        visibility: Visibility::Private,
+        fields: Vec::new(),
+        variants: Vec::new(),
+        decorators: Vec::new(),
+        symbol_segments: Vec::new(),
+        span: AirSpan::new("src/lib.rs", 90, 95),
+        doc: None,
+    })
+}
+
+#[test]
 fn mo005_lib_rs_small_composition_root_silent() {
     // `pub use` + a few `pub` declarations (D_pub ≤ budget=5) → small
     // composition root. Mirrors locus-rust's shape (1 pub enum + 3 pub fns

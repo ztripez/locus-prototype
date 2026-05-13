@@ -869,12 +869,13 @@ or let accidental god modules accumulate. MO005 distinguishes them by an
 explicit `paradigms.MO.lib_rs_kinds` lockfile entry, or — when no entry
 matches the file's `module_path` — by a built-in heuristic:
 
-| Shape              | Detection signal                                                  | MO005 behavior                                      |
-|--------------------|-------------------------------------------------------------------|-----------------------------------------------------|
-| thin re-export     | zero substantial declarations (`D == 0`)                          | passes silently (nothing to flag)                   |
-| canonical-data     | substantial declarations AND zero `pub use` (`R == 0 ∧ D > 0`)    | skips MO005 (file IS the data contract)             |
-| composition root   | `pub use` weight present AND public decls ≤ budget                | skips MO005 (small wiring + glue allowed)           |
-| accidental god mod | `pub use` weight present AND public decls > budget                | flags each substantial declaration                  |
+| Shape              | Detection signal                                                              | MO005 behavior                                      |
+|--------------------|-------------------------------------------------------------------------------|-----------------------------------------------------|
+| thin re-export     | zero substantial declarations (`D == 0`)                                      | passes silently (nothing to flag)                   |
+| canonical-data     | substantial declarations AND zero `pub use` AND ≥1 public decl (`R == 0 ∧ D_pub > 0`) | skips MO005 (file IS the data contract)     |
+| composition root   | `pub use` weight present AND public decls ≤ budget                            | skips MO005 (small wiring + glue allowed)           |
+| accidental god mod | `pub use` weight present AND public decls > budget                            | flags each substantial declaration                  |
+| private-only       | substantial declarations, zero `pub use`, zero public decls (`R == 0 ∧ D > 0 ∧ D_pub == 0`) | applies `main.rs`-style scoping (flag every decl) |
 
 `R` counts public-visibility `AirItem::Import` entries (Rust `pub use`).
 `D` counts substantial declarations (`AirItem::Type`, `AirItem::Impl`,
@@ -883,6 +884,12 @@ are always counted toward the public-declaration tally; types and
 functions are counted only when public. The public-declaration budget is
 `LIB_RS_COMPOSITION_ROOT_DECL_BUDGET = 5` — aligned with MO001's
 `DEFAULT_MAX_PUBLIC_TYPES`.
+
+The `D_pub > 0` gate on canonical-data is intentional: a `lib.rs` containing
+only private helpers is not a "data contract" but substantial implementation
+logic accumulating in the entrypoint module — exactly what MO005 is meant to
+surface. Pin such a file to `composition-root` via `lib_rs_kinds` if the
+accumulation is deliberate.
 
 ##### lib.rs lockfile configuration
 

@@ -651,11 +651,18 @@ fn lib_rs_shape_stats(file: &AirFile) -> LibRsShapeStats {
 /// 1. Explicit lockfile entry in `paradigms.MO.lib_rs_kinds` matching the
 ///    file's `module_path` — returned verbatim.
 /// 2. Heuristic — returns `Some(CanonicalData)` when the file has no
-///    re-export weight (zero `pub use` imports) and at least one
-///    substantial declaration; `Some(CompositionRoot)` when there is
-///    re-export weight AND the public-declaration count is at or below
+///    re-export weight (zero `pub use` imports), at least one substantial
+///    declaration, AND at least one of those declarations is publicly
+///    visible; `Some(CompositionRoot)` when there is re-export weight AND
+///    the public-declaration count is at or below
 ///    [`LIB_RS_COMPOSITION_ROOT_DECL_BUDGET`]; `None` when neither shape
 ///    applies (treated as `ThinReexport` — main.rs scoping enforced).
+///
+/// The `public_decls > 0` gate on canonical-data is intentional: a `lib.rs`
+/// carrying only private helpers is not a "data contract" — it is
+/// substantial implementation logic accumulating in the entrypoint module,
+/// which is exactly what MO005 is meant to surface. Falling through to
+/// `None` makes MO005 apply main.rs-style scoping in that case.
 ///
 /// `None` from this function means "apply MO005 with full main.rs-style
 /// declaration prohibitions." Returning a `Some` variant means MO005
@@ -671,7 +678,15 @@ fn resolve_lib_rs_kind(file: &AirFile, section: &MoSection) -> Option<LibRsKind>
         return None;
     }
     if stats.reexport_weight == 0 {
-        // Canonical-data shape — declarations without any `pub use` wiring.
+        if stats.public_decls == 0 {
+            // Private-only declarations: no `pub use` wiring AND no public
+            // ownership surface. Not a data contract — substantial private
+            // implementation logic accumulating in the crate root.
+            // Fall through to main.rs-style scoping.
+            return None;
+        }
+        // Canonical-data shape — public declarations without any `pub use`
+        // wiring.
         return Some(LibRsKind::CanonicalData);
     }
     if stats.public_decls <= LIB_RS_COMPOSITION_ROOT_DECL_BUDGET {
@@ -896,12 +911,13 @@ fn mo005_classify_item(
 /// `paradigms.MO.lib_rs_kinds` when an entry matches the file's
 /// `module_path`; otherwise a heuristic infers it from the AIR items:
 ///
-/// | Shape              | Heuristic signal                                 | MO005 behavior                              |
-/// |--------------------|--------------------------------------------------|---------------------------------------------|
-/// | thin re-export     | zero substantial declarations                    | passes silently (no items to flag)          |
-/// | canonical-data     | substantial declarations AND zero `pub use`      | skips MO005 (file IS the data contract)     |
-/// | composition root   | re-export weight AND public decls ≤ budget       | skips MO005 (small wiring + glue allowed)   |
-/// | accidental god mod | re-export weight AND public decls > budget       | flags each substantial declaration          |
+/// | Shape              | Heuristic signal                                                 | MO005 behavior                              |
+/// |--------------------|------------------------------------------------------------------|---------------------------------------------|
+/// | thin re-export     | zero substantial declarations                                    | passes silently (no items to flag)          |
+/// | canonical-data     | substantial declarations AND zero `pub use` AND ≥1 public decl   | skips MO005 (file IS the data contract)     |
+/// | composition root   | re-export weight AND public decls ≤ budget                       | skips MO005 (small wiring + glue allowed)   |
+/// | accidental god mod | re-export weight AND public decls > budget                       | flags each substantial declaration          |
+/// | private-only       | substantial declarations, zero `pub use`, zero public decls      | applies main.rs-style scoping (every decl)  |
 ///
 /// An explicit `paradigms.MO.lib_rs_kinds` entry takes precedence over the
 /// heuristic. The supported kinds are `thin-reexport` (enforce main.rs

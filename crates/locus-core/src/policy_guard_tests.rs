@@ -448,6 +448,155 @@ fn pg002_covers_mo_overrides() {
     assert!(pg002.message.contains("MO.overrides"));
 }
 
+#[test]
+fn pg002_covers_mo_lib_rs_kinds() {
+    // Adding a `lib_rs_kinds` entry with kind `canonical-data` silences
+    // MO005 for a whole crate root — the same policy-widening shape as a
+    // new override. PG002 must surface the addition regardless of
+    // metadata; PG006 stays quiet because metadata is complete.
+    let base = lockfile_with(serde_json::json!({"MO": {"lib_rs_kinds": []}}), vec![]);
+    let cur = lockfile_with(
+        serde_json::json!({"MO": {"lib_rs_kinds": [{
+            "module": "some_pkg",
+            "kind": "canonical-data",
+            "reason": "intentional flat data contract",
+            "expires": "2027-01-01",
+            "owner": "@locus-core"
+        }]}}),
+        vec![],
+    );
+    let diags = check_policy_mutation(&cur, Some(&base), CheckMode::AgentStrict, false, false);
+    let pg002 = diags
+        .iter()
+        .find(|d| d.rule_id == "PG002")
+        .expect("PG002 must fire on a new lib_rs_kinds entry");
+    assert!(
+        pg002.message.contains("MO.lib_rs_kinds"),
+        "PG002 message should name the lib_rs_kinds surface; got: {}",
+        pg002.message
+    );
+    assert!(pg002.message.contains("some_pkg"));
+    assert_eq!(
+        pg002.severity,
+        Severity::Fatal,
+        "without calibration, PG002 should be Fatal under strict",
+    );
+    assert!(
+        diags.iter().all(|d| d.rule_id != "PG006"),
+        "complete metadata; PG006 must stay quiet. got {diags:#?}",
+    );
+}
+
+#[test]
+fn pg002_lib_rs_kinds_advisory_under_calibration() {
+    let base = lockfile_with(serde_json::json!({"MO": {"lib_rs_kinds": []}}), vec![]);
+    let cur = lockfile_with(
+        serde_json::json!({"MO": {"lib_rs_kinds": [{
+            "module": "some_pkg",
+            "kind": "composition-root",
+            "reason": "wiring crate",
+            "expires": "2027-01-01",
+            "owner": "@locus-core"
+        }]}}),
+        vec![],
+    );
+    let diags = check_policy_mutation(&cur, Some(&base), CheckMode::AgentStrict, true, false);
+    let pg002 = diags
+        .iter()
+        .find(|d| d.rule_id == "PG002" && d.message.contains("MO.lib_rs_kinds"))
+        .expect("PG002 must fire for the lib_rs_kinds surface");
+    assert_eq!(
+        pg002.severity,
+        Severity::Advisory,
+        "calibration downgrades PG002 (visibility) to Advisory, just like \
+         it does for `paradigms.MO.overrides`",
+    );
+}
+
+#[test]
+fn pg006_fires_on_lib_rs_kinds_entry_without_metadata() {
+    // An agent cannot bypass PG006 by stashing the silencer in
+    // `lib_rs_kinds` instead of `overrides`. Missing reason/expires/owner
+    // must fire PG006 with the lib_rs_kinds field name.
+    let base = lockfile_with(serde_json::json!({"MO": {"lib_rs_kinds": []}}), vec![]);
+    let cur = lockfile_with(
+        serde_json::json!({"MO": {"lib_rs_kinds": [{
+            "module": "some_pkg",
+            "kind": "canonical-data"
+        }]}}),
+        vec![],
+    );
+    let diags = check_policy_mutation(&cur, Some(&base), CheckMode::AgentStrict, false, false);
+    assert!(
+        diags
+            .iter()
+            .any(|d| d.rule_id == "PG002" && d.message.contains("MO.lib_rs_kinds")),
+        "PG002 must fire on the addition; got {diags:#?}",
+    );
+    let pg006 = diags
+        .iter()
+        .find(|d| d.rule_id == "PG006" && d.message.contains("MO.lib_rs_kinds"))
+        .expect("PG006 must fire for the lib_rs_kinds surface");
+    let m = pg006.message.as_str();
+    assert!(m.contains("some_pkg"));
+    assert!(m.contains("reason"));
+    assert!(m.contains("expires"));
+    assert!(m.contains("owner"));
+    assert_eq!(
+        pg006.severity,
+        Severity::Fatal,
+        "PG006 stays Fatal under strict — metadata is non-negotiable",
+    );
+}
+
+#[test]
+fn pg006_lib_rs_kinds_stays_fatal_under_calibration() {
+    let base = lockfile_with(serde_json::json!({"MO": {"lib_rs_kinds": []}}), vec![]);
+    let cur = lockfile_with(
+        serde_json::json!({"MO": {"lib_rs_kinds": [{
+            "module": "some_pkg",
+            "kind": "canonical-data"
+        }]}}),
+        vec![],
+    );
+    let diags = check_policy_mutation(&cur, Some(&base), CheckMode::AgentStrict, true, false);
+    let pg006 = diags
+        .iter()
+        .find(|d| d.rule_id == "PG006" && d.message.contains("MO.lib_rs_kinds"))
+        .expect("PG006 fires even with calibration");
+    assert_eq!(pg006.severity, Severity::Fatal);
+    let pg002 = diags
+        .iter()
+        .find(|d| d.rule_id == "PG002" && d.message.contains("MO.lib_rs_kinds"))
+        .expect("PG002 also fires");
+    assert_eq!(
+        pg002.severity,
+        Severity::Advisory,
+        "calibration downgrades PG002 to Advisory but does not waive PG006",
+    );
+}
+
+#[test]
+fn pg002_pg006_quiet_for_pre_existing_lib_rs_kinds_entry() {
+    // Identical baseline and current — the entry was always there, so
+    // PG002/PG006 must stay quiet even though metadata is incomplete.
+    let lf = lockfile_with(
+        serde_json::json!({"MO": {"lib_rs_kinds": [{
+            "module": "locus_air",
+            "kind": "canonical-data"
+        }]}}),
+        vec![],
+    );
+    let diags = check_policy_mutation(&lf, Some(&lf), CheckMode::AgentStrict, false, false);
+    assert!(
+        diags
+            .iter()
+            .all(|d| !matches!(d.rule_id.as_str(), "PG002" | "PG006")
+                || !d.message.contains("MO.lib_rs_kinds")),
+        "pre-existing lib_rs_kinds entry; no PG002/PG006 against it. got {diags:#?}",
+    );
+}
+
 // ---- PG003 new exempt_paths --------------------------------------
 
 #[test]
