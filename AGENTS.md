@@ -10,6 +10,7 @@ This file is the per-repo dev-handoff for Claude Code (and other agents — `CLA
 4. **[`docs/PARADIGMS.md`](docs/PARADIGMS.md)** — full umbrella spec; every paradigm Locus is meant to guard. Use as the source of truth for paradigm semantics, source-fact taxonomy, and the architectural-authority framing. Paradigm 1 carries summary rule entries (OT001–OT012), source-hint forms, and severity tiers.
 5. **[`docs/project-jumpoff.md`](docs/project-jumpoff.md)** — the original OT-paradigm deep dive. Read for full spec content (CLI command surface, lockfile examples, generator design, exception format). Pre-dates the multi-paradigm reframing, so treat its top-level "Locus is …" framing as historical; the rule definitions and AIR examples remain authoritative.
 6. **[`docs/superpowers/specs/2026-05-09-dogfood-false-positive-ledger.md`](docs/superpowers/specs/2026-05-09-dogfood-false-positive-ledger.md)** — active triage ledger for Epic #1. Use this to track per-rule TP/FP/onboarding/debt classification and strictness-graduation evidence.
+7. **[`docs/RUST_ADAPTER.md`](docs/RUST_ADAPTER.md)** — semantic-boundary contract for `crates/locus-rust`. Read before writing any new rule: the four-layer breakdown (raw scan / syn AST / rendered text / heuristic inference) and the rule-author checklist tell you whether the adapter can actually deliver the facts your rule depends on.
 
 ## Active roadmap: architecture governance spine
 
