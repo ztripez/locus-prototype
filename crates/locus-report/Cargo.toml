@@ -7,3 +7,9 @@ publish.workspace = true
 
 [dependencies]
 locus-air.workspace = true
+locus-core.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+insta.workspace = true

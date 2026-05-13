@@ -12,6 +12,7 @@ path = "src/main.rs"
 [dependencies]
 locus-air.workspace = true
 locus-core.workspace = true
+locus-report.workspace = true
 locus-rust.workspace = true
 clap.workspace = true
 anyhow.workspace = true

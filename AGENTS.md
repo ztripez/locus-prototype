@@ -204,6 +204,11 @@ locus check --workspace . --changed      # filter to PR-modified files
 locus check --workspace . --changed --baseline origin/develop  # custom baseline
 locus check --workspace . --changed --agent-strict  # CI shape: fail only on new violations
 
+# Output formats (issue #29). Text is default; json/sarif route through `locus-report`.
+locus check --workspace . --format text   # human (default)
+locus check --workspace . --format json   # stable schema, tooling-friendly
+locus check --workspace . --format sarif  # SARIF v2.1.0 for CI ingest
+
 
 # Canonical changed-only strict gate (Epic #1 workflow)
 LOCUS_BASELINE=origin/main scripts/check-changed-strict.sh .
