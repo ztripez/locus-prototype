@@ -7,6 +7,7 @@ pub mod init;
 pub mod observe;
 pub mod paradigms;
 pub mod prune;
+pub mod query;
 
 use anyhow::Result;
 
@@ -43,5 +44,6 @@ pub fn run(cli: Cli) -> Result<()> {
         Command::Explain(args) => explain::run(args),
         Command::Observe(args) => observe::run(args),
         Command::Prune(args) => prune::run(args),
+        Command::Query(args) => query::run(args),
     }
 }
