@@ -8,16 +8,18 @@
 //! - [`mo003`]: canonical hint co-located with a boundary hint in the same file.
 //! - [`mo004`]: canonical hint co-located with a handler-named function in the
 //!   same file.
-//! - [`mo005`]: entrypoint modules (`main.rs`, `mod.rs`) contain type
-//!   declarations, impl blocks, or substantial functions — forbidden because
-//!   entrypoint modules are composition surfaces, not ownership sites.
-//!   `lib.rs` is out of scope in this first pass (see follow-up issue).
+//! - [`mo005`]: entrypoint modules (`main.rs`, `mod.rs`, `lib.rs`) contain
+//!   type declarations, impl blocks, or substantial functions — forbidden
+//!   because entrypoint modules are composition surfaces, not ownership
+//!   sites. `lib.rs` is classified by either an explicit
+//!   `paradigms.MO.lib_rs_kinds` lockfile entry or a built-in heuristic
+//!   (see [`mo005`] doc comment).
 
 use locus_air::{
     AirFile, AirHint, AirImport, AirItem, AirSpan, AirWorkspace, HintKind, Visibility,
 };
 
-use super::lockfile_schema::{MoSection, matches_name_glob, matches_pattern};
+use super::lockfile_schema::{LibRsKind, MoSection, matches_name_glob, matches_pattern};
 use crate::diagnostics::{CheckMode, Diagnostic, Severity};
 
 fn mo001_why(
@@ -481,20 +483,32 @@ pub const MO005_THIN_FN_MAX_LINES: u32 = 25;
 /// `setup` / `start` appear in test harnesses and integration crates.
 const ENTRYPOINT_FN_NAMES: &[&str] = &["main", "run", "init", "setup", "start"];
 
-/// Identifies whether an entrypoint module is a binary root (`main.rs`) or a
-/// directory module root (`mod.rs`).
+/// Identifies whether an entrypoint module is a binary root (`main.rs`),
+/// a directory module root (`mod.rs`), or a library crate root (`lib.rs`).
 ///
-/// The distinction matters for the composition-host exception in MO005: the
-/// exception applies only to `mod.rs` files (directory module roots), where
-/// a unit struct + thin `impl Paradigm` is the deliberate architectural
-/// convention. `main.rs` (binary entrypoints) must have zero impl blocks
-/// regardless of trait, target, or method size.
+/// The distinction matters for two reasons:
+///
+/// 1. The composition-host exception (unit struct + thin `impl Paradigm`)
+///    applies only to `mod.rs` files, where it is the deliberate
+///    architectural convention. `main.rs` (binary entrypoints) must have
+///    zero impl blocks regardless of trait, target, or method size.
+///
+/// 2. `lib.rs` is the crate's public API surface — fundamentally different
+///    from `main.rs`. A `lib.rs` is classified into one of three canonical
+///    shapes (thin re-export / canonical-data / composition root) by an
+///    explicit `paradigms.MO.lib_rs_kinds` lockfile entry, or by a built-in
+///    heuristic when no entry matches. See [`mo005`] for the full table.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum EntrypointKind {
     /// Binary-crate entrypoint (`main.rs` or module path ending in `::main`).
     Main,
     /// Directory-module root (`mod.rs` or module path ending in `::mod`).
     Mod,
+    /// Library-crate root (`lib.rs`). Cargo gives `lib.rs` a flat
+    /// `module_path` equal to the crate's lib name (e.g. `locus_air`)
+    /// with no `::lib` suffix, so this kind is detected from the file
+    /// basename only.
+    LibRs,
 }
 
 /// Check whether a file is an entrypoint module based on its module path
@@ -515,17 +529,19 @@ pub(super) enum EntrypointKind {
 ///    files inside subdirectories have module paths like `pkg::commands`,
 ///    not `pkg::commands::mod`.
 ///
-/// Both checks use the same two-value set (`main`, `mod`) so the semantics
-/// are symmetric — either the logical name or the filesystem name can
-/// trigger the rule. Note: `lib.rs` is excluded in this first pass; see
-/// `MO005` doc comment for rationale.
+/// Both checks recognise `main` / `mod` / `lib` so the semantics are
+/// symmetric — either the logical name or the filesystem name can trigger
+/// the rule. `lib.rs` is detected from the file basename only (Cargo emits
+/// a flat `module_path` for the lib root with no `::lib` suffix).
 fn entrypoint_kind(module_path: &str, file_path: &str) -> Option<EntrypointKind> {
-    // Check 1: last module_path segment.
+    // Check 1: last module_path segment ("main" / "mod" only; "lib" is
+    // never a module-path suffix in Rust).
     let last_segment = module_path.rsplit("::").next().unwrap_or(module_path);
     if let Some(kind) = segment_to_entrypoint_kind(last_segment) {
         return Some(kind);
     }
-    // Check 2: file basename stem (e.g. "main" from ".../src/main.rs").
+    // Check 2: file basename stem (e.g. "main" from ".../src/main.rs",
+    // "lib" from ".../src/lib.rs").
     let stem = std::path::Path::new(file_path)
         .file_stem()
         .and_then(|s| s.to_str())
@@ -537,6 +553,7 @@ fn segment_to_entrypoint_kind(segment: &str) -> Option<EntrypointKind> {
     match segment {
         "main" => Some(EntrypointKind::Main),
         "mod" => Some(EntrypointKind::Mod),
+        "lib" => Some(EntrypointKind::LibRs),
         _ => None,
     }
 }
@@ -554,6 +571,118 @@ fn segment_to_entrypoint_kind(segment: &str) -> Option<EntrypointKind> {
 /// impls that contain substantial business logic. The observed maximum across
 /// all Locus paradigm host impls is ~60 lines; 120 gives 2× headroom.
 pub const MO005_COMPOSITION_HOST_IMPL_MAX_LINES: u32 = 120;
+
+/// Public-declaration budget for the lib.rs composition-root heuristic.
+///
+/// A `lib.rs` with both re-export weight (`pub use` imports) AND public
+/// substantial declarations is treated as a composition root. The
+/// heuristic stays silent when the public-declaration count is at or below
+/// this budget — locus-rust's lib.rs (1 `pub enum` + 3 `pub fn`) sits at
+/// 4, so 5 gives a one-step headroom for natural growth before the rule
+/// fires.
+///
+/// Above the budget, the file is treated as an accidental god module and
+/// every public declaration is flagged. The user can either refactor or
+/// declare an explicit `lib_rs_kinds` entry in `.locus/lock.json` with
+/// the `composition-root` kind to silence the rule with debt metadata.
+///
+/// Aligned with `DEFAULT_MAX_PUBLIC_TYPES` (5) from MO001's section so the
+/// two budgets evolve together — a crate hitting the lib.rs composition-
+/// root budget is also at the per-module public-type budget.
+pub const LIB_RS_COMPOSITION_ROOT_DECL_BUDGET: u32 = 5;
+
+/// Heuristic counts for a `lib.rs` file: `(reexport_weight, public_decls,
+/// any_decl)`. See [`resolve_lib_rs_kind`] for how each count is used.
+struct LibRsShapeStats {
+    /// Count of public `AirImport` items (Rust `pub use`). Drives the
+    /// `R == 0` canonical-data signal.
+    reexport_weight: u32,
+    /// Count of substantial public declarations: public types, public
+    /// functions, public conversions, and impl blocks (impls don't carry
+    /// their own visibility, so any impl contributes).
+    public_decls: u32,
+    /// `true` when the file contains any substantial declaration at all
+    /// (regardless of visibility) — the thin-reexport signal flips on
+    /// `any_decl == false`.
+    any_decl: bool,
+}
+
+fn lib_rs_shape_stats(file: &AirFile) -> LibRsShapeStats {
+    let mut stats = LibRsShapeStats {
+        reexport_weight: 0,
+        public_decls: 0,
+        any_decl: false,
+    };
+    for item in &file.items {
+        match item {
+            AirItem::Import(imp) if imp.visibility == Visibility::Public => {
+                stats.reexport_weight += 1;
+            }
+            AirItem::Type(t) => {
+                stats.any_decl = true;
+                if t.visibility == Visibility::Public {
+                    stats.public_decls += 1;
+                }
+            }
+            // Impls don't carry their own visibility — every impl
+            // contributes toward `public_decls` so an impl-heavy file
+            // still trips the composition-root budget.
+            AirItem::Impl(_) | AirItem::Conversion(_) => {
+                stats.any_decl = true;
+                stats.public_decls += 1;
+            }
+            AirItem::Function(f) => {
+                stats.any_decl = true;
+                if f.visibility == Visibility::Public {
+                    // Thin or not, public fns are part of the crate's
+                    // exposed surface and count toward the budget.
+                    stats.public_decls += 1;
+                }
+            }
+            _ => {}
+        }
+    }
+    stats
+}
+
+/// Resolve the effective `LibRsKind` for a lib.rs file.
+///
+/// Precedence:
+/// 1. Explicit lockfile entry in `paradigms.MO.lib_rs_kinds` matching the
+///    file's `module_path` — returned verbatim.
+/// 2. Heuristic — returns `Some(CanonicalData)` when the file has no
+///    re-export weight (zero `pub use` imports) and at least one
+///    substantial declaration; `Some(CompositionRoot)` when there is
+///    re-export weight AND the public-declaration count is at or below
+///    [`LIB_RS_COMPOSITION_ROOT_DECL_BUDGET`]; `None` when neither shape
+///    applies (treated as `ThinReexport` — main.rs scoping enforced).
+///
+/// `None` from this function means "apply MO005 with full main.rs-style
+/// declaration prohibitions." Returning a `Some` variant means MO005
+/// should skip declaration checks on this file.
+fn resolve_lib_rs_kind(file: &AirFile, section: &MoSection) -> Option<LibRsKind> {
+    let module_path = file.module_path.as_deref().unwrap_or("");
+    if let Some(entry) = section.lib_rs_kind_for(module_path) {
+        return Some(entry.kind);
+    }
+    let stats = lib_rs_shape_stats(file);
+    if !stats.any_decl {
+        // Thin re-export shape — no declarations at all.
+        return None;
+    }
+    if stats.reexport_weight == 0 {
+        // Canonical-data shape — declarations without any `pub use` wiring.
+        return Some(LibRsKind::CanonicalData);
+    }
+    if stats.public_decls <= LIB_RS_COMPOSITION_ROOT_DECL_BUDGET {
+        // Small composition root — declarations + wiring below the
+        // god-module threshold.
+        return Some(LibRsKind::CompositionRoot);
+    }
+    // Above the budget with re-export weight present — accidental god
+    // module accumulating in lib.rs.
+    None
+}
 
 /// Trait name suffix that identifies the known composition trait.
 ///
@@ -735,10 +864,10 @@ fn mo005_classify_item(
 /// sites.
 ///
 /// Fires for every `AirItem` in a file whose `module_path` ends in `::main`
-/// or `::mod` (or whose file's basename is `main.rs`/`mod.rs`) that is a
-/// type declaration, impl block, converter, or a function that is not a thin
-/// composition-glue wrapper (≤25 lines named `main`/`run`/`init`/`setup`/
-/// `start`).
+/// or `::mod`, or whose file's basename is `main.rs`/`mod.rs`/`lib.rs`,
+/// that is a type declaration, impl block, converter, or a function that
+/// is not a thin composition-glue wrapper (≤25 lines named `main`/`run`/
+/// `init`/`setup`/`start`).
 ///
 /// **Allowed in entrypoint modules:**
 /// - `mod` declarations (not captured in AIR at the item level)
@@ -760,18 +889,74 @@ fn mo005_classify_item(
 /// - functions not named `main`/`run`/`init`/`setup`/`start`
 /// - functions whose line count exceeds the budget
 ///
-/// `lib.rs` is out of scope in this first pass; see follow-up issue for
-/// lib.rs entrypoint handling.
+/// ## `lib.rs` classification
+///
+/// `lib.rs` covers four distinct architectural shapes and the rule
+/// distinguishes them. The effective shape is taken from
+/// `paradigms.MO.lib_rs_kinds` when an entry matches the file's
+/// `module_path`; otherwise a heuristic infers it from the AIR items:
+///
+/// | Shape              | Heuristic signal                                 | MO005 behavior                              |
+/// |--------------------|--------------------------------------------------|---------------------------------------------|
+/// | thin re-export     | zero substantial declarations                    | passes silently (no items to flag)          |
+/// | canonical-data     | substantial declarations AND zero `pub use`      | skips MO005 (file IS the data contract)     |
+/// | composition root   | re-export weight AND public decls ≤ budget       | skips MO005 (small wiring + glue allowed)   |
+/// | accidental god mod | re-export weight AND public decls > budget       | flags each substantial declaration          |
+///
+/// An explicit `paradigms.MO.lib_rs_kinds` entry takes precedence over the
+/// heuristic. The supported kinds are `thin-reexport` (enforce main.rs
+/// scoping), `canonical-data` (skip the file entirely), and
+/// `composition-root` (skip the file entirely; rely on MO001/MO002 for
+/// god-module signals). The budget is
+/// [`LIB_RS_COMPOSITION_ROOT_DECL_BUDGET`] (5).
 ///
 /// **Rationale:** entrypoint modules are the last place agents look when
 /// adding new behavior, so they accumulate it. Enforcing that they contain
 /// only composition glue keeps the dependency tree legible and prevents
-/// god-module accumulation at the binary root.
+/// god-module accumulation at the crate root.
 ///
 /// Severity: Warning by default; `--agent-strict` elevates to Fatal.
 ///
-/// No lockfile configuration in the first pass — exemption via the standard
-/// `// locus: allow MO005` source-hint.
+/// Exemption hierarchy: explicit `paradigms.MO.lib_rs_kinds` lockfile entry
+/// (lib.rs only), then `// locus: allow MO005` source-hint, then the
+/// built-in lib.rs heuristic.
+fn mo005_item_span(item: &AirItem, file_path: &str) -> AirSpan {
+    match item {
+        AirItem::Type(t) => t.span.clone(),
+        AirItem::Function(f) => f.span.clone(),
+        AirItem::Impl(i) => i.span.clone(),
+        AirItem::Conversion(c) => c.span.clone(),
+        _ => AirSpan::new(file_path.to_string(), 1, 1),
+    }
+}
+
+fn mo005_lib_rs_suggested_fix(module_path: &str) -> String {
+    format!(
+        "move this declaration into a dedicated sibling module, or — \
+         if this density is intentional (e.g. a canonical-data crate \
+         surface like locus-air, or an integration crate's composition \
+         root) — declare it in `.locus/lock.json` with \
+         `paradigms.MO.lib_rs_kinds = [{{ module: \"{module_path}\", \
+         kind: \"canonical-data\" | \"composition-root\", reason, \
+         expires, owner }}]`"
+    )
+}
+
+const MO005_ENTRYPOINT_PRINCIPLE: &str = "entrypoint modules are composition surfaces — they wire \
+     modules together via `mod` declarations, imports, and thin \
+     `main`/`run`/`init` functions. Substantial declarations \
+     belong in dedicated sibling modules.";
+
+const MO005_LIB_RS_GOD_MODULE_NOTE: &str = "treated as `thin-reexport`: re-export weight is present \
+     AND the public-declaration count exceeds the lib.rs \
+     composition-root budget. Either refactor or declare an \
+     explicit `paradigms.MO.lib_rs_kinds` entry.";
+
+const MO005_DEFAULT_SUGGESTED_FIX: &str = "move this declaration into a dedicated sibling module \
+     (e.g. `cli.rs` for the root arg struct, `commands/` for \
+     command implementations). Entrypoint should contain only \
+     `mod` decls, imports, and a thin `main` or `run` function.";
+
 /// Emit MO005 diagnostics for forbidden items in a single entrypoint file.
 fn mo005_check_file(
     file: &locus_air::AirFile,
@@ -785,12 +970,19 @@ fn mo005_check_file(
         let Some(reason) = mo005_classify_item(item, &file.items, ep_kind) else {
             continue;
         };
-        let span = match item {
-            AirItem::Type(t) => t.span.clone(),
-            AirItem::Function(f) => f.span.clone(),
-            AirItem::Impl(i) => i.span.clone(),
-            AirItem::Conversion(c) => c.span.clone(),
-            _ => AirSpan::new(file.path.clone(), 1, 1),
+        let span = mo005_item_span(item, &file.path);
+        let mut why = vec![
+            format!(
+                "`{file_label}` (module `{module_path}`) is an entrypoint \
+                 module — it must be a composition surface, not an ownership site"
+            ),
+            MO005_ENTRYPOINT_PRINCIPLE.into(),
+        ];
+        let suggested_fix = if ep_kind == EntrypointKind::LibRs {
+            why.push(MO005_LIB_RS_GOD_MODULE_NOTE.into());
+            Some(mo005_lib_rs_suggested_fix(module_path))
+        } else {
+            Some(MO005_DEFAULT_SUGGESTED_FIX.into())
         };
         out.push(Diagnostic {
             rule_id: "MO005".to_string(),
@@ -798,29 +990,13 @@ fn mo005_check_file(
             span,
             concept: None,
             message: format!("MO005: {reason}"),
-            why: vec![
-                format!(
-                    "`{file_label}` (module `{module_path}`) is an entrypoint \
-                     module — it must be a composition surface, not an ownership site"
-                ),
-                "entrypoint modules are composition surfaces — they wire \
-                 modules together via `mod` declarations, imports, and thin \
-                 `main`/`run`/`init` functions. Substantial declarations \
-                 belong in dedicated sibling modules."
-                    .into(),
-            ],
-            suggested_fix: Some(
-                "move this declaration into a dedicated sibling module \
-                 (e.g. `cli.rs` for the root arg struct, `commands/` for \
-                 command implementations). Entrypoint should contain only \
-                 `mod` decls, imports, and a thin `main` or `run` function."
-                    .into(),
-            ),
+            why,
+            suggested_fix,
         });
     }
 }
 
-pub fn mo005(air: &AirWorkspace, mode: CheckMode) -> Vec<Diagnostic> {
+pub fn mo005(air: &AirWorkspace, section: &MoSection, mode: CheckMode) -> Vec<Diagnostic> {
     let mut out = Vec::new();
     for pkg in &air.packages {
         for file in &pkg.files {
@@ -830,6 +1006,16 @@ pub fn mo005(air: &AirWorkspace, mode: CheckMode) -> Vec<Diagnostic> {
             let Some(ep_kind) = entrypoint_kind(module_path, &file.path) else {
                 continue;
             };
+            // lib.rs gets classified by lockfile + heuristic; the
+            // `CanonicalData` and `CompositionRoot` shapes skip the rule
+            // entirely. Returning `None` from `resolve_lib_rs_kind` means
+            // "treat as ThinReexport" and apply main.rs-style scoping.
+            if ep_kind == EntrypointKind::LibRs
+                && let Some(kind) = resolve_lib_rs_kind(file, section)
+                && matches!(kind, LibRsKind::CanonicalData | LibRsKind::CompositionRoot)
+            {
+                continue;
+            }
             // Prefer the file basename (e.g. "main.rs") for the diagnostic.
             let file_label = std::path::Path::new(&file.path)
                 .file_name()
@@ -1025,7 +1211,9 @@ impl RuleDefinition for Mo005Rule {
         crate::diagnostics::Severity::Warning
     }
     fn observe(&self, ctx: &RuleContext<'_>) -> Vec<RuleFinding> {
-        mo005(ctx.air, ctx.mode)
+        use super::lockfile_schema::MoSection;
+        let section: MoSection = ctx.lockfile.paradigm_section("MO").unwrap_or_default();
+        mo005(ctx.air, &section, ctx.mode)
             .into_iter()
             .map(|d| RuleFinding {
                 id: ctx.finding_ids.next(),
