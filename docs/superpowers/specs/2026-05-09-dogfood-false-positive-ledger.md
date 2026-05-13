@@ -78,7 +78,7 @@ A rule is ready for broad strict recommendation when all are true:
 ## Notes
 
 - Baseline counts for DG003/OT004 come from `docs/superpowers/specs/2026-05-09-self-onboarding-findings.md`.
-- 2026-05-09 rerun snapshot (via `cargo run -p locus-cli -- check --workspace . --json`) shows: `DG003=0`, `OT004=0`, `CX001=106`, `CX002=27`, `ER007=11`, `LOCUS002=13`.
+- 2026-05-09 rerun snapshot (via `cargo run -p locus-cli -- check --workspace . --format json`) shows: `DG003=0`, `OT004=0`, `CX001=106`, `CX002=27`, `ER007=11`, `LOCUS002=13`. (Pre-#29 the flag was spelled `--json`.)
 - Machine-readable companion: `docs/superpowers/specs/2026-05-09-dogfood-false-positive-ledger.json` (same rows/labels as this table).
 - Keep the Markdown table and JSON companion in sync in the same PR.
 

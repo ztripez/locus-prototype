@@ -242,4 +242,3 @@ fn check_governance_code_concept(
         );
     }
 }
-

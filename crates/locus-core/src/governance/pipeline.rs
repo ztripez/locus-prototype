@@ -23,6 +23,13 @@ use locus_air::{AirSpan, AirWorkspace};
 
 pub struct GovernanceOutput {
     pub diagnostics: Vec<Diagnostic>,
+    /// Decision that produced each entry of `diagnostics`, parallel by
+    /// index. Suppressed decisions (`SuppressedByPolicy` /
+    /// `AcceptedException`) are filtered out, so this is shorter than
+    /// the full `decisions` list. Used by `locus-report` so SARIF/JSON
+    /// output can surface `policy_id`, `status`, and `severity_change`
+    /// alongside each rendered diagnostic.
+    pub emitted_decisions: Vec<Decision>,
     pub decisions: Vec<Decision>,
     pub findings: FindingStore,
 }
@@ -85,16 +92,35 @@ pub fn run_with_arch(
 
     validate_decisions(&decisions, &store).expect("policy chain produced invalid decisions");
 
-    let diagnostics: Vec<Diagnostic> = decisions
-        .iter()
-        .filter_map(|d| materialize(d, &store, &governance_codes))
-        .collect();
+    let (diagnostics, emitted_decisions) =
+        materialize_decisions(&decisions, &store, &governance_codes);
 
     GovernanceOutput {
         diagnostics,
+        emitted_decisions,
         decisions,
         findings: store,
     }
+}
+
+/// Walk `decisions` in order, render each non-suppressed entry to a
+/// `Diagnostic`, and return parallel vectors of diagnostics and the
+/// decisions that produced them. Callers rely on the index alignment to
+/// attach policy metadata to SARIF/JSON output.
+fn materialize_decisions(
+    decisions: &[Decision],
+    store: &FindingStore,
+    governance_codes: &GovernanceDiagnosticRegistry,
+) -> (Vec<Diagnostic>, Vec<Decision>) {
+    let mut diagnostics = Vec::new();
+    let mut emitted = Vec::new();
+    for d in decisions {
+        if let Some(diag) = materialize(d, store, governance_codes) {
+            diagnostics.push(diag);
+            emitted.push(d.clone());
+        }
+    }
+    (diagnostics, emitted)
 }
 
 /// Phase A — migrated rules observe.
@@ -262,5 +288,34 @@ mod tests {
             })
             .count();
         assert_eq!(out.diagnostics.len(), non_suppressed);
+    }
+
+    #[test]
+    fn emitted_decisions_parallel_to_diagnostics() {
+        // Every emitted diagnostic must have a paired decision at the
+        // same index. Reporting code (`locus-report`) relies on this
+        // invariant to attach decision metadata to SARIF/JSON results.
+        let air = AirWorkspace::new(Vec::new());
+        let lf = Lockfile::empty();
+        let out = run(&air, &lf, CheckMode::Human);
+        assert_eq!(out.diagnostics.len(), out.emitted_decisions.len());
+        for (diag, dec) in out.diagnostics.iter().zip(&out.emitted_decisions) {
+            let f = out.findings.get(dec.finding_id).expect("finding present");
+            // Rule code emitted on the diagnostic must trace back to the
+            // decision's finding (either the finding's own rule id, its
+            // explicit diagnostic_code, or a legacy rule_code).
+            assert!(
+                diag.rule_id
+                    == f.rule_id
+                        .as_ref()
+                        .map(|r| r.as_str().to_string())
+                        .unwrap_or_default()
+                    || Some(diag.rule_id.as_str()) == f.diagnostic_code.as_deref()
+                    || matches!(&f.source, FindingSource::LegacyDiagnostic { rule_code, .. } if rule_code == &diag.rule_id),
+                "diagnostic rule_id {} does not match paired finding for decision {:?}",
+                diag.rule_id,
+                dec.finding_id
+            );
+        }
     }
 }

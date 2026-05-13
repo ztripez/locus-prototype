@@ -372,6 +372,7 @@ dependencies = [
  "insta",
  "locus-air",
  "locus-core",
+ "locus-report",
  "locus-rust",
  "predicates",
  "serde_json",
@@ -396,7 +397,11 @@ dependencies = [
 name = "locus-report"
 version = "0.1.0"
 dependencies = [
+ "insta",
  "locus-air",
+ "locus-core",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

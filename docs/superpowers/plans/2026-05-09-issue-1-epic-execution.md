@@ -110,5 +110,5 @@ All five workstreams are complete for Epic #1 scope.
 ### Evidence snapshot used for closure
 
 - `cargo run -p locus-cli -- check --workspace . --changed --agent-strict` (expected strict failures are currently CX-family debt, not DG003/OT004 flood).
-- `cargo run -p locus-cli -- check --workspace . --json` (rule count snapshot includes `DG003=0`, `OT004=0`).
+- `cargo run -p locus-cli -- check --workspace . --format json` (rule count snapshot includes `DG003=0`, `OT004=0`). Pre-#29 this flag was spelled `--json`.
 - `cargo run -p locus-cli -- debt --json --by-rule` (debt hotspot view available for ongoing triage).

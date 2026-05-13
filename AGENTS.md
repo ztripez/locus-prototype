@@ -27,6 +27,21 @@ Prioritize #71–#76 work unless the maintainer explicitly redirects. Public rel
 
 Dogfood discipline remains strict: do not weaken rules, raise budgets, add broad exemptions, or hide findings to make `locus check --workspace .` pass. If a finding is real debt, keep it visible or add a narrow, justified, time-bounded exception with ownership metadata. Do not implement future AC/TX/SE-style paradigm packs before the decision/policy pipeline exists.
 
+### Dogfood drift is not "later"
+
+A PR that increases Locus's own `locus check --workspace .` count is a failed review unless the maintainer explicitly accepts tracked debt.
+
+Do **not** write "visible debt" in the PR body and move on. First refactor so the dogfood summary returns to the pre-PR baseline. If that is genuinely not reasonable in the same PR, split the work or create a narrow tracked-debt record with:
+
+- exact rule id and path,
+- why the debt exists,
+- owner,
+- expiry date,
+- linked issue,
+- allowed delta.
+
+Broad allows, budget bumps, vague follow-ups, and "later me" cleanup are not accepted. Implementation growth that triggers CX/MO/etc. should normally be fixed by splitting or moving code, not by accepting a higher warning count. If a PR reduces dogfood findings, ratchet the baseline/documentation downward rather than letting later PRs reintroduce them.
+
 ### Architecture declaration (`#75`)
 
 Locus dogfoods its own governance via `.locus/arch.json`:
@@ -203,6 +218,11 @@ locus check --workspace . --agent-strict # warnings → fatal
 locus check --workspace . --changed      # filter to PR-modified files
 locus check --workspace . --changed --baseline origin/develop  # custom baseline
 locus check --workspace . --changed --agent-strict  # CI shape: fail only on new violations
+
+# Output formats (issue #29). Text is default; json/sarif route through `locus-report`.
+locus check --workspace . --format text   # human (default)
+locus check --workspace . --format json   # stable schema, tooling-friendly
+locus check --workspace . --format sarif  # SARIF v2.1.0 for CI ingest
 
 
 # Canonical changed-only strict gate (Epic #1 workflow)
