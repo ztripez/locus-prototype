@@ -19,7 +19,8 @@ use locus_air::{
     AirFile, AirHint, AirImport, AirItem, AirSpan, AirWorkspace, HintKind, Visibility,
 };
 
-use super::lockfile_schema::{LibRsKind, MoSection, matches_name_glob, matches_pattern};
+use super::lib_rs_kind::{self, LibRsKind};
+use super::lockfile_schema::{MoSection, matches_name_glob, matches_pattern};
 use crate::diagnostics::{CheckMode, Diagnostic, Severity};
 
 fn mo001_why(
@@ -662,7 +663,7 @@ fn lib_rs_shape_stats(file: &AirFile) -> LibRsShapeStats {
 /// should skip declaration checks on this file.
 fn resolve_lib_rs_kind(file: &AirFile, section: &MoSection) -> Option<LibRsKind> {
     let module_path = file.module_path.as_deref().unwrap_or("");
-    if let Some(entry) = section.lib_rs_kind_for(module_path) {
+    if let Some(entry) = lib_rs_kind::lookup(&section.lib_rs_kinds, module_path) {
         return Some(entry.kind);
     }
     let stats = lib_rs_shape_stats(file);

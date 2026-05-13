@@ -1460,7 +1460,7 @@ fn mo005_lib_rs_lockfile_canonical_data_skips_rule_entirely() {
     // Explicit lockfile entry → MO005 skips the file regardless of the
     // heuristic's shape. Even a god-module shape (R>0, D>>budget) is
     // silenced because the user has accepted the canonical-data kind.
-    use super::super::lockfile_schema::{LibRsKind, LibRsKindEntry};
+    use super::super::lib_rs_kind::{LibRsKind, LibRsKindEntry};
     let mut items = vec![pub_use_import("foo::Foo")];
     for i in 0..20 {
         items.push(type_item(&format!("T{i}"), TypeKind::Struct));
@@ -1487,7 +1487,7 @@ fn mo005_lib_rs_lockfile_canonical_data_skips_rule_entirely() {
 fn mo005_lib_rs_lockfile_composition_root_skips_rule_entirely() {
     // `composition-root` kind also skips MO005 — the user has accepted
     // declarations + glue at the crate root. MO001/MO002 still apply.
-    use super::super::lockfile_schema::{LibRsKind, LibRsKindEntry};
+    use super::super::lib_rs_kind::{LibRsKind, LibRsKindEntry};
     let mut items = vec![pub_use_import("foo::Foo")];
     for i in 0..10 {
         items.push(type_item(&format!("T{i}"), TypeKind::Struct));
@@ -1513,7 +1513,7 @@ fn mo005_lib_rs_lockfile_thin_reexport_forces_strict_scoping() {
     // Explicit `thin-reexport` overrides the canonical-data heuristic: a
     // lib.rs with declarations and zero `pub use` is normally treated as
     // canonical-data, but the user has asked for main.rs-style scoping.
-    use super::super::lockfile_schema::{LibRsKind, LibRsKindEntry};
+    use super::super::lib_rs_kind::{LibRsKind, LibRsKindEntry};
     let air = lib_rs_air("strict_pkg", vec![type_item("Foo", TypeKind::Struct)]);
     let section = MoSection {
         lib_rs_kinds: vec![LibRsKindEntry {

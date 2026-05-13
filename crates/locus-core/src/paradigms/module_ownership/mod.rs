@@ -10,10 +10,13 @@
 //! - MO003: canonical type co-located with a boundary type in the same file.
 //! - MO004: canonical type co-located with a handler-named function in the
 //!   same file.
-//! - MO005: entrypoint modules (`main.rs`, `mod.rs`) must be composition
-//!   surfaces, not ownership sites — they may not declare types, impl blocks,
-//!   converters, or substantial non-glue functions. `lib.rs` is out of scope
-//!   in this first pass (see follow-up issue for lib.rs entrypoint handling).
+//! - MO005: entrypoint modules (`main.rs`, `mod.rs`, `lib.rs`) must be
+//!   composition surfaces, not ownership sites — they may not declare
+//!   types, impl blocks, converters, or substantial non-glue functions.
+//!   `lib.rs` is classified into one of four shapes (thin-reexport /
+//!   canonical-data / composition-root / accidental-god-module) by an
+//!   explicit `paradigms.MO.lib_rs_kinds` lockfile entry or a built-in
+//!   heuristic — see `lib_rs_kind` and `rules::mo005` for details.
 //!
 //! `init` returns `Null`: there's no automatic inference for "this module
 //! is allowed to be wide" — the user has to declare the override (or the
@@ -31,6 +34,7 @@ use locus_air::AirWorkspace;
 
 pub mod edit;
 pub mod init;
+pub mod lib_rs_kind;
 pub mod lockfile_schema;
 pub mod rules;
 

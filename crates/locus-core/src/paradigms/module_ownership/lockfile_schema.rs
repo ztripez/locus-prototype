@@ -11,6 +11,8 @@
 
 use serde::{Deserialize, Serialize};
 
+use super::lib_rs_kind::LibRsKindEntry;
+
 /// Default budget for `default_max_public_types` when none is set in the
 /// lockfile. Five is a deliberate "small but not trivial" threshold — most
 /// well-factored modules sit at one or two public types; six begins to feel
@@ -56,14 +58,8 @@ pub struct MoSection {
     /// — same as `MoOverride::module`.
     #[serde(default)]
     pub persistence_import_patterns: Vec<String>,
-    /// MO005 — per-crate `lib.rs` kind declarations. Lets the user pin
-    /// MO005's view of a crate's `lib.rs` to one of the canonical shapes
-    /// (`thin-reexport`, `canonical-data`, `composition-root`) instead of
-    /// relying on the built-in heuristic.
-    ///
-    /// First-match wins on the `module` pattern (typically the crate's
-    /// lib module path, e.g. `locus_air`). Empty means "use the heuristic"
-    /// for every `lib.rs`.
+    /// MO005 — per-crate `lib.rs` kind declarations. Schema + lookup
+    /// helper live in the sibling `lib_rs_kind` module.
     #[serde(default)]
     pub lib_rs_kinds: Vec<LibRsKindEntry>,
 }
@@ -123,16 +119,6 @@ impl MoSection {
                 .map(String::as_str)
                 .collect()
         }
-    }
-
-    /// Find the first `lib_rs_kinds` entry whose `module` pattern matches
-    /// `module_path`, if any. Used by MO005 to look up an explicit kind
-    /// declaration for a crate's `lib.rs` before falling back to the
-    /// heuristic.
-    pub fn lib_rs_kind_for(&self, module_path: &str) -> Option<&LibRsKindEntry> {
-        self.lib_rs_kinds
-            .iter()
-            .find(|e| matches_pattern(&e.module, module_path))
     }
 }
 
@@ -203,56 +189,6 @@ pub struct MoOverride {
     pub debt_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub introduced_by: Option<String>,
-}
-
-/// MO005 — explicit kind declaration for a crate's `lib.rs`. Overrides
-/// the heuristic that classifies lib.rs files into one of three shapes.
-///
-/// The `module` field follows the same segment-aligned wildcard syntax
-/// as [`MoOverride::module`] (typically the crate's lib module path:
-/// `locus_air`, `my_pkg`, or `my_pkg::*`). The first entry whose pattern
-/// matches the `lib.rs`'s module path wins.
-///
-/// Debt metadata mirrors [`MoOverride`] for consistency with the rest of
-/// the MO section — Policy Guard's PG002/PG006 will visibility-flag new
-/// entries the same way.
-#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
-pub struct LibRsKindEntry {
-    pub module: String,
-    pub kind: LibRsKind,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub reason: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub expires: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub owner: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub debt_id: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub introduced_by: Option<String>,
-}
-
-/// MO005 — the three canonical shapes a `lib.rs` can take. Used by
-/// [`LibRsKindEntry::kind`] to pin the enforcement mode explicitly when
-/// the heuristic is wrong.
-#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "kebab-case")]
-pub enum LibRsKind {
-    /// Thin public re-export surface — `pub use` / `pub mod` only, no
-    /// substantial declarations. Same MO005 scoping as `main.rs`: any
-    /// type/impl/converter/non-glue function fires.
-    #[default]
-    ThinReexport,
-    /// Canonical-data crate surface — the entire `lib.rs` is intentional
-    /// declaration (e.g. `locus-air`: 40+ `pub struct`/`pub enum` types
-    /// that ARE the crate's data contract). MO005 is skipped entirely
-    /// for the file; MO001 still applies via its normal per-module budget.
-    CanonicalData,
-    /// Composition root — declarations + setup + glue (e.g. a workspace-
-    /// level integration crate that wires several modules together at
-    /// the crate root). MO005 is skipped for the file; rely on MO001/MO002
-    /// to flag growth into a god module.
-    CompositionRoot,
 }
 
 /// Pattern syntax: segment-aligned wildcards (mirrors UT/TA semantics).
@@ -377,6 +313,8 @@ mod tests {
 
     #[test]
     fn round_trips_through_serde() {
+        // `lib_rs_kinds` round-trip lives in the `lib_rs_kind` module's
+        // own tests; this test covers the rest of the section.
         let s = MoSection {
             default_max_public_types: Some(7),
             overrides: vec![MoOverride {
@@ -387,68 +325,11 @@ mod tests {
             entropy_threshold: Some(4),
             handler_name_patterns: vec!["on_*".into()],
             persistence_import_patterns: vec!["*::redis::*".into()],
-            lib_rs_kinds: vec![LibRsKindEntry {
-                module: "locus_air".into(),
-                kind: LibRsKind::CanonicalData,
-                reason: Some("ADR PR #39 — locus-air is flat canonical data".into()),
-                expires: None,
-                owner: Some("@locus-core".into()),
-                debt_id: None,
-                introduced_by: None,
-            }],
+            ..Default::default()
         };
         let j = serde_json::to_value(&s).unwrap();
         let back: MoSection = serde_json::from_value(j).unwrap();
         assert_eq!(s, back);
-    }
-
-    #[test]
-    fn lib_rs_kind_for_returns_first_match() {
-        let s = MoSection {
-            lib_rs_kinds: vec![
-                LibRsKindEntry {
-                    module: "locus_air".into(),
-                    kind: LibRsKind::CanonicalData,
-                    ..Default::default()
-                },
-                LibRsKindEntry {
-                    module: "locus_*".into(),
-                    kind: LibRsKind::ThinReexport,
-                    ..Default::default()
-                },
-            ],
-            ..Default::default()
-        };
-        // Wildcard doesn't apply here because matches_pattern uses `::`
-        // segments — `locus_*` would only match `locus_` as a literal.
-        // Use an exact match for the first entry; second is a non-match.
-        let hit = s.lib_rs_kind_for("locus_air").expect("expected match");
-        assert_eq!(hit.kind, LibRsKind::CanonicalData);
-        assert!(s.lib_rs_kind_for("other_pkg").is_none());
-    }
-
-    #[test]
-    fn lib_rs_kind_default_is_thin_reexport() {
-        // `LibRsKind` participates in the section's serde default. When
-        // a `lib_rs_kinds` entry omits `kind` (deserialised from JSON
-        // without that key), it must round-trip to `ThinReexport`.
-        let raw = serde_json::json!({
-            "module": "some_pkg",
-            "kind": "thin-reexport",
-        });
-        let entry: LibRsKindEntry = serde_json::from_value(raw).unwrap();
-        assert_eq!(entry.kind, LibRsKind::ThinReexport);
-    }
-
-    #[test]
-    fn lib_rs_kind_serialises_kebab_case() {
-        let entry = LibRsKindEntry {
-            module: "x".into(),
-            kind: LibRsKind::CanonicalData,
-            ..Default::default()
-        };
-        let j = serde_json::to_value(&entry).unwrap();
-        assert_eq!(j["kind"], "canonical-data");
     }
 
     #[test]
