@@ -289,18 +289,15 @@ correct in those cases.
 These are out of scope for the document but recorded so they are not
 forgotten:
 
-- **Confidence / evidence tags on AIR facts.** Today loader-produced
-  facts carry a hardcoded confidence (0.9 for std-rt, 1.0 for
-  markers). A future schema bump could expose this on every
-  `AirFact` and let rules consume it (e.g. demoting a Layer-4-only
-  finding to Advisory). Tracked separately from #110.
-
-- **Rustc-backed adapter mode.** Tracked by [#111](https://github.com/ztripez/locus/issues/111).
-  This is not part of #110's implementation scope, but it is the
-  intended path for rules that require resolved names, resolved types,
-  macro expansion, or trait / method resolution. This document should
-  help classify which rules are safe with `syn` (the four-layer
-  ceiling) and which must wait for rustc-backed facts.
+- **Rustc-backed adapter mode.** Tracked by
+  [#111](https://github.com/ztripez/locus/issues/111). Phase-1 spike
+  has landed: `crates/locus-rust-semantic` ships the `SemanticAdapter`
+  trait, AIR schema v14 carries `FactProvenance` (`SourceHint` /
+  `Syntactic` / `Heuristic` / `SemanticResolved { backend }`), and
+  OT converter detection prefers `SemanticResolved` over `Heuristic`.
+  Phase 2 plugs in the actual `RustAnalyzerBackend` against the
+  `ra-ap-*` crates. See
+  `docs/superpowers/specs/2026-05-13-rustc-semantic-spike.md`.
 
 - **`#[path = "..."]` and `#[cfg]` module overrides.** Currently
   `derive_module_path` infers from the filesystem only. Real support

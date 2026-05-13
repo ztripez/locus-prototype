@@ -9,8 +9,8 @@ use locus_air::{
     AirField, AirFunction, AirImplBlock, AirImport, AirItem, AirMatchArm, AirPartialResultMatch,
     AirRetryLoop, AirScrutineeLiteral, AirSilentDiscard, AirSpan, AirTruthAction, AirType,
     AirVariant, ArmBodyShape, CallKind, ConversionMechanism, DecoratorSource, DiscardKind,
-    FallbackPattern, ImplDispatch, LiteralContext, LiteralKind, LoopKind, ResultMatchVariant,
-    TypeKind, Visibility,
+    FactProvenance, FallbackPattern, ImplDispatch, LiteralContext, LiteralKind, LoopKind,
+    ResultMatchVariant, TypeKind, Visibility,
 };
 
 /// Split a Rust-style `::`-joined symbol into segments for AIR's
@@ -264,6 +264,7 @@ fn emit_fn_converter(
                 mechanism: mech,
                 symbol: symbol.to_string(),
                 span: span_of(file_path, f.span()),
+                provenance: Some(FactProvenance::Heuristic),
             }));
         }
     }
@@ -344,6 +345,7 @@ fn emit_impl_trait_conversion(
             mechanism: mech,
             symbol: format!("{module}::impl {} for {}", render_path(trait_path), self_ty),
             span: span_of(file_path, i.span()),
+            provenance: Some(FactProvenance::Heuristic),
         }));
     }
 }
@@ -372,6 +374,7 @@ fn emit_impl_inherent_conversions(
                     mechanism: mech,
                     symbol: format!("{module}::{}::{}", self_ty, m.sig.ident),
                     span: span_of(file_path, m.span()),
+                    provenance: Some(FactProvenance::Heuristic),
                 }));
             }
         }

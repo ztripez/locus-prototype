@@ -438,6 +438,7 @@ fn air_with_conversion(symbol: &str, from: &str, to: &str) -> AirWorkspace {
                     mechanism: ConversionMechanism::FallibleAdapter,
                     symbol: symbol.into(),
                     span: AirSpan::new("t.rs", 1, 1),
+                    provenance: None,
                 })],
                 hints: Vec::new(),
                 parse_error: None,
@@ -1150,6 +1151,7 @@ fn conversion_in_file(symbol: &str, from: &str, to: &str, file_path: &str, line:
         mechanism: ConversionMechanism::InfallibleAdapter,
         symbol: symbol.into(),
         span: AirSpan::new(file_path, line, line),
+        provenance: None,
     })
 }
 

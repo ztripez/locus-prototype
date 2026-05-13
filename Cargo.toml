@@ -4,6 +4,7 @@ members = [
     "crates/locus-air",
     "crates/locus-core",
     "crates/locus-rust",
+    "crates/locus-rust-semantic",
     "crates/locus-cli",
     "crates/locus-report",
 ]
@@ -19,6 +20,7 @@ publish = false
 locus-air = { path = "crates/locus-air" }
 locus-core = { path = "crates/locus-core" }
 locus-rust = { path = "crates/locus-rust" }
+locus-rust-semantic = { path = "crates/locus-rust-semantic" }
 locus-report = { path = "crates/locus-report" }
 
 serde = { version = "1", features = ["derive"] }

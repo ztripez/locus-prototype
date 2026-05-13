@@ -171,7 +171,20 @@ use serde::{Deserialize, Serialize};
 ///       argument with `_`, and a body shape. Lets FL006 (`map_err`
 ///       losing source context) flag closures that throw the original
 ///       error away.
-pub const AIR_SCHEMA_VERSION: u32 = 13;
+/// - **14**: adds `FactProvenance` and tags records with the adapter
+///   layer that produced them, so rules and policies can distinguish
+///   source-hint / syntactic / heuristic / semantic-resolved facts.
+///     - `AirConversion.provenance: Option<FactProvenance>` —
+///       optional so v13 wire data deserialises as `None` (= unknown).
+///       The `locus-rust` syntactic adapter tags its emissions as
+///       `Heuristic`; the `locus-rust-semantic` adapter (#111) tags
+///       its emissions as `SemanticResolved { backend: ... }`. OT
+///       converter rules prefer SemanticResolved over Heuristic for
+///       the same `(from, to, mechanism, span)` shape.
+///       See `docs/RUST_ADAPTER.md` for the layer model and
+///       `docs/superpowers/specs/2026-05-13-rustc-semantic-spike.md`
+///       for the consumer-side policy.
+pub const AIR_SCHEMA_VERSION: u32 = 14;
 
 // locus: ot canonical
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -471,6 +484,80 @@ pub struct AirConversion {
     pub mechanism: ConversionMechanism,
     pub symbol: String,
     pub span: AirSpan,
+    /// Which adapter layer produced this conversion record. Optional
+    /// for backwards compatibility with v13 wire data — `None` means
+    /// "unknown provenance, treat as `Heuristic`." See
+    /// [`FactProvenance`] for the layer model and
+    /// `docs/RUST_ADAPTER.md` §"The four layers" for full semantics.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provenance: Option<FactProvenance>,
+}
+
+/// Adapter-layer provenance for any AIR record that can be produced by
+/// more than one path (e.g. the same `impl From<T> for U` line can be
+/// emitted by the syntactic adapter via text-equality on the trait
+/// name, or by the semantic adapter via resolved trait identity).
+///
+/// Rules and policies use this to require a provenance floor — for
+/// example, OT converter detection prefers `SemanticResolved` over
+/// `Heuristic` when both are present, and a future strict policy can
+/// refuse to fire Fatal on a `Heuristic`-only finding.
+///
+/// The four layers match `docs/RUST_ADAPTER.md`:
+///
+/// - `SourceHint` — Layer 1 (`// locus:` marker promoted by `MarkersLoader`).
+/// - `Syntactic` — Layer 2 (recognised directly from the `syn` AST).
+/// - `Heuristic` — Layer 4 (name-shape or path-segment inference).
+/// - `SemanticResolved { backend }` — rustc-backed resolution.
+// locus: ot canonical
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "layer", rename_all = "kebab-case")]
+pub enum FactProvenance {
+    SourceHint,
+    Syntactic,
+    Heuristic,
+    SemanticResolved { backend: SemanticBackend },
+}
+
+/// Which semantic backend produced a `SemanticResolved` fact. Recorded
+/// on the provenance so policies can distinguish between adapters with
+/// different fidelity (e.g. rust-analyzer can resolve call targets,
+/// rustdoc JSON cannot).
+///
+/// Backends not yet implemented are listed here so the AIR contract
+/// is stable across future adapters — adding a backend is **not** a
+/// schema bump.
+// locus: ot canonical
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum SemanticBackend {
+    /// rust-analyzer's `ra-ap-*` library crates (stable Rust).
+    RustAnalyzer,
+    /// `cargo rustdoc -- -Zunstable-options --output-format json`.
+    /// Declarations-only — no call sites or expression resolution.
+    RustdocJson,
+    /// `rustc_driver` / `rustc_interface` (nightly-only).
+    RustcDriver,
+}
+
+impl FactProvenance {
+    /// Strict ordering for "prefer the most-resolved provenance".
+    /// Used by consumers that may receive multiple records covering the
+    /// same architectural fact (e.g. a heuristic `AirConversion` and a
+    /// semantic-resolved `AirConversion` for the same `impl` block).
+    ///
+    /// Order: `Heuristic` < `Syntactic` < `SourceHint` < `SemanticResolved`.
+    /// `SourceHint` ranks above `Syntactic` because user annotation is
+    /// authoritative within its scope; `SemanticResolved` ranks above
+    /// everything because rustc-backed facts subsume the others.
+    pub fn rank(&self) -> u8 {
+        match self {
+            FactProvenance::Heuristic => 0,
+            FactProvenance::Syntactic => 1,
+            FactProvenance::SourceHint => 2,
+            FactProvenance::SemanticResolved { .. } => 3,
+        }
+    }
 }
 
 /// How a type-to-type conversion is wired. Renamed in v13 from the

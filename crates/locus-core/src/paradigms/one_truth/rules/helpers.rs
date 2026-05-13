@@ -4,7 +4,59 @@
 
 use std::collections::BTreeMap;
 
-use locus_air::{AirItem, AirSpan, AirWorkspace};
+use locus_air::{AirConversion, AirItem, AirSpan, AirWorkspace, FactProvenance};
+
+/// Deduplicate conversions by `(file, line_start, line_end, mechanism)`,
+/// keeping the highest-rank [`FactProvenance`] when more than one record
+/// covers the same impl block.
+///
+/// In practice this matters once a semantic adapter (e.g. the future
+/// `locus-rust-semantic` `RustAnalyzerBackend`) overlays
+/// `SemanticResolved` `AirConversion` entries on top of the syntactic
+/// adapter's `Heuristic` emissions. The OT converter rules consume the
+/// returned slice so semantic facts win without OT having to know which
+/// adapter produced them.
+///
+/// `None` provenance is treated as `Heuristic` for ranking — that's the
+/// default backwards-compatible interpretation for v13 wire data.
+pub(crate) fn prefer_higher_provenance<'a>(
+    items: impl IntoIterator<Item = &'a AirItem>,
+) -> Vec<&'a AirConversion> {
+    let mut best: BTreeMap<ConvKey, &AirConversion> = BTreeMap::new();
+    for item in items {
+        let AirItem::Conversion(c) = item else {
+            continue;
+        };
+        let key = ConvKey {
+            file: c.span.file.clone(),
+            line_start: c.span.line_start,
+            line_end: c.span.line_end,
+            mechanism: format!("{:?}", c.mechanism),
+        };
+        let cur_rank = effective_rank(c.provenance.as_ref());
+        let keep = match best.get(&key) {
+            Some(existing) => cur_rank > effective_rank(existing.provenance.as_ref()),
+            None => true,
+        };
+        if keep {
+            best.insert(key, c);
+        }
+    }
+    best.into_values().collect()
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+struct ConvKey {
+    file: String,
+    line_start: u32,
+    line_end: u32,
+    mechanism: String,
+}
+
+fn effective_rank(p: Option<&FactProvenance>) -> u8 {
+    p.map(FactProvenance::rank)
+        .unwrap_or_else(|| FactProvenance::Heuristic.rank())
+}
 
 /// Resolve a conversion endpoint string against the concept_for_symbol map.
 /// Endpoints in `AirConversion` are type-text like `User` or
