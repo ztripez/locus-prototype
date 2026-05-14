@@ -365,6 +365,7 @@ mod tests {
             mechanism: locus_air::ConversionMechanism::FallibleAdapter,
             symbol: "impl TryFrom<UserDto> for User".into(),
             span: locus_air::AirSpan::new("t.rs", 1, 1),
+            provenance: None,
         };
         assert!(endpoints_accepted(&conv, &s));
     }
@@ -515,6 +516,7 @@ mod tests {
             mechanism: locus_air::ConversionMechanism::InfallibleAdapter,
             symbol: "?".into(),
             span: locus_air::AirSpan::new("t.rs", 1, 1),
+            provenance: None,
         };
         assert!(!endpoints_accepted(&conv, &s));
     }

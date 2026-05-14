@@ -1,18 +1,14 @@
 [package]
-name = "locus-core"
+name = "locus-rust-semantic"
 edition.workspace = true
 version.workspace = true
 license.workspace = true
 publish.workspace = true
+description = "Semantic Rust adapter for Locus — resolves names, types, traits via rust-analyzer's library crates. Spike (#111)."
 
 [dependencies]
 locus-air.workspace = true
-serde.workspace = true
-serde_json.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
 indoc.workspace = true
-locus-rust.workspace = true
-locus-rust-semantic.workspace = true
-tempfile = "3"

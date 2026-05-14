@@ -676,6 +676,7 @@ fn conversion_item(from: &str, to: &str) -> AirItem {
         mechanism: ConversionMechanism::InfallibleAdapter,
         symbol: format!("{from}::from_{to}"),
         span: AirSpan::new("main.rs", 20, 25),
+        provenance: None,
     })
 }
 

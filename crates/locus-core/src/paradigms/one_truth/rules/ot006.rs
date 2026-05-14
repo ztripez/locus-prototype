@@ -10,10 +10,10 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use locus_air::{AirItem, AirWorkspace};
+use locus_air::AirWorkspace;
 
 use super::super::lockfile_schema::OtSection;
-use super::helpers::lookup_concept;
+use super::helpers::{lookup_concept, prefer_higher_provenance};
 use crate::diagnostics::{CheckMode, Severity};
 use crate::governance::finding::{FindingSource, RuleFinding};
 use crate::governance::ids::{FindingIdMinter, ParadigmId, RuleId};
@@ -67,10 +67,8 @@ pub(crate) fn produce_findings(
     let mut out = Vec::new();
     for pkg in &air.packages {
         for file in &pkg.files {
-            for item in &file.items {
-                let AirItem::Conversion(c) = item else {
-                    continue;
-                };
+            // Dedup by provenance — semantic-resolved wins (see #111).
+            for c in prefer_higher_provenance(&file.items) {
                 let Some(from_concept) = lookup_concept(&concept_for_symbol, &c.from) else {
                     continue;
                 };

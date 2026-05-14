@@ -4,7 +4,81 @@
 
 use std::collections::BTreeMap;
 
-use locus_air::{AirItem, AirSpan, AirWorkspace};
+use locus_air::{AirConversion, AirItem, AirSpan, AirWorkspace, FactProvenance};
+
+/// Deduplicate conversions that point at the same impl block, keeping
+/// the highest-rank [`FactProvenance`].
+///
+/// Two records are "the same impl block" when they share
+/// `(file, line_start, line_end, mechanism, normalize(from), normalize(to))`
+/// where `normalize` strips module paths to the trailing identifier
+/// (e.g. `crate::dto::UserDto` → `UserDto`). Two reasons for that:
+///
+/// 1. **Codex P1 on #115:** distinct impls like `impl From<A> for B {}
+///    impl From<C> for D {}` sharing a line are NOT collapsed — their
+///    normalized endpoints differ.
+/// 2. **Spike contract (#111):** the semantic adapter emits fully-
+///    qualified canonical-path endpoints (per `ResolvedConversion`'s
+///    doc), and we want those records to overlay on the syntactic
+///    adapter's bare-name records for the same impl. The semantic
+///    backend should not have to degrade its fact shape to overlay.
+///
+/// **Known limitation:** generic endpoints with `::` *inside* the
+/// generic parameters (`Vec<crate::path::X>` vs `Vec<X>`) do not
+/// normalize to the same string today. Real-world conversion endpoints
+/// are usually concrete types, so this is a recorded edge case rather
+/// than a blocker — see
+/// `docs/superpowers/specs/2026-05-13-rustc-semantic-spike.md`.
+///
+/// `None` provenance is treated as `Heuristic` for ranking — the
+/// backwards-compatible interpretation for v13 wire data.
+pub(crate) fn prefer_higher_provenance<'a>(
+    items: impl IntoIterator<Item = &'a AirItem>,
+) -> Vec<&'a AirConversion> {
+    let mut best: BTreeMap<ConvKey, &AirConversion> = BTreeMap::new();
+    for item in items {
+        let AirItem::Conversion(c) = item else {
+            continue;
+        };
+        // Endpoint normalisation uses the same `short_name` rule the
+        // rest of OT uses (last `::` segment) — see the helper below.
+        // Concrete types collapse to their bare name; generics carrying
+        // canonical paths inside parameters are a known limitation
+        // (see spike spec note).
+        let key = ConvKey {
+            file: c.span.file.clone(),
+            line_start: c.span.line_start,
+            line_end: c.span.line_end,
+            mechanism: format!("{:?}", c.mechanism),
+            from_normalized: short_name(&c.from).to_string(),
+            to_normalized: short_name(&c.to).to_string(),
+        };
+        let cur_rank = effective_rank(c.provenance.as_ref());
+        let keep = match best.get(&key) {
+            Some(existing) => cur_rank > effective_rank(existing.provenance.as_ref()),
+            None => true,
+        };
+        if keep {
+            best.insert(key, c);
+        }
+    }
+    best.into_values().collect()
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+struct ConvKey {
+    file: String,
+    line_start: u32,
+    line_end: u32,
+    mechanism: String,
+    from_normalized: String,
+    to_normalized: String,
+}
+
+fn effective_rank(p: Option<&FactProvenance>) -> u8 {
+    p.map(FactProvenance::rank)
+        .unwrap_or_else(|| FactProvenance::Heuristic.rank())
+}
 
 /// Resolve a conversion endpoint string against the concept_for_symbol map.
 /// Endpoints in `AirConversion` are type-text like `User` or
@@ -176,5 +250,125 @@ pub(super) fn matches_symbol_pattern(value: &str, pattern: &str) -> bool {
         (true, false) => value == stripped || value.ends_with(&format!("::{stripped}")),
         (false, true) => value == stripped || value.starts_with(&format!("{stripped}::")),
         (false, false) => pattern == value,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use locus_air::{AirConversion, AirItem, AirSpan, ConversionMechanism};
+
+    fn conv(file: &str, line: u32, from: &str, to: &str, p: Option<FactProvenance>) -> AirItem {
+        AirItem::Conversion(AirConversion {
+            from: from.into(),
+            to: to.into(),
+            mechanism: ConversionMechanism::InfallibleAdapter,
+            symbol: format!("{from}::to_{to}"),
+            span: AirSpan::new(file, line, line),
+            provenance: p,
+        })
+    }
+
+    #[test]
+    fn semantic_resolved_wins_over_heuristic_on_same_impl() {
+        let items = vec![
+            conv("t.rs", 5, "Foo", "Bar", Some(FactProvenance::Heuristic)),
+            conv(
+                "t.rs",
+                5,
+                "Foo",
+                "Bar",
+                Some(FactProvenance::SemanticResolved {
+                    backend: locus_air::SemanticBackend::RustAnalyzer,
+                }),
+            ),
+        ];
+        let kept = prefer_higher_provenance(&items);
+        assert_eq!(kept.len(), 1, "same-impl records must dedupe; got {kept:?}");
+        assert!(
+            matches!(
+                kept[0].provenance,
+                Some(FactProvenance::SemanticResolved { .. })
+            ),
+            "semantic-resolved should win; got {:?}",
+            kept[0].provenance,
+        );
+    }
+
+    #[test]
+    fn two_distinct_impls_on_same_line_are_not_collapsed() {
+        // Regression for the Codex P1 on #115: `impl From<A> for B {}
+        // impl From<C> for D {}` on one line emits two AirConversion
+        // records with the same `(file, line, mechanism)`. Distinct
+        // endpoint identifiers in the normalized key keep them apart.
+        let items = vec![
+            conv("t.rs", 5, "A", "B", Some(FactProvenance::Heuristic)),
+            conv("t.rs", 5, "C", "D", Some(FactProvenance::Heuristic)),
+        ];
+        let kept = prefer_higher_provenance(&items);
+        assert_eq!(
+            kept.len(),
+            2,
+            "distinct conversions on the same line must NOT be collapsed; got {kept:?}",
+        );
+    }
+
+    #[test]
+    fn canonical_path_semantic_record_overlays_bare_name_syntactic() {
+        // Spike-contract pin (#111): the semantic adapter emits fully-
+        // qualified endpoints; the syntactic adapter emits bare names.
+        // Both must collapse to one record (semantic wins) without the
+        // semantic backend degrading its fact shape.
+        let items = vec![
+            // syntactic: bare names, as `locus-rust` emits today
+            conv(
+                "t.rs",
+                5,
+                "UserDto",
+                "User",
+                Some(FactProvenance::Heuristic),
+            ),
+            // semantic: fully-qualified canonical paths
+            conv(
+                "t.rs",
+                5,
+                "crate::dto::UserDto",
+                "crate::identity::User",
+                Some(FactProvenance::SemanticResolved {
+                    backend: locus_air::SemanticBackend::RustAnalyzer,
+                }),
+            ),
+        ];
+        let kept = prefer_higher_provenance(&items);
+        assert_eq!(
+            kept.len(),
+            1,
+            "canonical-path semantic record should overlay bare-name \
+             syntactic record on the same impl; got {kept:?}",
+        );
+        assert!(
+            matches!(
+                kept[0].provenance,
+                Some(FactProvenance::SemanticResolved { .. })
+            ),
+            "the semantic record should win",
+        );
+        // The surviving record keeps its canonical-path endpoints —
+        // the semantic backend's fact shape is preserved.
+        assert_eq!(kept[0].from, "crate::dto::UserDto");
+        assert_eq!(kept[0].to, "crate::identity::User");
+    }
+
+    #[test]
+    fn none_provenance_is_treated_as_heuristic_for_ranking() {
+        // Either record may win — both are rank 0 — but only one
+        // survives. The "v13 wire data deserialises as None" contract
+        // is what this pins.
+        let items = vec![
+            conv("t.rs", 5, "Foo", "Bar", None),
+            conv("t.rs", 5, "Foo", "Bar", Some(FactProvenance::Heuristic)),
+        ];
+        let kept = prefer_higher_provenance(&items);
+        assert_eq!(kept.len(), 1);
     }
 }

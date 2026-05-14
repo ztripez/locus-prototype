@@ -557,6 +557,7 @@ mod election_tests {
                 mechanism: ConversionMechanism::FallibleAdapter,
                 symbol: format!("impl TryFrom<{from}> for {to}"),
                 span: AirSpan::new("t.rs", 1, 1),
+                provenance: None,
             })
         };
         let air2 = locus_air::AirWorkspace::new(vec![AirPackage {

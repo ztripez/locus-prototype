@@ -388,6 +388,7 @@ dependencies = [
  "indoc",
  "locus-air",
  "locus-rust",
+ "locus-rust-semantic",
  "serde",
  "serde_json",
  "tempfile",
@@ -420,6 +421,15 @@ dependencies = [
  "syn",
  "thiserror",
  "walkdir",
+]
+
+[[package]]
+name = "locus-rust-semantic"
+version = "0.1.0"
+dependencies = [
+ "indoc",
+ "locus-air",
+ "thiserror",
 ]
 
 [[package]]
