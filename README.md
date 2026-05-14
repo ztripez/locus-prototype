@@ -66,6 +66,7 @@ Framework or runtime-specific knowledge enters through deterministic sub-paradig
 
 - [`docs/PARADIGMS.md`](docs/PARADIGMS.md) defines the architectural paradigms Locus is intended to guard.
 - [`docs/AGENT_GUARDRAILS.md`](docs/AGENT_GUARDRAILS.md) is a compact primer for code assistants working on this repository.
+- [`docs/AGENT_LOCUS_HARNESS.md`](docs/AGENT_LOCUS_HARNESS.md) describes the A/B harness for comparing agent changes with and without Locus guidance.
 
 ## Early implementation direction
 

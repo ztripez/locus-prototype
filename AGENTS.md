@@ -43,6 +43,19 @@ Do **not** write "visible debt" in the PR body and move on. First refactor so th
 
 Broad allows, budget bumps, vague follow-ups, and "later me" cleanup are not accepted. Implementation growth that triggers CX/MO/etc. should normally be fixed by splitting or moving code, not by accepting a higher warning count. If a PR reduces dogfood findings, ratchet the baseline/documentation downward rather than letting later PRs reintroduce them.
 
+### Use the A/B harness for large-function work
+
+When implementing a new large function, refactoring a rule/policy pipeline, or making a change where an agent may be tempted to pile behavior into one local function, use the corpus harness to test whether Locus changes agent behavior before treating the workflow as proven:
+
+```bash
+LOCUS_TEST_CORPUS=/mnt/code/projects/sides/lors \
+scripts/compare-agent-with-locus.py \
+  --task-file /tmp/locus-agent-task.md \
+  --agent-command 'codex exec --ignore-rules --cd {workspace} --sandbox workspace-write --skip-git-repo-check - < {prompt_file}'
+```
+
+The harness runs the same task in two copied corpus worktrees: one prompt with no Locus guidance and one prompt that must use Locus. Compare `summary.md` and the changed strict findings. A useful outcome is not necessarily "zero findings everywhere"; it is a measurable difference in whether the guided agent refactors, uses accepted owners, or avoids new CX/MO/FL/etc. drift. Do not use the harness as a substitute for fixing Locus's own dogfood findings.
+
 ### Architecture declaration (`#75`)
 
 Locus dogfoods its own governance via `.locus/arch.json`:
