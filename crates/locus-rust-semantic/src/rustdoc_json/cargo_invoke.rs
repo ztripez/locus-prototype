@@ -76,20 +76,28 @@ pub(super) fn list_workspace_packages(
 
 /// Invoke `cargo +<toolchain> rustdoc -p <package> -- -Zunstable-options
 /// --output-format json` and return the resulting JSON file's path.
+///
+/// Passes an explicit `--target-dir <workspace_root>/target` so the
+/// output location is deterministic regardless of CI configuration
+/// (e.g. `CARGO_TARGET_DIR`, `.cargo/config.toml` redirects, build
+/// cache mounts, or workspace-nesting heuristics). Without this CI
+/// can land the JSON somewhere we don't look.
 pub(super) fn run_rustdoc_for(
     toolchain: &str,
     workspace_root: &Path,
     package: &str,
 ) -> Result<PathBuf, AdapterError> {
-    let plus = format!("+{toolchain}");
+    let target_dir = workspace_root.join("target");
     let output = Command::new("cargo")
-        .arg(&plus)
+        .arg(format!("+{toolchain}"))
         .arg("rustdoc")
         .arg("-p")
         .arg(package)
         .arg("--lib")
         .arg("--manifest-path")
         .arg(workspace_root.join("Cargo.toml"))
+        .arg("--target-dir")
+        .arg(&target_dir)
         .arg("--")
         .arg("-Zunstable-options")
         .arg("--output-format")
@@ -104,14 +112,16 @@ pub(super) fn run_rustdoc_for(
             ),
         });
     }
-    // `cargo rustdoc --output-format json` writes to
-    // `target/doc/<crate>.json`, where `<crate>` is the package name
-    // with `-` replaced by `_`.
+    locate_rustdoc_json(&target_dir, package)
+}
+
+/// `cargo rustdoc --output-format json --target-dir <dir>` writes to
+/// `<dir>/doc/<crate>.json`, where `<crate>` is the package name with
+/// `-` replaced by `_`. Returns an error pointing at the expected path
+/// when rustdoc claimed success but the JSON isn't there.
+fn locate_rustdoc_json(target_dir: &Path, package: &str) -> Result<PathBuf, AdapterError> {
     let crate_name = package.replace('-', "_");
-    let json_path = workspace_root
-        .join("target")
-        .join("doc")
-        .join(format!("{crate_name}.json"));
+    let json_path = target_dir.join("doc").join(format!("{crate_name}.json"));
     if !json_path.exists() {
         return Err(AdapterError::WorkspaceFailed {
             message: format!(

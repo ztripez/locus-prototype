@@ -60,17 +60,34 @@ pub(super) fn collect_conversions(
 
 /// Recognise the trait identity from its rustdoc-resolved path.
 ///
-/// rustdoc's resolved path for the stdlib's `From` is `core::convert::From`
-/// (or sometimes `std::convert::From` depending on toolchain). Both
-/// resolve to the same trait. We accept either tail.
+/// Locked to the exact stdlib trait paths so a user-defined trait
+/// named `mycrate::From` (or any other suffix-collision) is not
+/// mistaken for a conversion. rustdoc's resolved path is the trait's
+/// **defining** path, so we get `core::convert::From` for what was
+/// written as `impl From<T>`. Both `core::convert::*` and
+/// `std::convert::*` are accepted because rustdoc occasionally chooses
+/// `std::` over `core::` depending on what's been imported; the two
+/// re-export the same trait, but the resolved path string differs.
+///
+/// Plain `From` / `TryFrom` (no `::` prefix) appear when the trait is
+/// referenced through Rust's prelude. The rustdoc JSON resolves the
+/// import to its definition, so this is rare in practice — but we
+/// accept the bare form as well so prelude-imported impls don't slip
+/// through silently.
 pub(super) fn conversion_mechanism_for_trait(path: &str) -> Option<ConversionMechanism> {
-    let segments: Vec<&str> = path.rsplit("::").collect();
-    let last = *segments.first()?;
-    match last {
-        "From" => Some(ConversionMechanism::InfallibleAdapter),
-        "TryFrom" => Some(ConversionMechanism::FallibleAdapter),
-        _ => None,
+    const FROM_PATHS: &[&str] = &["core::convert::From", "std::convert::From", "From"];
+    const TRY_FROM_PATHS: &[&str] = &[
+        "core::convert::TryFrom",
+        "std::convert::TryFrom",
+        "TryFrom",
+    ];
+    if FROM_PATHS.contains(&path) {
+        return Some(ConversionMechanism::InfallibleAdapter);
     }
+    if TRY_FROM_PATHS.contains(&path) {
+        return Some(ConversionMechanism::FallibleAdapter);
+    }
+    None
 }
 
 /// `impl From<T> for U` — pull `T` out of the trait path's generic args.
@@ -207,21 +224,67 @@ mod tests {
     use super::*;
 
     #[test]
-    fn conversion_mechanism_recognises_from_and_tryfrom() {
+    fn conversion_mechanism_accepts_stdlib_from_and_tryfrom() {
         assert_eq!(
             conversion_mechanism_for_trait("core::convert::From"),
             Some(ConversionMechanism::InfallibleAdapter),
         );
         assert_eq!(
+            conversion_mechanism_for_trait("std::convert::From"),
+            Some(ConversionMechanism::InfallibleAdapter),
+        );
+        assert_eq!(
+            conversion_mechanism_for_trait("core::convert::TryFrom"),
+            Some(ConversionMechanism::FallibleAdapter),
+        );
+        assert_eq!(
             conversion_mechanism_for_trait("std::convert::TryFrom"),
             Some(ConversionMechanism::FallibleAdapter),
         );
+        // Prelude-imported bare names are also stdlib-defined under
+        // the hood — rustdoc usually resolves them to the full path,
+        // but the bare form is accepted as a fallback.
         assert_eq!(
             conversion_mechanism_for_trait("From"),
             Some(ConversionMechanism::InfallibleAdapter),
         );
         assert_eq!(
+            conversion_mechanism_for_trait("TryFrom"),
+            Some(ConversionMechanism::FallibleAdapter),
+        );
+    }
+
+    #[test]
+    fn conversion_mechanism_rejects_user_defined_traits_named_from() {
+        // The whole point of the allowlist: a user-defined trait named
+        // `From` outside the stdlib must NOT be classified as a
+        // conversion. This guards against the suffix-only regression
+        // reported on PR #119.
+        assert_eq!(
+            conversion_mechanism_for_trait("mycrate::From"),
+            None,
+            "user-defined `mycrate::From` must not match the stdlib trait",
+        );
+        assert_eq!(
+            conversion_mechanism_for_trait("some_crate::convert::From"),
+            None,
+            "any `convert::From` outside core/std must not match",
+        );
+        assert_eq!(
+            conversion_mechanism_for_trait("a::b::c::TryFrom"),
+            None,
+            "user-defined `TryFrom` must not match",
+        );
+    }
+
+    #[test]
+    fn conversion_mechanism_rejects_unrelated_traits() {
+        assert_eq!(
             conversion_mechanism_for_trait("foo::bar::SomethingElse"),
+            None,
+        );
+        assert_eq!(
+            conversion_mechanism_for_trait("core::convert::Into"),
             None,
         );
     }
