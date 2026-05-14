@@ -6,6 +6,7 @@
 //! paradigm registry, the shared lockfile / diagnostic types, and the
 //! per-paradigm modules under [`paradigms`].
 
+pub mod architecture;
 pub mod diagnostics;
 pub mod exceptions;
 pub mod governance;
@@ -15,6 +16,7 @@ pub mod lockfile;
 pub mod paradigms;
 pub mod policy_guard;
 
+pub use architecture::ArchitectureFacts;
 pub use diagnostics::{
     CheckMode, Diagnostic, Severity, VACANT_PARADIGM_RULE, vacant_paradigm_diagnostic,
 };
