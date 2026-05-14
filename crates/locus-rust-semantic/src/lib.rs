@@ -5,40 +5,44 @@
 //! is the high-fidelity adapter: it resolves names, types, traits, and
 //! eventually macro expansions through a real semantic backend.
 //!
-//! ## Phase 1 (this spike — #111)
+//! ## Architecture
 //!
-//! What ships in this crate today:
+//! - [`SemanticAdapter`] — the trait every backend implements. Stable
+//!   contract; new backends extend it additively.
+//! - [`ResolvedConversion`] — the spike's chosen fact shape. Carries
+//!   fully-qualified canonical type paths and resolved trait identity
+//!   — what `locus-rust`'s syntactic heuristic can't produce.
+//! - [`TestBackend`] — in-process adapter that returns hand-built
+//!   facts. Used by `locus-core`'s OT integration tests.
 //!
-//! - The `SemanticAdapter` trait — the contract every backend
-//!   implements.
-//! - A `ResolvedConversion` value type — the spike's chosen fact shape.
-//!   It carries fully-qualified type paths and the resolved trait
-//!   identity, which today's `locus-rust` heuristic can't produce.
-//! - A `TestBackend` implementation that returns hand-built facts.
-//!   Lets the consumer side (OT converter detection) ship a real,
-//!   tested preference for SemanticResolved over Heuristic before the
-//!   ra-ap-* integration lands.
+//! ## Concrete backends
 //!
-//! Phase 1 deliberately does **not** depend on `ra-ap-*` or any other
-//! heavyweight semantic backend. The architectural contract — trait
-//! shape, fact provenance, consumer preference — can be reviewed and
-//! merged without committing to a 200+ crate dep tree.
+//! - [`RustdocJsonBackend`] (default feature `rustdoc-json`) — shells
+//!   out to nightly `cargo rustdoc -- --output-format json` and parses
+//!   the result. Emits resolved `From<T>` / `TryFrom<T>` impl records
+//!   with `SemanticBackend::RustdocJson` provenance. Cost: requires a
+//!   nightly toolchain.
+//! - `RustAnalyzerBackend` — **not implemented yet**. Will land when
+//!   call-target resolution becomes the limiting factor (see the
+//!   pivot note in
+//!   `docs/superpowers/specs/2026-05-13-rustc-semantic-spike.md`).
 //!
-//! ## Phase 2 (next PR — gated on phase-1 review)
+//! ## Feature flags
 //!
-//! - `RustAnalyzerBackend` — implementation against `ra-ap-syntax`,
-//!   `ra-ap-hir`, `ra-ap-load-cargo`. Loads the workspace once, runs
-//!   resolved queries, emits `ResolvedConversion`s with
-//!   `SemanticBackend::RustAnalyzer` provenance.
-//! - CLI wiring (`locus check --semantic-rust`) and cache reuse.
-//! - Optional `RustdocJsonBackend` for declaration-only facts.
-//!
-//! Plan recorded in
-//! `docs/superpowers/specs/2026-05-13-rustc-semantic-spike.md`.
+//! - `rustdoc-json` (on by default) pulls in `rustdoc-types` +
+//!   `serde_json` and exposes [`RustdocJsonBackend`]. Disable with
+//!   `default-features = false` if you only want the trait + types
+//!   (e.g. for tests, or to wire a different backend behind the same
+//!   trait).
 
 use locus_air::{AirConversion, AirSpan, ConversionMechanism, FactProvenance, SemanticBackend};
 
+#[cfg(feature = "rustdoc-json")]
+pub mod rustdoc_json;
 pub mod test_backend;
+
+#[cfg(feature = "rustdoc-json")]
+pub use rustdoc_json::RustdocJsonBackend;
 pub use test_backend::TestBackend;
 
 /// Errors a semantic adapter can return. Backends typically fail when

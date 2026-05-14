@@ -4,11 +4,25 @@ edition.workspace = true
 version.workspace = true
 license.workspace = true
 publish.workspace = true
-description = "Semantic Rust adapter for Locus — resolves names, types, traits via rust-analyzer's library crates. Spike (#111)."
+description = "Semantic Rust adapter for Locus — first concrete backend resolves From<T> / TryFrom<T> impls via rustdoc JSON. Issue #111."
+
+[features]
+# Enabled by default so the published surface includes the first
+# concrete backend. Downstream callers who only want the trait + types
+# (e.g. for building their own backend) can opt out with
+# `default-features = false`.
+default = ["rustdoc-json"]
+rustdoc-json = ["dep:rustdoc-types", "dep:serde_json"]
 
 [dependencies]
 locus-air.workspace = true
 thiserror.workspace = true
+# rustdoc-json backend deps — optional, gated on the feature above.
+# Pinned at 0.57 to match the JSON format version rustc emits on
+# recent nightlies. Bumping requires verifying the format-version
+# constant in the backend.
+rustdoc-types = { version = "0.57", optional = true }
+serde_json = { workspace = true, optional = true }
 
 [dev-dependencies]
 indoc.workspace = true

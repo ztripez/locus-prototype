@@ -3,10 +3,39 @@
 Issue: [#111](https://github.com/ztripez/locus/issues/111).
 Depends on: [#110](https://github.com/ztripez/locus/issues/110) (adapter-boundary doc).
 
-This is the phase-1 spike design note. It records what landed in this
-PR and what phase-2 work follows, so the architectural contract — trait
-shape, AIR provenance, OT consumer preference — can be reviewed without
-the heavyweight `ra-ap-*` backend muddying the discussion.
+This is the phase-1 spike design note. It records what landed in PR
+[#115](https://github.com/ztripez/locus/pull/115) (now merged) and what
+phase-2 work follows, so the architectural contract — trait shape,
+AIR provenance, OT consumer preference — could be reviewed
+independently from the concrete backend.
+
+## Phase-2 backend pivot (2026-05-14)
+
+The phase-1 spike was framed as "rust-analyzer first, rustdoc JSON
+optional second." Phase-2 implementation work turned up a real
+obstacle: **`ra-ap-load-cargo` is not published to crates.io.** It's
+~1050 lines of workspace-internal glue in the rust-analyzer repo. Its
+dependencies are all published, so vendoring is possible, but the cost
+is substantial: tracking rust-analyzer's weekly releases, salsa
+database wiring, proc-macro server IPC.
+
+For the spike's chosen fact (resolved `impl From<T>` /
+`impl TryFrom<T>`), **rustdoc JSON is the strictly simpler tool** —
+~200–400 lines vs ~1000+ vendored, no salsa, lighter dep tree, and it
+already gives us fully-qualified type paths and resolved trait
+identity. Call-target resolution (which is rust-analyzer's unique
+strength) is **not** in this slice anyway.
+
+Decision: **`RustdocJsonBackend` becomes the first concrete backend.**
+`RustAnalyzerBackend` stays in the trait's `SemanticBackend` enum so
+the AIR shape is stable, and lands as a follow-up when call-target
+resolution becomes the limiting factor (e.g. for the BO/PA/RW
+paradigms listed under "advisory-until-semantic" in the research
+comment on #111).
+
+The `SemanticAdapter` trait, `FactProvenance` enum, and OT consumer
+preference all stay exactly as shipped in phase 1 — only the first
+concrete backend changes.
 
 ## What this spike delivers
 
@@ -90,11 +119,33 @@ total. Median 0.427s, range 0.005s. The "cold" / "warm" distinction
 is essentially noise at this scale because `locus check` re-scans from
 disk every time today — there's no cache to warm.
 
-These numbers are the **before** baseline. Phase 2 must report an
-**after** comparison once `RustAnalyzerBackend` is plugged in: cold
-load (rust-analyzer's salsa DB has to be built from scratch) is
-expected to be in the 5–15s range for a workspace this size; warm
-runs against a persisted DB should land under 1s if the cache works.
+These numbers are the **before** baseline.
+
+### Phase-2 `RustdocJsonBackend` measurements
+
+Measured on the same machine (release build):
+
+| Workspace                              | Cold (target/ wiped) | Warm (target/ cached) |
+|---|---|---|
+| `tests/fixtures/semantic-conversions-fixture` (~30 LoC, 0 deps) | ~0.55s | ~0.49s |
+| `crates/locus-air` (1062 LoC, depends on `serde`)               | ~6.3s  | (compile-cache dominated) |
+
+Order-of-magnitude shape: rustdoc-JSON's cost is **the cost of a full
+nightly `cargo build` of the crate plus rustdoc's JSON emission.** On
+a tiny dep-free fixture that's ~500ms; on a single Locus crate with
+`serde` it's ~6s; on the whole Locus workspace cold it would land in
+the 30–60s range before any caching.
+
+Implication for CLI integration (phase 3): semantic-rust must be
+opt-in (`locus check --semantic-rust` or similar) and rely on
+`target/doc/` reuse across `locus check` invocations, not run on every
+invocation. Phase 1's 0.4s `locus check` baseline is preserved by
+default; the semantic adapter is an explicit-cost upgrade.
+
+A future `RustAnalyzerBackend` (whenever call-target resolution
+becomes required) would have a different cost profile — salsa's
+incremental queries can be sub-second after warm cache where rustdoc
+JSON is always a fresh build of the crate.
 
 ## Phase 2 — out of scope for this PR
 
