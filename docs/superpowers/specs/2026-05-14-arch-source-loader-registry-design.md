@@ -190,7 +190,7 @@ Per-type identity used for collision detection:
 | `ConceptFact` | `id` |
 | `BoundaryFact` | `id` |
 | `ContractFact` | `(source_kind, operation)` |
-| `ConverterFact` | `(from_concept, to_concept)` |
+| `ConverterFact` | `(from, to)` |
 | `ModuleOwnershipFact` | `module` |
 | `DebtFact` | `(target, reason)` |
 
