@@ -1,0 +1,23 @@
+# Standalone fixture for the rustdoc-JSON semantic backend (#111).
+# Empty [workspace] severs membership so `cargo build --workspace`
+# ignores it — see neighbouring markers-crate fixture for the pattern.
+#
+# Used by the integration test in
+# `crates/locus-rust-semantic/tests/rustdoc_json_smoke.rs` to prove
+# that `RustdocJsonBackend` resolves `From<T>` / `TryFrom<T>` impls
+# end-to-end into `ResolvedConversion` records.
+#
+# Source MUST compile under stable + nightly. Unlike sample-crate
+# (which is a parse-only fixture for the syntactic adapter), this
+# fixture is built by rustdoc and therefore needs valid Rust.
+
+[workspace]
+
+[package]
+name = "semantic-conversions-fixture"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[lib]
+path = "src/lib.rs"
