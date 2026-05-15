@@ -374,6 +374,7 @@ dependencies = [
  "locus-core",
  "locus-report",
  "locus-rust",
+ "locus-rust-semantic",
  "predicates",
  "serde",
  "serde_json",

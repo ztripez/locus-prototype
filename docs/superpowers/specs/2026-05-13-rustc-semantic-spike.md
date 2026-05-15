@@ -159,9 +159,17 @@ and reviewed first:
   crates depending on which ra-ap-* family version we pin.
 - **Workspace loading + caching.** `LoadCargoConfig` setup, sysroot
   resolution, salsa DB persistence across `locus check` runs.
-- **CLI wiring.** A `locus check --semantic-rust` flag that loads the
-  semantic adapter and merges its facts into the AIR before paradigm
-  rules run. Default off until the cost story is understood.
+- ~~**CLI wiring.**~~ Landed in #111 phase 3. `locus check
+  --semantic-rust` opt-in flag invokes `RustdocJsonBackend` after the
+  syntactic scan and appends resolved `AirConversion` records to the
+  matching files before governance runs. Backend failures
+  (`BackendUnavailable` for missing nightly, `WorkspaceFailed` for
+  source that won't compile) emit a stderr advisory and fall back to
+  syntactic-only — they never fail `locus check`. Implementation:
+  `crates/locus-cli/src/semantic_facts.rs`. Span match is suffix-
+  based: the backend emits workspace-relative spans, `locus-rust`
+  emits absolute paths; the merger places each resolved record into
+  the file whose path ends with the backend's span.
 - **`RustdocJsonBackend` (optional).** Declaration-only backend for
   projects where running rust-analyzer's full pipeline is too heavy.
   Implements the same trait; emits a subset of the facts (no call-site
