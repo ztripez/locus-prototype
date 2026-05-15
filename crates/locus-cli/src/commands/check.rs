@@ -74,11 +74,22 @@ pub struct CheckArgs {
     /// disable the gate. See issue #44.
     #[arg(long)]
     pub allow_missing_policy_baseline: bool,
+    /// Merge `RustdocJsonBackend`'s resolved `impl From` / `impl
+    /// TryFrom` facts into the AIR before paradigm rules run. Requires
+    /// nightly `cargo +nightly`; falls back to syntactic-only with a
+    /// stderr advisory if unavailable. Off by default. See #111.
+    #[arg(long)]
+    pub semantic_rust: bool,
 }
 
 pub fn run(args: CheckArgs) -> Result<()> {
-    let air = locus_rust::scan(&args.workspace)
+    let mut air = locus_rust::scan(&args.workspace)
         .with_context(|| format!("scan failed: {}", args.workspace.display()))?;
+    if args.semantic_rust {
+        // Backend failures fall back to syntactic facts with a stderr
+        // advisory — never errors. See `crate::semantic_facts`.
+        crate::semantic_facts::merge_semantic_conversions(&mut air, &args.workspace);
+    }
     let lockfile = Lockfile::load_or_empty(&args.workspace)
         .with_context(|| format!("load lockfile from {}", args.workspace.display()))?;
     let mode = if args.agent_strict {
@@ -361,33 +372,29 @@ mod tests {
         assert!(post[1].decision.is_some());
     }
 
-    #[test]
-    fn resolve_format_prefers_deprecated_json_alias_over_format_flag() {
-        let args = CheckArgs {
+    fn args_with(format: OutputFormat, json: bool) -> CheckArgs {
+        CheckArgs {
             workspace: ".".into(),
             agent_strict: false,
-            format: OutputFormat::Text,
-            json: true,
+            format,
+            json,
             changed: false,
             baseline: None,
             allow_policy_calibration: false,
             allow_missing_policy_baseline: false,
-        };
+            semantic_rust: false,
+        }
+    }
+
+    #[test]
+    fn resolve_format_prefers_deprecated_json_alias_over_format_flag() {
+        let args = args_with(OutputFormat::Text, true);
         assert_eq!(resolve_format(&args), OutputFormat::Json);
     }
 
     #[test]
     fn resolve_format_falls_back_to_format_flag_when_json_unset() {
-        let args = CheckArgs {
-            workspace: ".".into(),
-            agent_strict: false,
-            format: OutputFormat::Sarif,
-            json: false,
-            changed: false,
-            baseline: None,
-            allow_policy_calibration: false,
-            allow_missing_policy_baseline: false,
-        };
+        let args = args_with(OutputFormat::Sarif, false);
         assert_eq!(resolve_format(&args), OutputFormat::Sarif);
     }
 }

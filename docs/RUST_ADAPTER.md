@@ -290,14 +290,17 @@ These are out of scope for the document but recorded so they are not
 forgotten:
 
 - **Rustc-backed adapter mode.** Tracked by
-  [#111](https://github.com/ztripez/locus/issues/111). Phase-1 spike
-  has landed: `crates/locus-rust-semantic` ships the `SemanticAdapter`
+  [#111](https://github.com/ztripez/locus/issues/111). Phases 1–3 have
+  landed: `crates/locus-rust-semantic` ships the `SemanticAdapter`
   trait, AIR schema v14 carries `FactProvenance` (`SourceHint` /
-  `Syntactic` / `Heuristic` / `SemanticResolved { backend }`), and
-  OT converter detection prefers `SemanticResolved` over `Heuristic`.
-  Phase 2 plugs in the actual `RustAnalyzerBackend` against the
-  `ra-ap-*` crates. See
-  `docs/superpowers/specs/2026-05-13-rustc-semantic-spike.md`.
+  `Syntactic` / `Heuristic` / `SemanticResolved { backend }`), OT
+  converter detection prefers `SemanticResolved` over `Heuristic`,
+  `RustdocJsonBackend` is the first concrete implementation (resolves
+  `impl From<T>` / `impl TryFrom<T>` via nightly `cargo rustdoc
+  --output-format json`), and `locus check --semantic-rust` plumbs
+  the backend through the CLI. `RustAnalyzerBackend` remains a future
+  follow-up when call-target resolution becomes the limiting factor.
+  See `docs/superpowers/specs/2026-05-13-rustc-semantic-spike.md`.
 
 - **`#[path = "..."]` and `#[cfg]` module overrides.** Currently
   `derive_module_path` infers from the filesystem only. Real support

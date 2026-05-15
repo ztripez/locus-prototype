@@ -1,6 +1,7 @@
 mod cli;
 mod commands;
 mod diff;
+mod semantic_facts;
 
 use clap::Parser;
 
