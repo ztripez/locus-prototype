@@ -76,11 +76,7 @@ pub(super) fn collect_conversions(
 /// through silently.
 pub(super) fn conversion_mechanism_for_trait(path: &str) -> Option<ConversionMechanism> {
     const FROM_PATHS: &[&str] = &["core::convert::From", "std::convert::From", "From"];
-    const TRY_FROM_PATHS: &[&str] = &[
-        "core::convert::TryFrom",
-        "std::convert::TryFrom",
-        "TryFrom",
-    ];
+    const TRY_FROM_PATHS: &[&str] = &["core::convert::TryFrom", "std::convert::TryFrom", "TryFrom"];
     if FROM_PATHS.contains(&path) {
         return Some(ConversionMechanism::InfallibleAdapter);
     }
@@ -283,9 +279,6 @@ mod tests {
             conversion_mechanism_for_trait("foo::bar::SomethingElse"),
             None,
         );
-        assert_eq!(
-            conversion_mechanism_for_trait("core::convert::Into"),
-            None,
-        );
+        assert_eq!(conversion_mechanism_for_trait("core::convert::Into"), None,);
     }
 }
