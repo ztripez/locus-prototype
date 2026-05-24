@@ -1,3 +1,12 @@
+
+# Locus Prototype
+
+This repository is archived.
+
+It explored deterministic architecture checks, but drifted toward linter/SonarQube-style rule enforcement.
+
+The successor is a clean restart of Locus as an architecture safeguard: a tool that checks whether a repository still matches its declared architecture.
+
 # Locus
 
 Locus is a deterministic architecture guardrail for codebases that use LLM coding agents.
